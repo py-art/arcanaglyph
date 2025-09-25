@@ -1,0 +1,33 @@
+<!-- dist/index.html -->
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <h1>ArcanaGlyph Socket Client</h1>
+    <p id="status">Подключение к серверу...</p>
+    <script>
+      const statusElement = document.getElementById("status");
+      const socket = new WebSocket("ws://127.0.0.1:9001");
+
+      socket.onopen = () => {
+        statusElement.textContent = "Подключено! Ожидание сообщений...";
+        statusElement.style.color = "green";
+      };
+
+      socket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === "transcription_result") {
+          statusElement.textContent = `Получен результат: ${data.text}`;
+        }
+      };
+
+      socket.onerror = (error) => {
+        statusElement.textContent = `Ошибка сокета: ${error.message}`;
+        statusElement.style.color = "red";
+      };
+    </script>
+  </body>
+</html>

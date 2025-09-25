@@ -1,0 +1,18 @@
+# crates/arcanaglyph-app/Cargo.toml
+
+[package]
+name = "arcanaglyph-app"
+version = "0.1.0"
+edition = "2024"
+build = "src/build.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+arcanaglyph-core = { path = "../arcanaglyph-core" }
+global-hotkey = "0.7.0"
+tokio = { version = "1.47.1", features = ["full"] }
+futures-util = "0.3.31"

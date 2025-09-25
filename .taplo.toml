@@ -1,0 +1,13 @@
+# Автоформатирование TOML файлов
+# https://github.com/tamasfe/taplo
+# Конфигурация https://taplo.tamasfe.dev/configuration/formatter-options.html
+[formatting]
+# Автоматически сворачивать массивы, если они помещаются в одну строку.
+array_auto_collapse = false
+# Отступы следует использовать в виде табуляции или пробелов, но технически это может быть что угодно.
+indent_string = "    "
+# Отключаем валидацию схемы файла pyproject.toml.
+# [[rule]]
+# include = ["pyproject.toml"]
+# [rule.schema]
+# enabled = false
