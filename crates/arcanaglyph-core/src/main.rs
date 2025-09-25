@@ -2,11 +2,8 @@
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use futures_util::{SinkExt, StreamExt};
-use log::info;
-// ИСПРАВЛЕНИЕ: Добавляем стандартные модули для работы с ФС и путями
-use std::fs;
+use std::env; // <-- Возвращаем env
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -19,7 +16,7 @@ fn record_and_transcribe_with_stop(
     stop_rx: std_mpsc::Receiver<()>,
     recognizer_arc: Arc<Mutex<Recognizer>>,
 ) -> String {
-    info!("Начинаю запись...");
+    println!("Начинаю запись...");
     let host = cpal::default_host();
     let device = host
         .default_input_device()
@@ -42,15 +39,15 @@ fn record_and_transcribe_with_stop(
         )
         .expect("Не удалось создать аудиопоток");
     stream.play().expect("Не удалось запустить аудиопоток");
-    info!("Идет запись... (нажмите хоткей для останова или ждите таймаут)");
+    println!("Идет запись... (нажмите хоткей для останова или ждите таймаут)");
 
     let _ = stop_rx.recv();
     stream.pause().expect("Не удалось остановить аудиопоток");
-    info!("Запись завершена. Начинаю транскрибацию...");
+    println!("Запись завершена. Начинаю транскрибацию...");
 
     let mut recognizer_guard = recognizer_arc.lock().unwrap();
     let final_result_json = recognizer_guard.final_result().single().unwrap();
-    info!("Финальный результат: {}", final_result_json.text);
+    println!("Финальный результат: {}", final_result_json.text);
     let result_text = final_result_json.text.to_string();
     recognizer_guard.reset();
     result_text
@@ -62,7 +59,7 @@ async fn handle_connection(
     _recognizer: Arc<Mutex<Recognizer>>,
     result_tx: Arc<broadcast::Sender<String>>,
 ) {
-    info!("GUI подключился: {}", addr);
+    println!("GUI подключился: {}", addr);
     let ws_stream = tokio_tungstenite::accept_async(stream)
         .await
         .expect("Ошибка при рукопожатии websocket");
@@ -77,19 +74,19 @@ async fn handle_connection(
                     Ok(msg) => {
                         let msg_text = Message::Text(msg.into());
                         if ws_sender.send(msg_text).await.is_err() {
-                            info!("Не удалось отправить сообщение, клиент {} отключился.", addr);
+                            println!("Не удалось отправить сообщение, клиент {} отключился.", addr);
                             break;
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {}
                     Err(broadcast::error::RecvError::Closed) => {
-                        info!("Канал результатов закрыт.");
+                        println!("Канал результатов закрыт.");
                         break;
                     }
                 }
             }
             Some(_) = ws_receiver.next() => {
-                info!("Клиент {} отключился.", addr);
+                println!("Клиент {} отключился.", addr);
                 break;
             }
         }
@@ -98,21 +95,16 @@ async fn handle_connection(
 
 #[tokio::main]
 async fn main() {
-    env_logger::init();
-    info!("Инициализация...");
+    // env_logger::init(); // <-- УБИРАЕМ ЛОГГЕР
+    println!("Инициализация...");
 
-    // --- ИСПРАВЛЕНИЕ: Создание абсолютного, канонического пути к модели ---
-    let mut model_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    model_path.push("../../models/vosk-model-ru-0.42");
+    // --- ВОЗВРАЩАЕМ ПРОСТОЙ СПОСОБ ОПРЕДЕЛЕНИЯ ПУТИ ---
+    let mut model_path = env::current_dir().expect("Не удалось получить текущую директорию");
+    model_path.push("models/vosk-model-ru-0.42");
 
-    // Превращаем относительный путь в абсолютный.
-    let canonical_model_path = fs::canonicalize(&model_path)
-        .expect("Не удалось найти директорию с моделью по вычисленному пути");
-
-    info!("Загрузка модели из: {:?}", canonical_model_path);
-    let model =
-        Model::new(canonical_model_path.to_str().unwrap()).expect("Не удалось создать модель");
-    info!("Модель успешно загружена.");
+    println!("Загрузка модели из: {:?}", model_path);
+    let model = Model::new(model_path.to_str().unwrap()).expect("Не удалось создать модель");
+    println!("Модель успешно загружена.");
     let recognizer = Arc::new(Mutex::new(
         Recognizer::new(&model, 48000.0).expect("Не удалось создать распознаватель"),
     ));
@@ -125,8 +117,8 @@ async fn main() {
     let result_tx = Arc::new(result_bcast_tx);
 
     let tcp_listener = TcpListener::bind("127.0.0.1:9001").await.unwrap();
-    info!("Сервер сокетов запущен...");
-    info!("Слушаю триггеры на UDP порту 9002.");
+    println!("Сервер сокетов запущен...");
+    println!("Слушаю триггеры на UDP порту 9002.");
 
     let is_busy_udp = Arc::clone(&is_busy);
     let current_stop_tx_udp = Arc::clone(&current_stop_tx);
@@ -150,13 +142,13 @@ async fn main() {
                 if *busy_guard {
                     let mut stop_tx_guard = current_stop_tx_udp.lock().await;
                     if let Some(tx) = stop_tx_guard.take() {
-                        info!("Получен триггер для остановки записи.");
+                        println!("Получен триггер для остановки записи.");
                         let _ = tx.send(());
                     } else {
-                        info!("Игнорирую триггер, идет обработка...");
+                        println!("Игнорирую триггер, идет обработка...");
                     }
                 } else {
-                    info!("Получен триггер для начала записи.");
+                    println!("Получен триггер для начала записи.");
                     *busy_guard = true;
 
                     let (local_stop_tx, local_stop_rx) = std_mpsc::channel();
@@ -174,7 +166,7 @@ async fn main() {
                     tokio::spawn(async move {
                         tokio::time::sleep(Duration::from_secs(20)).await;
                         if let Some(tx) = stop_tx_for_timer.lock().await.take() {
-                            info!("Запись останавливается по таймеру (20с).");
+                            println!("Запись останавливается по таймеру (20с).");
                             let _ = tx.send(());
                         }
                     });
@@ -202,7 +194,7 @@ async fn main() {
                             }
                         }
 
-                        info!("Обработка завершена. Система готова к новой записи.");
+                        println!("Обработка завершена. Система готова к новой записи.");
                         let _ = result_tx_clone.send(
                             serde_json::json!({
                                 "type": "status",

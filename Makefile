@@ -53,7 +53,8 @@ run:
 
 .PHONY: serv   ## Run server
 serv:
-	cargo run -p arcanaglyph-core
+	# cargo run -p arcanaglyph-core
+	cargo run -p arcanaglyph-core --manifest-path crates/arcanaglyph-core/Cargo.toml
 
 
 .PHONY: clean  ## Clean the build cache
