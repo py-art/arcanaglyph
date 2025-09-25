@@ -13,6 +13,5 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
 arcanaglyph-core = { path = "../arcanaglyph-core" }
-global-hotkey = "0.7.0"
 tokio = { version = "1.47.1", features = ["full"] }
 futures-util = "0.3.31"
