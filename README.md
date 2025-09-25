@@ -27,3 +27,9 @@ gsettings set $GSETTINGS_PATH/custom0/ name 'ArcanaGlyph Trigger'
 gsettings set $GSETTINGS_PATH/custom0/ command '/home/py-art/.local/bin/ag-trigger'
 gsettings set $GSETTINGS_PATH/custom0/ binding 'Ctrl+Space'
 ```
+
+Пример установки зависимостей
+
+```bash
+cargo remove -p arcanaglyph-core log env_logger && cargo add -p arcanaglyph-core tracing tracing-subscriber
+```
