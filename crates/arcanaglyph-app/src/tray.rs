@@ -6,11 +6,17 @@ use std::sync::Arc;
 use tauri::{
     AppHandle, Manager,
     menu::{Menu, MenuEvent, MenuItem},
-    tray::TrayIconBuilder,
+    tray::{TrayIcon, TrayIconBuilder},
 };
 
 /// Обёртка для хранения toggle-пункта меню в Tauri state
 pub struct TrayToggleItem(pub MenuItem<tauri::Wry>);
+
+/// Обёртка для хранения TrayIcon в Tauri state
+pub struct TrayIconHandle(pub TrayIcon);
+
+/// Красная иконка для режима записи (встроена при компиляции)
+const RECORDING_ICON: &[u8] = include_bytes!("../icons/32x32-recording.png");
 
 /// Показать окно и поставить в фокус
 pub fn show_window(app: &AppHandle) {
@@ -34,7 +40,7 @@ pub fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // Сохраняем toggle_item в state для обновления текста при смене состояния
     app.manage(TrayToggleItem(toggle_item));
 
-    TrayIconBuilder::new()
+    let tray = TrayIconBuilder::new()
         .icon(app.default_window_icon().unwrap().clone())
         .tooltip("ArcanaGlyph")
         .menu(&menu)
@@ -54,6 +60,9 @@ pub fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         })
         .build(app)?;
 
+    // Сохраняем TrayIcon в state для смены иконки
+    app.manage(TrayIconHandle(tray));
+
     Ok(())
 }
 
@@ -61,5 +70,19 @@ pub fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 pub fn set_tray_text(app: &AppHandle, text: &str) {
     if let Some(item) = app.try_state::<TrayToggleItem>() {
         let _ = item.0.set_text(text);
+    }
+}
+
+/// Переключает иконку трея: красная при записи, белая по умолчанию
+pub fn set_tray_recording(app: &AppHandle, recording: bool) {
+    if let Some(tray) = app.try_state::<TrayIconHandle>() {
+        let icon = if recording {
+            tauri::image::Image::from_bytes(RECORDING_ICON).ok()
+        } else {
+            app.default_window_icon().cloned()
+        };
+        if let Some(icon) = icon {
+            let _ = tray.0.set_icon(Some(icon));
+        }
     }
 }

@@ -127,16 +127,18 @@ fn main() {
                 loop {
                     match rx.recv().await {
                         Ok(event) => {
-                            // Обновляем текст пункта меню в трее
+                            // Обновляем текст и иконку в трее
                             match &event {
                                 EngineEvent::RecordingStarted | EngineEvent::RecordingResumed => {
                                     tray::set_tray_text(&app_handle, "Остановить запись");
+                                    tray::set_tray_recording(&app_handle, true);
                                 }
                                 EngineEvent::RecordingPaused => {
                                     tray::set_tray_text(&app_handle, "Продолжить запись");
                                 }
                                 EngineEvent::FinishedProcessing => {
                                     tray::set_tray_text(&app_handle, "Начать запись");
+                                    tray::set_tray_recording(&app_handle, false);
                                 }
                                 _ => {}
                             }
