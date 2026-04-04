@@ -315,11 +315,11 @@
       const appWindow = getCurrentWindow();
 
       /* --- Кнопки titlebar --- */
-      document.getElementById('tb-min').addEventListener('click', () => appWindow.minimize());
+      document.getElementById('tb-min').addEventListener('click', () => invoke('hide_window'));
       document.getElementById('tb-max').addEventListener('click', async () => {
         (await appWindow.isMaximized()) ? appWindow.unmaximize() : appWindow.maximize();
       });
-      document.getElementById('tb-close').addEventListener('click', () => appWindow.hide());
+      document.getElementById('tb-close').addEventListener('click', () => invoke('hide_window'));
 
       const statusEl  = document.getElementById('status');
       const resultWrap = document.getElementById('result-wrap');

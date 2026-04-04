@@ -1,6 +1,6 @@
 // crates/arcanaglyph-core/src/engine.rs
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Handle;
@@ -25,6 +25,8 @@ pub enum EngineEvent {
     TranscriptionResult(String),
     /// Обработка завершена, система готова к новой записи
     FinishedProcessing,
+    /// Запрос на вывод окна на передний план (когда окно видимо)
+    RequestFocus,
 }
 
 /// Основной движок ArcanaGlyph: управляет записью, распознаванием и рассылкой событий
@@ -37,12 +39,14 @@ pub struct ArcanaEngine {
     event_tx: broadcast::Sender<EngineEvent>,
     audio_level: Arc<AtomicU32>,
     rt_handle: Handle,
+    /// Флаг видимости окна: true — окно видимо, false — свёрнуто в трей
+    window_visible: Arc<AtomicBool>,
 }
 
 impl ArcanaEngine {
     /// Создаёт новый экземпляр движка: загружает модель Vosk, инициализирует каналы.
     /// Должен вызываться из контекста Tokio runtime (сохраняет Handle для spawn).
-    pub fn new(config: CoreConfig) -> Result<Self, ArcanaError> {
+    pub fn new(config: CoreConfig, window_visible: Arc<AtomicBool>) -> Result<Self, ArcanaError> {
         vosk::set_log_level(LogLevel::Error);
 
         info!("Загрузка модели из: {:?}", config.model_path);
@@ -73,6 +77,7 @@ impl ArcanaEngine {
             event_tx,
             audio_level: Arc::new(AtomicU32::new(0)),
             rt_handle,
+            window_visible,
         })
     }
 
@@ -104,6 +109,7 @@ impl ArcanaEngine {
         let debug = self.config.debug;
         let audio_level = Arc::clone(&self.audio_level);
         let handle = self.rt_handle.clone();
+        let window_visible = Arc::clone(&self.window_visible);
 
         self.rt_handle.spawn(async move {
             let mut busy_guard = is_busy.lock().await;
@@ -148,13 +154,20 @@ impl ArcanaEngine {
 
                     match result {
                         Ok(Ok(text)) => {
+                            let is_visible = window_visible.load(Ordering::Relaxed);
+                            // Вставляем текст только когда окно скрыто (в трее)
                             if auto_type
                                 && !text.is_empty()
-                                && let Err(e) = crate::input::type_text(&text)
+                                && !is_visible
+                                && let Err(e) = crate::input::type_text(&text).await
                             {
                                 tracing::error!("Не удалось вставить текст: {}", e);
                             }
                             let _ = event_tx_clone.send(EngineEvent::TranscriptionResult(text));
+                            // Если окно видимо — запрашиваем фокус для вывода на передний план
+                            if is_visible {
+                                let _ = event_tx_clone.send(EngineEvent::RequestFocus);
+                            }
                         }
                         Ok(Err(e)) => {
                             tracing::error!("Ошибка транскрибации: {}", e);

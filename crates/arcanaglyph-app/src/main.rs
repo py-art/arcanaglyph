@@ -5,6 +5,7 @@
 mod tray;
 
 use arcanaglyph_core::{ArcanaEngine, CoreConfig, EngineEvent};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
@@ -35,6 +36,17 @@ async fn is_recording(engine: tauri::State<'_, Arc<ArcanaEngine>>) -> Result<boo
     Ok(engine.is_recording().await)
 }
 
+/// Tauri-команда: скрыть окно в трей и обновить флаг видимости
+#[tauri::command]
+async fn hide_window(
+    window: tauri::Window,
+    visible: tauri::State<'_, Arc<AtomicBool>>,
+) -> Result<(), String> {
+    let _ = window.hide();
+    visible.store(false, Ordering::Relaxed);
+    Ok(())
+}
+
 fn main() {
     // Инициализируем логирование
     tracing_subscriber::fmt::init();
@@ -59,9 +71,13 @@ fn main() {
                 .build(),
         )
         .setup(move |app| {
+            // Флаг видимости окна: true при старте (окно видимо)
+            let window_visible = Arc::new(AtomicBool::new(true));
+            app.manage(window_visible.clone());
+
             // Создаём engine внутри async runtime, чтобы Handle::try_current() сработал
-            let engine =
-                tauri::async_runtime::block_on(async { ArcanaEngine::new(config) }).map_err(|e| e.to_string())?;
+            let engine = tauri::async_runtime::block_on(async { ArcanaEngine::new(config, window_visible) })
+                .map_err(|e| e.to_string())?;
             let engine = Arc::new(engine);
             app.manage(engine.clone());
 
@@ -111,16 +127,18 @@ fn main() {
                 loop {
                     match rx.recv().await {
                         Ok(event) => {
-                            // Обновляем текст пункта меню в трее
+                            // Обновляем текст и иконку в трее
                             match &event {
                                 EngineEvent::RecordingStarted | EngineEvent::RecordingResumed => {
                                     tray::set_tray_text(&app_handle, "Остановить запись");
+                                    tray::set_tray_recording(&app_handle, true);
                                 }
                                 EngineEvent::RecordingPaused => {
                                     tray::set_tray_text(&app_handle, "Продолжить запись");
                                 }
                                 EngineEvent::FinishedProcessing => {
                                     tray::set_tray_text(&app_handle, "Начать запись");
+                                    tray::set_tray_recording(&app_handle, false);
                                 }
                                 _ => {}
                             }
@@ -134,6 +152,11 @@ fn main() {
                                 }
                                 EngineEvent::FinishedProcessing => {
                                     ("engine://finished-processing", serde_json::json!({}))
+                                }
+                                EngineEvent::RequestFocus => {
+                                    // Выводим окно на передний план
+                                    tray::show_window(&app_handle);
+                                    continue;
                                 }
                             };
                             let _ = app_handle.emit(event_name, payload);
@@ -151,12 +174,15 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording])
+        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, hide_window])
         .on_window_event(|window, event| {
             // Перехватываем закрытие окна — скрываем в трей вместо закрытия
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
+                if let Some(vis) = window.app_handle().try_state::<Arc<AtomicBool>>() {
+                    vis.store(false, Ordering::Relaxed);
+                }
             }
         })
         .run(tauri::generate_context!())

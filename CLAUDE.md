@@ -30,7 +30,7 @@ Cargo workspace из двух крейтов:
   - `lib.rs` — публичный API: `ArcanaEngine`, `CoreConfig`, `EngineEvent`, `ArcanaError`
   - `engine.rs` — основной движок: управление записью (start/stop), broadcast событий
   - `audio.rs` — захват аудио через `cpal`, транскрибация через `vosk`
-  - `input.rs` — вставка текста через `enigo`
+  - `input.rs` — вставка текста: `wl-copy` + `wtype` на Wayland, `enigo` на X11
   - `config.rs` — конфигурация с load/save из `~/.config/ArcanaGlyph/config.toml`
   - `error.rs` — типизированные ошибки через `thiserror`
   - `main.rs` — legacy standalone-сервер (UDP + WebSocket, для отладки)
@@ -55,6 +55,12 @@ Cargo workspace из двух крейтов:
 
 ```bash
 sudo apt-get install build-essential libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev
+```
+
+Для вставки текста на Wayland (clipboard + XDG RemoteDesktop portal):
+
+```bash
+sudo apt install wl-clipboard
 ```
 
 Также нужны: `libvosk.so` (в `/usr/local/lib/`) и Vosk-модель `models/vosk-model-ru-0.42/`.
