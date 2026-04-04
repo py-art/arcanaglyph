@@ -109,21 +109,43 @@ async fn init_rd_session() -> Result<RdSession, ArcanaError> {
     Ok(RdSession { proxy, session })
 }
 
-/// Симулирует Ctrl+V через XDG RemoteDesktop portal
-async fn simulate_ctrl_v(rd: &RdSession) -> Result<(), ArcanaError> {
+/// Симулирует Ctrl+V и Ctrl+Shift+V через XDG RemoteDesktop portal.
+/// Ctrl+V — для обычных приложений, Ctrl+Shift+V — для терминалов.
+/// В обычных приложениях Ctrl+Shift+V либо вставит как plain text, либо будет проигнорировано.
+/// В терминалах Ctrl+V будет проигнорировано, а Ctrl+Shift+V вставит текст.
+async fn simulate_paste(rd: &RdSession) -> Result<(), ArcanaError> {
     use ashpd::desktop::remote_desktop::KeyState;
 
-    // KEY_LEFTCTRL = 29, KEY_V = 47 (Linux evdev keycodes)
-    rd.proxy.notify_keyboard_keycode(&rd.session, 29, KeyState::Pressed, Default::default()).await
+    // KEY_LEFTCTRL = 29, KEY_V = 47, KEY_LEFTSHIFT = 42 (Linux evdev keycodes)
+    const CTRL: i32 = 29;
+    const SHIFT: i32 = 42;
+    const V: i32 = 47;
+
+    // Ctrl+V (обычные приложения)
+    rd.proxy.notify_keyboard_keycode(&rd.session, CTRL, KeyState::Pressed, Default::default()).await
         .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка нажатия Ctrl: {}", e)))?;
-
-    rd.proxy.notify_keyboard_keycode(&rd.session, 47, KeyState::Pressed, Default::default()).await
+    rd.proxy.notify_keyboard_keycode(&rd.session, V, KeyState::Pressed, Default::default()).await
         .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка нажатия V: {}", e)))?;
-
-    rd.proxy.notify_keyboard_keycode(&rd.session, 47, KeyState::Released, Default::default()).await
+    rd.proxy.notify_keyboard_keycode(&rd.session, V, KeyState::Released, Default::default()).await
         .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка отпускания V: {}", e)))?;
+    rd.proxy.notify_keyboard_keycode(&rd.session, CTRL, KeyState::Released, Default::default()).await
+        .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка отпускания Ctrl: {}", e)))?;
 
-    rd.proxy.notify_keyboard_keycode(&rd.session, 29, KeyState::Released, Default::default()).await
+    // Небольшая пауза между комбинациями
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+
+    // Ctrl+Shift+V (терминалы)
+    rd.proxy.notify_keyboard_keycode(&rd.session, CTRL, KeyState::Pressed, Default::default()).await
+        .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка нажатия Ctrl: {}", e)))?;
+    rd.proxy.notify_keyboard_keycode(&rd.session, SHIFT, KeyState::Pressed, Default::default()).await
+        .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка нажатия Shift: {}", e)))?;
+    rd.proxy.notify_keyboard_keycode(&rd.session, V, KeyState::Pressed, Default::default()).await
+        .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка нажатия V: {}", e)))?;
+    rd.proxy.notify_keyboard_keycode(&rd.session, V, KeyState::Released, Default::default()).await
+        .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка отпускания V: {}", e)))?;
+    rd.proxy.notify_keyboard_keycode(&rd.session, SHIFT, KeyState::Released, Default::default()).await
+        .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка отпускания Shift: {}", e)))?;
+    rd.proxy.notify_keyboard_keycode(&rd.session, CTRL, KeyState::Released, Default::default()).await
         .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка отпускания Ctrl: {}", e)))?;
 
     Ok(())
@@ -174,7 +196,7 @@ async fn type_text_wayland(text: &str) -> Result<(), ArcanaError> {
     }
 
     if let Some(rd) = guard.as_ref() {
-        if let Err(e) = simulate_ctrl_v(rd).await {
+        if let Err(e) = simulate_paste(rd).await {
             tracing::warn!("Ошибка RemoteDesktop: {}. Пересоздаю сессию...", e);
             *guard = None;
             tracing::info!("Текст скопирован в буфер обмена — нажмите Ctrl+V для вставки");
