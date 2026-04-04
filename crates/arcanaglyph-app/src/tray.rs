@@ -1,6 +1,7 @@
 // crates/arcanaglyph-app/src/tray.rs
 
 use arcanaglyph_core::ArcanaEngine;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{
     AppHandle, Manager,
@@ -17,6 +18,9 @@ pub fn show_window(app: &AppHandle) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+    }
+    if let Some(vis) = app.try_state::<Arc<AtomicBool>>() {
+        vis.store(true, Ordering::Relaxed);
     }
 }
 
