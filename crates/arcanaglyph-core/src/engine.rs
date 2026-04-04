@@ -1,5 +1,6 @@
 // crates/arcanaglyph-core/src/engine.rs
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Handle;
@@ -34,6 +35,7 @@ pub struct ArcanaEngine {
     is_paused: Arc<tokio::sync::Mutex<bool>>,
     current_cmd_tx: Arc<tokio::sync::Mutex<Option<std_mpsc::Sender<AudioCommand>>>>,
     event_tx: broadcast::Sender<EngineEvent>,
+    audio_level: Arc<AtomicU32>,
     rt_handle: Handle,
 }
 
@@ -69,6 +71,7 @@ impl ArcanaEngine {
             is_paused: Arc::new(tokio::sync::Mutex::new(false)),
             current_cmd_tx: Arc::new(tokio::sync::Mutex::new(None)),
             event_tx,
+            audio_level: Arc::new(AtomicU32::new(0)),
             rt_handle,
         })
     }
@@ -76,6 +79,11 @@ impl ArcanaEngine {
     /// Подписаться на события движка
     pub fn subscribe(&self) -> broadcast::Receiver<EngineEvent> {
         self.event_tx.subscribe()
+    }
+
+    /// Получить текущий уровень громкости (0-100)
+    pub fn get_audio_level(&self) -> u32 {
+        self.audio_level.load(Ordering::Relaxed)
     }
 
     /// Проверить, идёт ли сейчас запись
@@ -94,6 +102,7 @@ impl ArcanaEngine {
         let sample_rate = self.config.sample_rate;
         let auto_type = self.config.auto_type;
         let debug = self.config.debug;
+        let audio_level = Arc::clone(&self.audio_level);
         let handle = self.rt_handle.clone();
 
         self.rt_handle.spawn(async move {
@@ -126,7 +135,14 @@ impl ArcanaEngine {
                 handle.spawn(async move {
                     let recognizer_clone = Arc::clone(&recognizer);
                     let result = tokio::task::spawn_blocking(move || {
-                        audio::record_and_transcribe(cmd_rx, recognizer_clone, sample_rate, debug, silence_timeout_secs)
+                        audio::record_and_transcribe(
+                            cmd_rx,
+                            recognizer_clone,
+                            sample_rate,
+                            debug,
+                            silence_timeout_secs,
+                            audio_level,
+                        )
                     })
                     .await;
 

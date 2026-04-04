@@ -23,6 +23,12 @@ async fn pause(engine: tauri::State<'_, Arc<ArcanaEngine>>) -> Result<(), String
     Ok(())
 }
 
+/// Tauri-команда: получить уровень громкости (0-100)
+#[tauri::command]
+fn get_audio_level(engine: tauri::State<'_, Arc<ArcanaEngine>>) -> u32 {
+    engine.get_audio_level()
+}
+
 /// Tauri-команда: проверить, идёт ли запись
 #[tauri::command]
 async fn is_recording(engine: tauri::State<'_, Arc<ArcanaEngine>>) -> Result<bool, String> {
@@ -145,7 +151,7 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![trigger, pause, is_recording])
+        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording])
         .on_window_event(|window, event| {
             // Перехватываем закрытие окна — скрываем в трей вместо закрытия
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
