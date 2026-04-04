@@ -131,23 +131,37 @@ async fn simulate_paste(rd: &RdSession) -> Result<(), ArcanaError> {
     Ok(())
 }
 
-/// Копирует текст в Wayland clipboard через wl-copy
+/// Копирует текст в Wayland clipboard (CLIPBOARD + PRIMARY selection) через wl-copy.
+/// PRIMARY нужен потому что Shift+Insert в некоторых терминалах вставляет из PRIMARY.
 fn copy_to_clipboard(text: &str) -> Result<(), ArcanaError> {
+    use std::io::Write;
+
+    // CLIPBOARD (основной буфер)
     let mut child = Command::new("wl-copy")
         .stdin(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| ArcanaError::InputSimulation(format!(
             "Не удалось запустить wl-copy: {} (установите: sudo apt install wl-clipboard)", e
         )))?;
-
     if let Some(stdin) = child.stdin.as_mut() {
-        use std::io::Write;
         stdin.write_all(text.as_bytes())
             .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось передать текст в wl-copy: {}", e)))?;
     }
-
     child.wait()
         .map_err(|e| ArcanaError::InputSimulation(format!("wl-copy завершился с ошибкой: {}", e)))?;
+
+    // PRIMARY selection (буфер выделения, используется Shift+Insert в некоторых терминалах)
+    let mut child_primary = Command::new("wl-copy")
+        .arg("--primary")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось запустить wl-copy --primary: {}", e)))?;
+    if let Some(stdin) = child_primary.stdin.as_mut() {
+        stdin.write_all(text.as_bytes())
+            .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось передать текст в wl-copy --primary: {}", e)))?;
+    }
+    child_primary.wait()
+        .map_err(|e| ArcanaError::InputSimulation(format!("wl-copy --primary завершился с ошибкой: {}", e)))?;
 
     Ok(())
 }
