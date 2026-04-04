@@ -15,13 +15,13 @@ fn is_wayland() -> bool {
 /// Вставляет текст туда, где стоит курсор.
 /// На Wayland: копирует в clipboard через wl-copy, затем Ctrl+V через XDG RemoteDesktop portal.
 /// На X11: использует enigo для прямой эмуляции ввода.
-pub fn type_text(text: &str) -> Result<(), ArcanaError> {
+pub async fn type_text(text: &str) -> Result<(), ArcanaError> {
     if text.is_empty() {
         return Ok(());
     }
 
     if is_wayland() {
-        type_text_wayland(text)
+        type_text_wayland(text).await
     } else {
         type_text_x11(text)
     }
@@ -76,9 +76,7 @@ async fn simulate_ctrl_v(rd: &RdSession) -> Result<(), ArcanaError> {
     use ashpd::desktop::remote_desktop::KeyState;
 
     // KEY_LEFTCTRL = 29, KEY_V = 47 (Linux evdev keycodes)
-    let opts = Default::default();
-
-    rd.proxy.notify_keyboard_keycode(&rd.session, 29, KeyState::Pressed, opts).await
+    rd.proxy.notify_keyboard_keycode(&rd.session, 29, KeyState::Pressed, Default::default()).await
         .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка нажатия Ctrl: {}", e)))?;
 
     rd.proxy.notify_keyboard_keycode(&rd.session, 47, KeyState::Pressed, Default::default()).await
@@ -115,44 +113,40 @@ fn copy_to_clipboard(text: &str) -> Result<(), ArcanaError> {
 }
 
 /// Вставка через clipboard на Wayland: wl-copy → XDG RemoteDesktop Ctrl+V
-fn type_text_wayland(text: &str) -> Result<(), ArcanaError> {
+async fn type_text_wayland(text: &str) -> Result<(), ArcanaError> {
     // Копируем текст в clipboard
     copy_to_clipboard(text)?;
 
     // Небольшая пауза, чтобы clipboard успел обновиться
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // Симулируем Ctrl+V через RemoteDesktop portal
-    let handle = tokio::runtime::Handle::current();
-    handle.block_on(async {
-        let mutex = RD_SESSION.get_or_init(|| Mutex::new(None));
-        let mut guard = mutex.lock().await;
+    let mutex = RD_SESSION.get_or_init(|| Mutex::new(None));
+    let mut guard = mutex.lock().await;
 
-        // Если сессии нет или она сломалась — создаём новую
-        if guard.is_none() {
-            match init_rd_session().await {
-                Ok(session) => *guard = Some(session),
-                Err(e) => {
-                    tracing::warn!("RemoteDesktop недоступен: {}. Текст скопирован в буфер — нажмите Ctrl+V.", e);
-                    return Ok(());
-                }
+    // Если сессии нет — создаём новую
+    if guard.is_none() {
+        match init_rd_session().await {
+            Ok(session) => *guard = Some(session),
+            Err(e) => {
+                tracing::warn!("RemoteDesktop недоступен: {}. Текст скопирован в буфер — нажмите Ctrl+V.", e);
+                return Ok(());
             }
         }
+    }
 
-        if let Some(rd) = guard.as_ref() {
-            if let Err(e) = simulate_ctrl_v(rd).await {
-                tracing::warn!("Ошибка RemoteDesktop: {}. Пересоздаю сессию...", e);
-                // Сессия сломалась — сбрасываем для пересоздания при следующем вызове
-                *guard = None;
-                // Текст уже в clipboard — пользователь может вставить сам
-                tracing::info!("Текст скопирован в буфер обмена — нажмите Ctrl+V для вставки");
-            } else {
-                tracing::info!("Текст вставлен через RemoteDesktop ({} символов)", text.len());
-            }
+    if let Some(rd) = guard.as_ref() {
+        if let Err(e) = simulate_ctrl_v(rd).await {
+            tracing::warn!("Ошибка RemoteDesktop: {}. Пересоздаю сессию...", e);
+            // Сессия сломалась — сбрасываем для пересоздания при следующем вызове
+            *guard = None;
+            tracing::info!("Текст скопирован в буфер обмена — нажмите Ctrl+V для вставки");
+        } else {
+            tracing::info!("Текст вставлен через RemoteDesktop ({} символов)", text.len());
         }
+    }
 
-        Ok(())
-    })
+    Ok(())
 }
 
 /// Вставка через enigo на X11

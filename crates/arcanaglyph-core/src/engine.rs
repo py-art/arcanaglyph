@@ -155,11 +155,11 @@ impl ArcanaEngine {
                     match result {
                         Ok(Ok(text)) => {
                             let is_visible = window_visible.load(Ordering::Relaxed);
-                            // Вставляем текст через enigo только когда окно скрыто (в трее)
+                            // Вставляем текст только когда окно скрыто (в трее)
                             if auto_type
                                 && !text.is_empty()
                                 && !is_visible
-                                && let Err(e) = crate::input::type_text(&text)
+                                && let Err(e) = crate::input::type_text(&text).await
                             {
                                 tracing::error!("Не удалось вставить текст: {}", e);
                             }
