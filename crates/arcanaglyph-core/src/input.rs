@@ -11,13 +11,13 @@ fn is_wayland() -> bool {
 }
 
 /// Проверяет наличие системных утилит для вставки текста.
-/// На Wayland требуются wl-copy и wtype.
+/// На Wayland требуются wl-copy и ydotool.
 pub fn check_dependencies() {
     if is_wayland() {
         let wl_copy = Command::new("wl-copy").arg("--version").output().is_ok();
-        let wtype = Command::new("wtype").arg("--version").output().is_ok();
-        if !wl_copy || !wtype {
-            let missing: Vec<&str> = [(!wl_copy, "wl-clipboard"), (!wtype, "wtype")]
+        let ydotool = Command::new("ydotool").output().is_ok();
+        if !wl_copy || !ydotool {
+            let missing: Vec<&str> = [(!wl_copy, "wl-clipboard"), (!ydotool, "ydotool")]
                 .iter()
                 .filter(|(m, _)| *m)
                 .map(|(_, name)| *name)
@@ -46,7 +46,7 @@ pub fn type_text(text: &str) -> Result<(), ArcanaError> {
     }
 }
 
-/// Вставка через clipboard на Wayland: wl-copy → wtype Ctrl+v
+/// Вставка через clipboard на Wayland: wl-copy → ydotool key Ctrl+V
 fn type_text_wayland(text: &str) -> Result<(), ArcanaError> {
     // Копируем текст в clipboard
     let mut child = Command::new("wl-copy")
@@ -68,14 +68,17 @@ fn type_text_wayland(text: &str) -> Result<(), ArcanaError> {
     // Небольшая пауза, чтобы clipboard успел обновиться
     std::thread::sleep(std::time::Duration::from_millis(50));
 
-    // Симулируем Ctrl+V через wtype
-    let status = Command::new("wtype")
-        .args(["-M", "ctrl", "v", "-m", "ctrl"])
+    // Симулируем Ctrl+V через ydotool (работает через /dev/uinput, не зависит от композитора)
+    // 29 = KEY_LEFTCTRL, 47 = KEY_V; :1 = нажать, :0 = отпустить
+    let status = Command::new("ydotool")
+        .args(["key", "29:1", "47:1", "47:0", "29:0"])
         .status()
-        .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось запустить wtype: {} (установите: sudo apt install wtype)", e)))?;
+        .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось запустить ydotool: {} (установите: sudo apt install ydotool)", e)))?;
 
     if !status.success() {
-        return Err(ArcanaError::InputSimulation("wtype завершился с ошибкой".into()));
+        return Err(ArcanaError::InputSimulation(
+            "ydotool завершился с ошибкой. Проверьте доступ к /dev/uinput".into(),
+        ));
     }
 
     tracing::info!("Текст вставлен через clipboard ({} символов)", text.len());

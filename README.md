@@ -18,7 +18,7 @@ sudo apt-get update && sudo apt-get install \
 Для вставки текста на **Wayland** (clipboard → Ctrl+V):
 
 ```bash
-sudo apt install wl-clipboard wtype
+sudo apt install wl-clipboard ydotool
 ```
 
 Также необходима библиотека `libvosk`. Если она не установлена, можно собрать из исходников
@@ -153,10 +153,10 @@ export LIBRARY_PATH=/usr/local/lib
 ### Wayland: текст не вставляется в активное окно
 
 На Wayland приложения не могут напрямую эмулировать ввод в другие окна.
-ArcanaGlyph использует `wl-copy` + `wtype` (clipboard → Ctrl+V). Установите:
+ArcanaGlyph использует `wl-copy` + `ydotool` (clipboard → Ctrl+V). Установите:
 
 ```bash
-sudo apt install wl-clipboard wtype
+sudo apt install wl-clipboard ydotool
 ```
 
 При запуске приложение проверит наличие этих утилит и предупредит, если они не установлены.
