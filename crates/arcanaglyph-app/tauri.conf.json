@@ -18,20 +18,21 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "targets": "all"
+    "targets": ["deb", "appimage"]
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "ArcanaGlyph",
-        "width": 800,
-        "height": 600,
+        "width": 400,
+        "height": 550,
         "resizable": true,
         "fullscreen": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
     }
   }
 }

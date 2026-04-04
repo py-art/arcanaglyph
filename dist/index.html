@@ -1,33 +1,288 @@
-<!-- dist/index.html -->
-
 <!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ArcanaGlyph</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background: #1a1a2e;
+        color: #eee;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-height: 100vh;
+        padding: 1.5rem 1rem;
+        user-select: none;
+      }
+
+      h1 {
+        font-size: 1.3rem;
+        color: #e94560;
+        font-weight: 600;
+        margin-bottom: 2rem;
+      }
+
+      /* === Микрофон === */
+      .mic-wrap {
+        position: relative;
+        width: 120px;
+        height: 120px;
+        margin-bottom: 0.8rem;
+      }
+      .mic-glow {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        background: rgba(78, 204, 163, 0.12);
+        transition: background 0.3s;
+      }
+      .mic-glow.recording {
+        background: rgba(233, 69, 96, 0.18);
+        animation: glow-pulse 1.5s ease-in-out infinite;
+      }
+      @keyframes glow-pulse {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.15); opacity: 0.5; }
+      }
+      .mic-btn {
+        position: absolute;
+        inset: 15px;
+        border-radius: 50%;
+        background: #16213e;
+        border: 3px solid #4ecca3;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: border-color 0.3s, background 0.3s;
+      }
+      .mic-btn:hover { border-color: #6fe8c0; }
+      .mic-btn.recording {
+        border-color: #e94560;
+        background: rgba(233, 69, 96, 0.1);
+      }
+      .mic-btn svg {
+        width: 36px;
+        height: 36px;
+        fill: #4ecca3;
+        transition: fill 0.3s;
+      }
+      .mic-btn.recording svg { fill: #e94560; }
+
+      /* === Статус === */
+      #status {
+        font-size: 0.95rem;
+        color: #4ecca3;
+        font-weight: 500;
+        margin-bottom: 1.2rem;
+      }
+      #status.recording { color: #e94560; }
+
+      /* === Уровень === */
+      .level-bar {
+        width: 85%;
+        max-width: 320px;
+        height: 6px;
+        background: #0f3460;
+        border-radius: 3px;
+        overflow: hidden;
+        margin-bottom: 1rem;
+        visibility: hidden;
+      }
+      .level-bar.active { visibility: visible; }
+      .level-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #4ecca3 0%, #4ecca3 60%, #e94560 100%);
+        border-radius: 3px;
+        transition: width 0.12s;
+      }
+
+      /* === Таймер === */
+      #timer {
+        font-size: 2.2rem;
+        font-weight: 300;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 3px;
+        color: #eee;
+        margin-bottom: 1.5rem;
+        visibility: hidden;
+      }
+      #timer.active { visibility: visible; }
+
+      /* === Кнопки паузы/стоп === */
+      .controls {
+        display: flex;
+        gap: 1.5rem;
+        align-items: center;
+        margin-bottom: 1.5rem;
+        visibility: hidden;
+      }
+      .controls.active { visibility: visible; }
+
+      .ctrl-btn {
+        width: 52px;
+        height: 52px;
+        border-radius: 50%;
+        border: none;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: opacity 0.2s;
+      }
+      .ctrl-btn:hover { opacity: 0.85; }
+
+      .pause-btn { background: #e98b3a; }
+      .pause-btn svg { width: 20px; height: 20px; fill: #fff; }
+
+      .stop-btn { background: #e94560; }
+      .stop-icon {
+        width: 18px;
+        height: 18px;
+        background: #fff;
+        border-radius: 3px;
+      }
+
+      /* === Результат === */
+      #result {
+        font-size: 0.95rem;
+        background: #16213e;
+        border: 1px solid #0f3460;
+        border-radius: 10px;
+        padding: 1rem 1.2rem;
+        width: 90%;
+        max-width: 360px;
+        word-wrap: break-word;
+        white-space: pre-wrap;
+        color: #ccc;
+        line-height: 1.5;
+        text-align: center;
+        display: none;
+      }
+      #result.visible { display: block; }
+    </style>
   </head>
   <body>
-    <h1>ArcanaGlyph Socket Client</h1>
-    <p id="status">Подключение к серверу...</p>
+
+    <h1>ArcanaGlyph</h1>
+
+    <!-- Микрофон -->
+    <div class="mic-wrap">
+      <div class="mic-glow" id="mic-glow"></div>
+      <div class="mic-btn" id="mic-btn">
+        <svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+      </div>
+    </div>
+
+    <p id="status">Готов к записи</p>
+
+    <!-- Уровень звука -->
+    <div class="level-bar" id="level-bar">
+      <div class="level-fill" id="level-fill"></div>
+    </div>
+
+    <!-- Таймер -->
+    <div id="timer">00:00</div>
+
+    <!-- Кнопки паузы / стоп -->
+    <div class="controls" id="controls">
+      <button class="ctrl-btn pause-btn" id="pause-btn" title="Пауза">
+        <svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+      </button>
+      <button class="ctrl-btn stop-btn" id="stop-btn" title="Остановить">
+        <div class="stop-icon"></div>
+      </button>
+    </div>
+
+    <!-- Результат -->
+    <div id="result"></div>
+
     <script>
-      const statusElement = document.getElementById("status");
-      const socket = new WebSocket("ws://127.0.0.1:9001");
+      const { invoke } = window.__TAURI__.core;
+      const { listen } = window.__TAURI__.event;
 
-      socket.onopen = () => {
-        statusElement.textContent = "Подключено! Ожидание сообщений...";
-        statusElement.style.color = "green";
-      };
+      const statusEl  = document.getElementById('status');
+      const resultEl  = document.getElementById('result');
+      const micBtn    = document.getElementById('mic-btn');
+      const micGlow   = document.getElementById('mic-glow');
+      const timerEl   = document.getElementById('timer');
+      const levelBar  = document.getElementById('level-bar');
+      const levelFill = document.getElementById('level-fill');
+      const controlsEl = document.getElementById('controls');
+      const stopBtn   = document.getElementById('stop-btn');
+      const pauseBtn  = document.getElementById('pause-btn');
 
-      socket.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.type === "transcription_result") {
-          statusElement.textContent = `Получен результат: ${data.text}`;
-        }
-      };
+      let recording = false;
+      let timerSec = 0;
+      let timerId = null;
+      let levelId = null;
 
-      socket.onerror = (error) => {
-        statusElement.textContent = `Ошибка сокета: ${error.message}`;
-        statusElement.style.color = "red";
-      };
+      function fmt(s) {
+        return String(Math.floor(s/60)).padStart(2,'0') + ':' + String(s%60).padStart(2,'0');
+      }
+
+      /* --- Клик по микрофону = начать запись --- */
+      micBtn.addEventListener('click', () => {
+        if (!recording) invoke('trigger');
+      });
+
+      /* --- Клик по стопу = остановить --- */
+      stopBtn.addEventListener('click', () => {
+        if (recording) invoke('trigger');
+      });
+
+      /* --- Пауза — заглушка --- */
+      pauseBtn.addEventListener('click', () => {
+        /* TODO: реализовать паузу */
+      });
+
+      /* --- События engine --- */
+      listen('engine://recording-started', () => {
+        recording = true;
+        resultEl.classList.remove('visible');
+        resultEl.textContent = '';
+
+        micBtn.classList.add('recording');
+        micGlow.classList.add('recording');
+        statusEl.textContent = 'Запись...';
+        statusEl.className = 'recording';
+
+        controlsEl.classList.add('active');
+        levelBar.classList.add('active');
+        timerEl.classList.add('active');
+
+        timerSec = 0;
+        timerEl.textContent = '00:00';
+        timerId = setInterval(() => { timerSec++; timerEl.textContent = fmt(timerSec); }, 1000);
+        levelId = setInterval(() => { levelFill.style.width = (15 + Math.random()*65) + '%'; }, 130);
+      });
+
+      listen('engine://transcription-result', (ev) => {
+        resultEl.textContent = ev.payload.text || '(пустой результат)';
+        resultEl.classList.add('visible');
+      });
+
+      listen('engine://finished-processing', () => {
+        recording = false;
+
+        micBtn.classList.remove('recording');
+        micGlow.classList.remove('recording');
+        statusEl.textContent = 'Готов к записи';
+        statusEl.className = '';
+
+        controlsEl.classList.remove('active');
+        levelBar.classList.remove('active');
+        timerEl.classList.remove('active');
+
+        clearInterval(timerId);
+        clearInterval(levelId);
+        levelFill.style.width = '0%';
+      });
     </script>
   </body>
 </html>

@@ -1,0 +1,53 @@
+// crates/arcanaglyph-app/src/tray.rs
+
+use arcanaglyph_core::ArcanaEngine;
+use std::sync::Arc;
+use tauri::{
+    AppHandle, Manager,
+    menu::{Menu, MenuEvent, MenuItem},
+    tray::TrayIconBuilder,
+};
+
+/// Обёртка для хранения toggle-пункта меню в Tauri state
+pub struct TrayToggleItem(pub MenuItem<tauri::Wry>);
+
+/// Создаёт иконку в системном трее с меню управления
+pub fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let toggle_item = MenuItem::with_id(app, "toggle", "Начать запись", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&toggle_item, &quit_item])?;
+
+    // Сохраняем toggle_item в state для обновления текста при смене состояния
+    app.manage(TrayToggleItem(toggle_item));
+
+    TrayIconBuilder::new()
+        .icon(app.default_window_icon().unwrap().clone())
+        .tooltip("ArcanaGlyph")
+        .menu(&menu)
+        .on_menu_event(|app: &AppHandle, event: MenuEvent| match event.id().as_ref() {
+            "toggle" => {
+                if let Some(engine) = app.try_state::<Arc<ArcanaEngine>>() {
+                    engine.trigger();
+                }
+            }
+            "quit" => {
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .build(app)?;
+
+    Ok(())
+}
+
+/// Обновляет текст toggle-пункта в меню трея
+pub fn set_tray_recording(app: &AppHandle, recording: bool) {
+    if let Some(item) = app.try_state::<TrayToggleItem>() {
+        let text = if recording {
+            "Остановить запись"
+        } else {
+            "Начать запись"
+        };
+        let _ = item.0.set_text(text);
+    }
+}

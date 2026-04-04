@@ -16,12 +16,17 @@ PURPLE  := $(ESC)[35m
 AZURE   := $(ESC)[36m
 WHITE   := $(ESC)[37m
 ##############################################################################
+# Vosk: линкер не находит libvosk.so в /usr/local/lib по умолчанию
+##############################################################################
+export LIBRARY_PATH := /usr/local/lib:$(LIBRARY_PATH)
+export LD_LIBRARY_PATH := /usr/local/lib:$(LD_LIBRARY_PATH)
+
+##############################################################################
 # Dependencies
 ##############################################################################
 
 .PHONY: install  ## Install dependencies
 install:
-	# combine debug release for run local
 	cargo build
 
 .PHONY: sync  ## Sync, update and remove extra dependencies
@@ -33,29 +38,41 @@ check:
 	echo "${GREEN}INFO : ${AZURE}Start Check${AZURE}${RESET}"
 	cargo check
 
-.PHONY: build   ## Build application
+.PHONY: build   ## Build release binary
 build:
-	cargo build --release
-	cp ./target/release/arcanaglyph .
-	chmod +x arcanaglyph
-
-runf:
-	./arcanaglyph
+	cargo build --release -p arcanaglyph-app
 
 ##############################################################################
 # Run local
 ##############################################################################
-.PHONY: run   ## Run application
+.PHONY: run   ## Run application (single command)
 run:
-	# cargo run
 	cargo run -p arcanaglyph-app
-	# cargo run -p arcanaglyph-app 2>/dev/null
 
-.PHONY: serv   ## Run server
-serv:
-	# cargo run -p arcanaglyph-core
-	cargo run -p arcanaglyph-core --manifest-path crates/arcanaglyph-core/Cargo.toml
+##############################################################################
+# Code quality
+##############################################################################
+.PHONY: fmt   ## Format code with rustfmt
+fmt:
+	cargo fmt
 
+.PHONY: lint   ## Run clippy linter
+lint:
+	cargo clippy -- -D warnings
+
+.PHONY: test   ## Run tests
+test:
+	cargo test
+
+.PHONY: all   ## Format, lint, check and test
+all: fmt lint check test
+
+##############################################################################
+# Packaging
+##############################################################################
+.PHONY: dist   ## Build distributable packages (.deb, .AppImage)
+dist:
+	cargo tauri build
 
 .PHONY: clean  ## Clean the build cache
 clean:

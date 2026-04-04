@@ -1,82 +1,50 @@
 // crates/arcanaglyph-core/src/main.rs
+// Legacy standalone-сервер (для отладки без Tauri)
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use futures_util::{SinkExt, StreamExt};
-use std::env;
+use arcanaglyph_core::{ArcanaEngine, CoreConfig, EngineEvent};
 use std::net::SocketAddr;
-use std::sync::mpsc as std_mpsc;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
 use tokio::net::{TcpListener, UdpSocket};
-use tokio::sync::broadcast;
-use tungstenite::Message;
-use vosk::{LogLevel, Model, Recognizer};
-// ИМПОРТИРУЕМ TRACING ВМЕСТО LOG
 use tracing::info;
 
-fn record_and_transcribe_with_stop(
-    stop_rx: std_mpsc::Receiver<()>,
-    recognizer_arc: Arc<Mutex<Recognizer>>,
-) -> String {
-    info!("Начинаю запись...");
-    // ... (остальной код функции без изменений, так как `info!` макрос работает так же)
-    let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .expect("Нет доступного устройства ввода");
-    let config = cpal::StreamConfig {
-        channels: 1,
-        sample_rate: cpal::SampleRate(48000),
-        buffer_size: cpal::BufferSize::Default,
-    };
-    let recognizer_clone = Arc::clone(&recognizer_arc);
-    let stream = device
-        .build_input_stream(
-            &config,
-            move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                let mut rec = recognizer_clone.lock().unwrap();
-                rec.accept_waveform(data).unwrap();
-            },
-            |err| eprintln!("Ошибка в аудиопотоке: {}", err),
-            None,
-        )
-        .expect("Не удалось создать аудиопоток");
-    stream.play().expect("Не удалось запустить аудиопоток");
-    info!("Идет запись... (нажмите хоткей для останова или ждите таймаут)");
-
-    let _ = stop_rx.recv();
-    stream.pause().expect("Не удалось остановить аудиопоток");
-    info!("Запись завершена. Начинаю транскрибацию...");
-
-    let mut recognizer_guard = recognizer_arc.lock().unwrap();
-    let final_result_json = recognizer_guard.final_result().single().unwrap();
-    info!("Финальный результат: {}", final_result_json.text);
-    let result_text = final_result_json.text.to_string();
-    recognizer_guard.reset();
-    result_text
-}
+use futures_util::{SinkExt, StreamExt};
+use tokio::sync::broadcast;
+use tungstenite::Message;
 
 async fn handle_connection(
     stream: tokio::net::TcpStream,
     addr: SocketAddr,
-    _recognizer: Arc<Mutex<Recognizer>>,
-    result_tx: Arc<broadcast::Sender<String>>,
+    mut event_rx: broadcast::Receiver<EngineEvent>,
 ) {
     info!("GUI подключился: {}", addr);
-    // ... (остальной код функции без изменений)
-    let ws_stream = tokio_tungstenite::accept_async(stream)
-        .await
-        .expect("Ошибка при рукопожатии websocket");
+
+    let ws_stream = match tokio_tungstenite::accept_async(stream).await {
+        Ok(ws) => ws,
+        Err(e) => {
+            tracing::error!("Ошибка при рукопожатии websocket: {}", e);
+            return;
+        }
+    };
 
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
-    let mut result_rx = result_tx.subscribe();
 
     loop {
         tokio::select! {
-            result = result_rx.recv() => {
+            result = event_rx.recv() => {
                 match result {
-                    Ok(msg) => {
-                        let msg_text = Message::Text(msg.into());
+                    Ok(event) => {
+                        let msg_json = match &event {
+                            EngineEvent::RecordingStarted => {
+                                serde_json::json!({"type": "status", "status": "recording_started"})
+                            }
+                            EngineEvent::TranscriptionResult(text) => {
+                                serde_json::json!({"type": "transcription_result", "text": text})
+                            }
+                            EngineEvent::FinishedProcessing => {
+                                serde_json::json!({"type": "status", "status": "finished_processing"})
+                            }
+                        };
+                        let msg_text = Message::Text(msg_json.to_string().into());
                         if ws_sender.send(msg_text).await.is_err() {
                             info!("Не удалось отправить сообщение, клиент {} отключился.", addr);
                             break;
@@ -99,132 +67,39 @@ async fn handle_connection(
 
 #[tokio::main]
 async fn main() {
-    vosk::set_log_level(LogLevel::Error);
-
-    // ИНИЦИАЛИЗИРУЕМ TRACING-SUBSCRIBER ВМЕСТО ENV_LOGGER
     tracing_subscriber::fmt::init();
-
     info!("Инициализация...");
 
-    let mut model_path = env::current_dir().expect("Не удалось получить текущую директорию");
-    model_path.push("models/vosk-model-ru-0.42");
+    let config = CoreConfig::default();
+    let engine = Arc::new(ArcanaEngine::new(config).expect("Не удалось инициализировать движок"));
 
-    info!("Загрузка модели из: {:?}", model_path);
-    let model = Model::new(model_path.to_str().unwrap()).expect("Не удалось создать модель");
-    info!("Модель успешно загружена.");
-    let recognizer = Arc::new(Mutex::new(
-        Recognizer::new(&model, 48000.0).expect("Не удалось создать распознаватель"),
-    ));
-
-    let is_busy = Arc::new(tokio::sync::Mutex::new(false));
-    let current_stop_tx = Arc::new(tokio::sync::Mutex::new(
-        Option::<std_mpsc::Sender<()>>::None,
-    ));
-    let (result_bcast_tx, _) = broadcast::channel::<String>(32);
-    let result_tx = Arc::new(result_bcast_tx);
-
-    let tcp_listener = TcpListener::bind("127.0.0.1:9001").await.unwrap();
+    let tcp_listener = TcpListener::bind("127.0.0.1:9001")
+        .await
+        .expect("Не удалось привязать TCP :9001");
     info!("Сервер сокетов запущен...");
     info!("Слушаю триггеры на UDP порту 9002.");
 
-    let is_busy_udp = Arc::clone(&is_busy);
-    let current_stop_tx_udp = Arc::clone(&current_stop_tx);
-    let result_tx_udp = Arc::clone(&result_tx);
-    let recognizer_udp = Arc::clone(&recognizer);
+    // UDP-триггер
+    let engine_udp = Arc::clone(&engine);
     tokio::spawn(async move {
         let udp_socket = UdpSocket::bind("127.0.0.1:9002")
             .await
-            .expect("Failed to bind UDP");
+            .expect("Не удалось привязать UDP :9002");
         let mut buf = [0u8; 1024];
 
         loop {
             if let Ok((n, _)) = udp_socket.recv_from(&mut buf).await {
                 let trigger_str = String::from_utf8_lossy(&buf[0..n]);
-                if !trigger_str.contains("trigger") {
-                    continue;
-                }
-
-                let mut busy_guard = is_busy_udp.lock().await;
-
-                if *busy_guard {
-                    let mut stop_tx_guard = current_stop_tx_udp.lock().await;
-                    if let Some(tx) = stop_tx_guard.take() {
-                        info!("Получен триггер для остановки записи.");
-                        let _ = tx.send(());
-                    } else {
-                        info!("Игнорирую триггер, идет обработка...");
-                    }
-                } else {
-                    info!("Получен триггер для начала записи.");
-                    *busy_guard = true;
-
-                    let (local_stop_tx, local_stop_rx) = std_mpsc::channel();
-                    *current_stop_tx_udp.lock().await = Some(local_stop_tx);
-
-                    let _ = result_tx_udp.send(
-                        serde_json::json!({
-                            "type": "status",
-                            "status": "recording_started"
-                        })
-                        .to_string(),
-                    );
-
-                    let stop_tx_for_timer = Arc::clone(&current_stop_tx_udp);
-                    tokio::spawn(async move {
-                        tokio::time::sleep(Duration::from_secs(20)).await;
-                        if let Some(tx) = stop_tx_for_timer.lock().await.take() {
-                            info!("Запись останавливается по таймеру (20с).");
-                            let _ = tx.send(());
-                        }
-                    });
-
-                    let result_tx_clone = Arc::clone(&result_tx_udp);
-                    let recognizer_clone = Arc::clone(&recognizer_udp);
-                    let stop_tx_for_recorder = Arc::clone(&current_stop_tx_udp);
-                    let is_busy_clone = Arc::clone(&is_busy_udp);
-                    tokio::spawn(async move {
-                        let text_future = tokio::task::spawn_blocking(move || {
-                            record_and_transcribe_with_stop(local_stop_rx, recognizer_clone)
-                        });
-
-                        match text_future.await {
-                            Ok(text_result) => {
-                                let msg = serde_json::json!({
-                                    "type": "transcription_result",
-                                    "text": text_result
-                                })
-                                .to_string();
-                                let _ = result_tx_clone.send(msg);
-                            }
-                            Err(e) => {
-                                // Для ошибок лучше использовать tracing::error!
-                                tracing::error!("Задача записи завершилась с ошибкой: {:?}", e);
-                            }
-                        }
-
-                        info!("Обработка завершена. Система готова к новой записи.");
-                        let _ = result_tx_clone.send(
-                            serde_json::json!({
-                                "type": "status",
-                                "status": "finished_processing"
-                            })
-                            .to_string(),
-                        );
-
-                        *is_busy_clone.lock().await = false;
-                        *stop_tx_for_recorder.lock().await = None;
-                    });
+                if trigger_str.contains("trigger") {
+                    engine_udp.trigger();
                 }
             }
         }
     });
 
+    // WebSocket-сервер
     while let Ok((stream, addr)) = tcp_listener.accept().await {
-        tokio::spawn(handle_connection(
-            stream,
-            addr,
-            Arc::clone(&recognizer),
-            Arc::clone(&result_tx),
-        ));
+        let event_rx = engine.subscribe();
+        tokio::spawn(handle_connection(stream, addr, event_rx));
     }
 }
