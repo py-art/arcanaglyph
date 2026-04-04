@@ -26,10 +26,17 @@
         height: 32px;
         display: flex;
         align-items: center;
-        justify-content: flex-end;
+        justify-content: space-between;
         -webkit-app-region: drag;
         flex-shrink: 0;
         background: #16161e;
+      }
+      .titlebar-icon {
+        width: 18px;
+        height: 18px;
+        margin-left: 10px;
+        -webkit-app-region: no-drag;
+        pointer-events: none;
       }
       .titlebar-btns {
         display: flex;
@@ -247,6 +254,7 @@
 
     <!-- Кастомный titlebar -->
     <div class="titlebar">
+      <img class="titlebar-icon" src="icon.png" alt="" />
       <div class="titlebar-btns">
         <button class="titlebar-btn btn-minimize" id="tb-min" title="Свернуть">
           <svg viewBox="0 0 12 12"><line x1="2" y1="6" x2="10" y2="6"/></svg>
