@@ -54,13 +54,8 @@ pub fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Обновляет текст toggle-пункта в меню трея
-pub fn set_tray_recording(app: &AppHandle, recording: bool) {
+pub fn set_tray_text(app: &AppHandle, text: &str) {
     if let Some(item) = app.try_state::<TrayToggleItem>() {
-        let text = if recording {
-            "Остановить запись"
-        } else {
-            "Начать запись"
-        };
         let _ = item.0.set_text(text);
     }
 }

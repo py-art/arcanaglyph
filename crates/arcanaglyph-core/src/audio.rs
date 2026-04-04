@@ -10,11 +10,19 @@ use vosk::Recognizer;
 
 use crate::error::ArcanaError;
 
+/// Команды управления записью
+pub enum AudioCommand {
+    /// Остановить запись и получить результат
+    Stop,
+    /// Приостановить/возобновить запись (переключатель)
+    TogglePause,
+}
+
 /// Записывает аудио с микрофона и транскрибирует через Vosk.
-/// Блокирующая функция — ждёт сигнала остановки через `stop_rx`.
+/// Блокирующая функция — ждёт команд через `cmd_rx`.
 /// Автоматически останавливается, если нет новых слов `silence_timeout_secs` секунд.
 pub fn record_and_transcribe(
-    stop_rx: std_mpsc::Receiver<()>,
+    cmd_rx: std_mpsc::Receiver<AudioCommand>,
     recognizer_arc: Arc<Mutex<Recognizer>>,
     sample_rate: u32,
     debug: bool,
@@ -54,27 +62,58 @@ pub fn record_and_transcribe(
 
     info!("Идет запись... (нажмите хоткей для останова или ждите таймаут)");
 
-    // Для отслеживания тишины
     let mut max_partial_len: usize = 0;
     let mut last_growth = Instant::now();
     let silence_timeout = Duration::from_secs(silence_timeout_secs);
 
-    // Для потокового вывода в терминал:
-    // segment_printed — сколько символов текущего partial-сегмента уже напечатано.
-    // Когда Vosk финализирует буфер, partial сбрасывается (становится короче) —
-    // обнуляем segment_printed и печатаем новый сегмент целиком.
     let mut segment_printed: usize = 0;
     let mut has_output = false;
+    let mut paused = false;
 
     if debug {
         eprint!("[Запись] ");
     }
 
     loop {
-        match stop_rx.try_recv() {
-            Ok(()) => break,
+        // Проверяем команды (неблокирующий)
+        match cmd_rx.try_recv() {
+            Ok(AudioCommand::Stop) => break,
+            Ok(AudioCommand::TogglePause) => {
+                if paused {
+                    // Возобновляем
+                    stream
+                        .play()
+                        .map_err(|e| ArcanaError::AudioStream(format!("Не удалось возобновить аудиопоток: {}", e)))?;
+                    paused = false;
+                    last_growth = Instant::now();
+                    if debug {
+                        if has_output {
+                            eprintln!();
+                        }
+                        eprint!("[Запись] ");
+                        has_output = false;
+                    }
+                } else {
+                    // Приостанавливаем
+                    stream
+                        .pause()
+                        .map_err(|e| ArcanaError::AudioStream(format!("Не удалось приостановить аудиопоток: {}", e)))?;
+                    paused = true;
+                    if debug && has_output {
+                        eprintln!();
+                        has_output = false;
+                    }
+                    eprintln!("[Пауза]");
+                }
+            }
             Err(std_mpsc::TryRecvError::Empty) => {}
             Err(std_mpsc::TryRecvError::Disconnected) => break,
+        }
+
+        // Во время паузы не обрабатываем partial и не считаем тишину
+        if paused {
+            thread::sleep(Duration::from_millis(200));
+            continue;
         }
 
         if let Ok(mut rec) = recognizer_arc.lock() {
@@ -83,10 +122,6 @@ pub fn record_and_transcribe(
             if !partial_text.is_empty() {
                 let char_count = partial_text.chars().count();
 
-                // Печатаем только если partial вырос дальше уже напечатанного.
-                // При финализации Vosk сбрасывает partial — он становится короче,
-                // но мы НЕ обнуляем segment_printed, а ждём пока новый текст
-                // перерастёт уже напечатанное. Так избегаем дублирования.
                 if char_count > segment_printed {
                     if debug {
                         let new_chars: String = partial_text.chars().skip(segment_printed).collect();
@@ -96,7 +131,6 @@ pub fn record_and_transcribe(
                     segment_printed = char_count;
                 }
 
-                // Отслеживаем рост для таймера тишины
                 if partial_text.len() > max_partial_len {
                     max_partial_len = partial_text.len();
                     last_growth = Instant::now();
@@ -120,6 +154,10 @@ pub fn record_and_transcribe(
     }
     eprintln!("[Запись остановлена]");
 
+    if paused {
+        // Если были на паузе — нужно возобновить перед закрытием
+        let _ = stream.play();
+    }
     stream
         .pause()
         .map_err(|e| ArcanaError::AudioStream(format!("Не удалось остановить аудиопоток: {}", e)))?;

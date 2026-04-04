@@ -187,6 +187,7 @@
       .ctrl-btn:hover { opacity: 0.85; }
 
       .pause-btn { background: #e98b3a; }
+      .pause-btn.resume { background: #4ecca3; }
       .pause-btn svg { width: 20px; height: 20px; fill: #fff; }
 
       .stop-btn { background: #e94560; }
@@ -344,9 +345,9 @@
         if (recording) invoke('trigger');
       });
 
-      /* --- Пауза — заглушка --- */
+      /* --- Клик по паузе = приостановить/возобновить --- */
       pauseBtn.addEventListener('click', () => {
-        /* TODO: реализовать паузу */
+        if (recording) invoke('pause');
       });
 
       /* --- Копирование результата --- */
@@ -375,6 +376,32 @@
         timerEl.textContent = '00:00';
         timerId = setInterval(() => { timerSec++; timerEl.textContent = fmt(timerSec); }, 1000);
         levelId = setInterval(() => { levelFill.style.width = (15 + Math.random()*65) + '%'; }, 130);
+      });
+
+      listen('engine://recording-paused', () => {
+        statusEl.textContent = 'Пауза';
+        statusEl.className = 'recording';
+        // Останавливаем таймер и полосу уровня
+        clearInterval(timerId);
+        clearInterval(levelId);
+        levelFill.style.width = '0%';
+        // Меняем иконку паузы на иконку записи (треугольник play) и цвет на зелёный
+        pauseBtn.innerHTML = '<svg viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20"/></svg>';
+        pauseBtn.classList.add('resume');
+        pauseBtn.title = 'Продолжить';
+      });
+
+      listen('engine://recording-resumed', () => {
+        statusEl.textContent = 'Запись...';
+        statusEl.className = 'recording';
+        // Возобновляем таймер и полосу уровня
+        timerId = setInterval(() => { timerSec++; timerEl.textContent = fmt(timerSec); }, 1000);
+        levelId = setInterval(() => { levelFill.style.width = (15 + Math.random()*65) + '%'; }, 130);
+        levelBar.classList.add('active');
+        // Возвращаем иконку и цвет паузы
+        pauseBtn.innerHTML = '<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
+        pauseBtn.classList.remove('resume');
+        pauseBtn.title = 'Пауза';
       });
 
       listen('engine://transcription-result', (ev) => {

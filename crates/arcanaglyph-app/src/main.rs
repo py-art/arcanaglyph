@@ -16,6 +16,13 @@ async fn trigger(engine: tauri::State<'_, Arc<ArcanaEngine>>) -> Result<(), Stri
     Ok(())
 }
 
+/// Tauri-команда: переключатель паузы
+#[tauri::command]
+async fn pause(engine: tauri::State<'_, Arc<ArcanaEngine>>) -> Result<(), String> {
+    engine.pause();
+    Ok(())
+}
+
 /// Tauri-команда: проверить, идёт ли запись
 #[tauri::command]
 async fn is_recording(engine: tauri::State<'_, Arc<ArcanaEngine>>) -> Result<bool, String> {
@@ -82,7 +89,9 @@ fn main() {
                 loop {
                     if let Ok((n, _)) = udp_socket.recv_from(&mut buf).await {
                         let msg = String::from_utf8_lossy(&buf[0..n]);
-                        if msg.contains("trigger") {
+                        if msg.contains("pause") {
+                            engine_udp.pause();
+                        } else if msg.contains("trigger") {
                             engine_udp.trigger();
                         }
                     }
@@ -98,17 +107,22 @@ fn main() {
                         Ok(event) => {
                             // Обновляем текст пункта меню в трее
                             match &event {
-                                EngineEvent::RecordingStarted => {
-                                    tray::set_tray_recording(&app_handle, true);
+                                EngineEvent::RecordingStarted | EngineEvent::RecordingResumed => {
+                                    tray::set_tray_text(&app_handle, "Остановить запись");
+                                }
+                                EngineEvent::RecordingPaused => {
+                                    tray::set_tray_text(&app_handle, "Продолжить запись");
                                 }
                                 EngineEvent::FinishedProcessing => {
-                                    tray::set_tray_recording(&app_handle, false);
+                                    tray::set_tray_text(&app_handle, "Начать запись");
                                 }
                                 _ => {}
                             }
 
                             let (event_name, payload) = match &event {
                                 EngineEvent::RecordingStarted => ("engine://recording-started", serde_json::json!({})),
+                                EngineEvent::RecordingPaused => ("engine://recording-paused", serde_json::json!({})),
+                                EngineEvent::RecordingResumed => ("engine://recording-resumed", serde_json::json!({})),
                                 EngineEvent::TranscriptionResult(text) => {
                                     ("engine://transcription-result", serde_json::json!({"text": text}))
                                 }
@@ -131,7 +145,7 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![trigger, is_recording])
+        .invoke_handler(tauri::generate_handler![trigger, pause, is_recording])
         .on_window_event(|window, event| {
             // Перехватываем закрытие окна — скрываем в трей вместо закрытия
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

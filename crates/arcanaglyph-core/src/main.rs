@@ -40,6 +40,12 @@ async fn handle_connection(
                             EngineEvent::TranscriptionResult(text) => {
                                 serde_json::json!({"type": "transcription_result", "text": text})
                             }
+                            EngineEvent::RecordingPaused => {
+                                serde_json::json!({"type": "status", "status": "recording_paused"})
+                            }
+                            EngineEvent::RecordingResumed => {
+                                serde_json::json!({"type": "status", "status": "recording_resumed"})
+                            }
                             EngineEvent::FinishedProcessing => {
                                 serde_json::json!({"type": "status", "status": "finished_processing"})
                             }

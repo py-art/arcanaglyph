@@ -7,7 +7,7 @@ use tokio::sync::broadcast;
 use tracing::info;
 use vosk::{LogLevel, Model, Recognizer};
 
-use crate::audio;
+use crate::audio::{self, AudioCommand};
 use crate::config::CoreConfig;
 use crate::error::ArcanaError;
 
@@ -16,6 +16,10 @@ use crate::error::ArcanaError;
 pub enum EngineEvent {
     /// Запись началась
     RecordingStarted,
+    /// Запись приостановлена
+    RecordingPaused,
+    /// Запись возобновлена
+    RecordingResumed,
     /// Результат транскрибации
     TranscriptionResult(String),
     /// Обработка завершена, система готова к новой записи
@@ -27,7 +31,8 @@ pub struct ArcanaEngine {
     config: CoreConfig,
     recognizer: Arc<Mutex<Recognizer>>,
     is_busy: Arc<tokio::sync::Mutex<bool>>,
-    current_stop_tx: Arc<tokio::sync::Mutex<Option<std_mpsc::Sender<()>>>>,
+    is_paused: Arc<tokio::sync::Mutex<bool>>,
+    current_cmd_tx: Arc<tokio::sync::Mutex<Option<std_mpsc::Sender<AudioCommand>>>>,
     event_tx: broadcast::Sender<EngineEvent>,
     rt_handle: Handle,
 }
@@ -53,7 +58,6 @@ impl ArcanaEngine {
 
         let (event_tx, _) = broadcast::channel::<EngineEvent>(32);
 
-        // Сохраняем Handle к текущему Tokio runtime, чтобы trigger() работал из любого потока
         let rt_handle = Handle::try_current().map_err(|_| {
             ArcanaError::Internal("ArcanaEngine::new() должен вызываться из контекста Tokio runtime".into())
         })?;
@@ -62,7 +66,8 @@ impl ArcanaEngine {
             config,
             recognizer: Arc::new(Mutex::new(recognizer)),
             is_busy: Arc::new(tokio::sync::Mutex::new(false)),
-            current_stop_tx: Arc::new(tokio::sync::Mutex::new(None)),
+            is_paused: Arc::new(tokio::sync::Mutex::new(false)),
+            current_cmd_tx: Arc::new(tokio::sync::Mutex::new(None)),
             event_tx,
             rt_handle,
         })
@@ -79,10 +84,10 @@ impl ArcanaEngine {
     }
 
     /// Переключатель записи: если не записывает — начать, если записывает — остановить.
-    /// Безопасно вызывать из любого потока (tray handler, hotkey handler, Tauri command).
     pub fn trigger(&self) {
         let is_busy = Arc::clone(&self.is_busy);
-        let current_stop_tx = Arc::clone(&self.current_stop_tx);
+        let is_paused = Arc::clone(&self.is_paused);
+        let current_cmd_tx = Arc::clone(&self.current_cmd_tx);
         let event_tx = self.event_tx.clone();
         let recognizer = Arc::clone(&self.recognizer);
         let silence_timeout_secs = self.config.max_record_secs;
@@ -96,10 +101,9 @@ impl ArcanaEngine {
 
             if *busy_guard {
                 // Останавливаем текущую запись
-                let mut stop_tx_guard = current_stop_tx.lock().await;
-                if let Some(tx) = stop_tx_guard.take() {
-                    // Не логируем здесь — audio.rs сам напечатает [Запись остановлена]
-                    let _ = tx.send(());
+                let mut cmd_tx_guard = current_cmd_tx.lock().await;
+                if let Some(tx) = cmd_tx_guard.take() {
+                    let _ = tx.send(AudioCommand::Stop);
                 } else {
                     info!("Игнорирую триггер, идет обработка...");
                 }
@@ -107,34 +111,27 @@ impl ArcanaEngine {
                 // Начинаем новую запись
                 info!("Получен триггер для начала записи.");
                 *busy_guard = true;
-                drop(busy_guard); // Освобождаем lock перед долгими операциями
+                *is_paused.lock().await = false;
+                drop(busy_guard);
 
-                let (local_stop_tx, local_stop_rx) = std_mpsc::channel();
-                *current_stop_tx.lock().await = Some(local_stop_tx);
+                let (cmd_tx, cmd_rx) = std_mpsc::channel();
+                *current_cmd_tx.lock().await = Some(cmd_tx);
 
                 let _ = event_tx.send(EngineEvent::RecordingStarted);
 
-                // Запись и транскрибация в блокирующей задаче
-                // (автоостановка по тишине реализована внутри audio::record_and_transcribe)
                 let event_tx_clone = event_tx.clone();
-                let stop_tx_for_recorder = Arc::clone(&current_stop_tx);
+                let cmd_tx_for_cleanup = Arc::clone(&current_cmd_tx);
                 let is_busy_clone = Arc::clone(&is_busy);
+                let is_paused_clone = Arc::clone(&is_paused);
                 handle.spawn(async move {
                     let recognizer_clone = Arc::clone(&recognizer);
                     let result = tokio::task::spawn_blocking(move || {
-                        audio::record_and_transcribe(
-                            local_stop_rx,
-                            recognizer_clone,
-                            sample_rate,
-                            debug,
-                            silence_timeout_secs,
-                        )
+                        audio::record_and_transcribe(cmd_rx, recognizer_clone, sample_rate, debug, silence_timeout_secs)
                     })
                     .await;
 
                     match result {
                         Ok(Ok(text)) => {
-                            // Автоматическая вставка текста в активное окно
                             if auto_type
                                 && !text.is_empty()
                                 && let Err(e) = crate::input::type_text(&text)
@@ -155,8 +152,36 @@ impl ArcanaEngine {
                     let _ = event_tx_clone.send(EngineEvent::FinishedProcessing);
 
                     *is_busy_clone.lock().await = false;
-                    *stop_tx_for_recorder.lock().await = None;
+                    *is_paused_clone.lock().await = false;
+                    *cmd_tx_for_cleanup.lock().await = None;
                 });
+            }
+        });
+    }
+
+    /// Переключатель паузы: если записывает — приостановить/возобновить.
+    pub fn pause(&self) {
+        let is_busy = Arc::clone(&self.is_busy);
+        let is_paused = Arc::clone(&self.is_paused);
+        let current_cmd_tx = Arc::clone(&self.current_cmd_tx);
+        let event_tx = self.event_tx.clone();
+
+        self.rt_handle.spawn(async move {
+            if !*is_busy.lock().await {
+                info!("Игнорирую паузу, запись не идёт.");
+                return;
+            }
+
+            let cmd_tx_guard = current_cmd_tx.lock().await;
+            if let Some(tx) = cmd_tx_guard.as_ref() {
+                let _ = tx.send(AudioCommand::TogglePause);
+                let mut paused = is_paused.lock().await;
+                *paused = !*paused;
+                if *paused {
+                    let _ = event_tx.send(EngineEvent::RecordingPaused);
+                } else {
+                    let _ = event_tx.send(EngineEvent::RecordingResumed);
+                }
             }
         });
     }
