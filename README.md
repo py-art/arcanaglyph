@@ -15,6 +15,12 @@ sudo apt-get update && sudo apt-get install \
   libxdo-dev
 ```
 
+Для вставки текста на **Wayland** (clipboard → Ctrl+V):
+
+```bash
+sudo apt install wl-clipboard wtype
+```
+
 Также необходима библиотека `libvosk`. Если она не установлена, можно собрать из исходников
 скриптом `scripts/legacy/install_libvosk.bash`.
 
@@ -114,7 +120,7 @@ make clean    # Очистка кэша
 
 ```text
 crates/
-  arcanaglyph-core/    # Библиотека: движок (Vosk + cpal + enigo)
+  arcanaglyph-core/    # Библиотека: движок (Vosk + cpal + wl-copy/wtype/enigo)
   arcanaglyph-app/     # Tauri v2 приложение (GUI + tray + горячие клавиши)
 dist/
   index.html           # Фронтенд (vanilla HTML/JS)
@@ -144,7 +150,18 @@ export LIBRARY_PATH=/usr/local/lib
 Убедитесь, что путь к модели корректен в `~/.config/ArcanaGlyph/config.toml`.
 Путь должен указывать на директорию, содержащую файлы `am/`, `graph/`, `conf/` и другие.
 
-### enigo: Ошибка "Не удалось создать Enigo"
+### Wayland: текст не вставляется в активное окно
+
+На Wayland приложения не могут напрямую эмулировать ввод в другие окна.
+ArcanaGlyph использует `wl-copy` + `wtype` (clipboard → Ctrl+V). Установите:
+
+```bash
+sudo apt install wl-clipboard wtype
+```
+
+При запуске приложение проверит наличие этих утилит и предупредит, если они не установлены.
+
+### X11: Ошибка "Не удалось создать Enigo"
 
 Установите `libxdo-dev`:
 
