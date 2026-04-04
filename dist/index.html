@@ -10,8 +10,8 @@
 
       body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        background: #1a1a2e;
-        color: #eee;
+        background: #1a1b26;
+        color: #c0caf5;
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -29,7 +29,7 @@
         justify-content: flex-end;
         -webkit-app-region: drag;
         flex-shrink: 0;
-        background: #1f2540;
+        background: #16161e;
       }
       .titlebar-btns {
         display: flex;
@@ -50,13 +50,13 @@
       .titlebar-btn svg {
         width: 12px;
         height: 12px;
-        stroke: #888;
+        stroke: #565f89;
         stroke-width: 1.5;
         fill: none;
       }
-      .titlebar-btn:hover svg { stroke: #ccc; }
-      .titlebar-btn:hover { background: rgba(255,255,255,0.08); }
-      .btn-close:hover { background: #e94560; }
+      .titlebar-btn:hover svg { stroke: #c0caf5; }
+      .titlebar-btn:hover { background: rgba(255,255,255,0.06); }
+      .btn-close:hover { background: #f7768e; }
       .btn-close:hover svg { stroke: #fff; }
 
       .content {
@@ -70,7 +70,7 @@
 
       h1 {
         font-size: 1.3rem;
-        color: #e94560;
+        color: #bb9af7;
         font-weight: 600;
         margin-bottom: 1.5rem;
       }
@@ -86,11 +86,11 @@
         position: absolute;
         inset: 0;
         border-radius: 50%;
-        background: rgba(78, 204, 163, 0.12);
+        background: rgba(122, 162, 247, 0.1);
         transition: background 0.3s;
       }
       .mic-glow.recording {
-        background: rgba(233, 69, 96, 0.18);
+        background: rgba(247, 118, 142, 0.18);
         animation: glow-pulse 1.5s ease-in-out infinite;
       }
       @keyframes glow-pulse {
@@ -101,42 +101,42 @@
         position: absolute;
         inset: 15px;
         border-radius: 50%;
-        background: #16213e;
-        border: 3px solid #4ecca3;
+        background: #1f2335;
+        border: 3px solid #7aa2f7;
         cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
         transition: border-color 0.3s, background 0.3s;
       }
-      .mic-btn:hover { border-color: #6fe8c0; }
+      .mic-btn:hover { border-color: #89b4fa; }
       .mic-btn.recording {
-        border-color: #e94560;
-        background: rgba(233, 69, 96, 0.1);
+        border-color: #f7768e;
+        background: rgba(247, 118, 142, 0.1);
       }
       .mic-btn svg {
         width: 36px;
         height: 36px;
-        fill: #4ecca3;
+        fill: #7aa2f7;
         transition: fill 0.3s;
       }
-      .mic-btn.recording svg { fill: #e94560; }
+      .mic-btn.recording svg { fill: #f7768e; }
 
       /* === Статус === */
       #status {
         font-size: 0.95rem;
-        color: #4ecca3;
+        color: #7aa2f7;
         font-weight: 500;
         margin-bottom: 1.2rem;
       }
-      #status.recording { color: #e94560; }
+      #status.recording { color: #f7768e; }
 
       /* === Уровень === */
       .level-bar {
         width: 85%;
         max-width: 320px;
         height: 6px;
-        background: #0f3460;
+        background: #1f2335;
         border-radius: 3px;
         overflow: hidden;
         margin-bottom: 1rem;
@@ -146,7 +146,7 @@
       .level-fill {
         height: 100%;
         width: 0%;
-        background: linear-gradient(90deg, #4ecca3 0%, #4ecca3 60%, #e94560 100%);
+        background: linear-gradient(90deg, #9ece6a 0%, #7aa2f7 50%, #f7768e 100%);
         border-radius: 3px;
         transition: width 0.12s;
       }
@@ -157,7 +157,7 @@
         font-weight: 300;
         font-variant-numeric: tabular-nums;
         letter-spacing: 3px;
-        color: #eee;
+        color: #c0caf5;
         margin-bottom: 1.5rem;
         visibility: hidden;
       }
@@ -186,15 +186,15 @@
       }
       .ctrl-btn:hover { opacity: 0.85; }
 
-      .pause-btn { background: #e98b3a; }
-      .pause-btn.resume { background: #4ecca3; }
-      .pause-btn svg { width: 20px; height: 20px; fill: #fff; }
+      .pause-btn { background: #ff9e64; }
+      .pause-btn.resume { background: #9ece6a; }
+      .pause-btn svg { width: 20px; height: 20px; fill: #1a1b26; }
 
-      .stop-btn { background: #e94560; }
+      .stop-btn { background: #f7768e; }
       .stop-icon {
         width: 18px;
         height: 18px;
-        background: #fff;
+        background: #1a1b26;
         border-radius: 3px;
       }
 
@@ -209,13 +209,13 @@
       .result-wrap.visible { display: block; }
       #result {
         font-size: 0.9rem;
-        background: #16213e;
-        border: 1px solid #0f3460;
+        background: #1f2335;
+        border: 1px solid #292e42;
         border-radius: 10px;
         padding: 0.8rem 1rem;
         word-wrap: break-word;
         white-space: pre-wrap;
-        color: #ccc;
+        color: #a9b1d6;
         line-height: 1.5;
         text-align: justify;
         user-select: text;
@@ -229,8 +229,8 @@
         right: -12px;
         width: 28px;
         height: 28px;
-        background: #16213e;
-        border: 1px solid #0f3460;
+        background: #1f2335;
+        border: 1px solid #292e42;
         border-radius: 50%;
         cursor: pointer;
         display: flex;
@@ -238,9 +238,9 @@
         justify-content: center;
         transition: background 0.2s, border-color 0.2s;
       }
-      .copy-btn:hover { background: #1a4a80; border-color: #4ecca3; }
-      .copy-btn svg { width: 13px; height: 13px; fill: #aaa; }
-      .copy-btn.copied svg { fill: #4ecca3; }
+      .copy-btn:hover { background: #292e42; border-color: #7aa2f7; }
+      .copy-btn svg { width: 13px; height: 13px; fill: #565f89; }
+      .copy-btn.copied svg { fill: #9ece6a; }
     </style>
   </head>
   <body>
@@ -375,17 +375,18 @@
         timerSec = 0;
         timerEl.textContent = '00:00';
         timerId = setInterval(() => { timerSec++; timerEl.textContent = fmt(timerSec); }, 1000);
-        levelId = setInterval(() => { levelFill.style.width = (15 + Math.random()*65) + '%'; }, 130);
+        levelId = setInterval(async () => {
+          const level = await invoke('get_audio_level');
+          levelFill.style.width = level + '%';
+        }, 100);
       });
 
       listen('engine://recording-paused', () => {
         statusEl.textContent = 'Пауза';
         statusEl.className = 'recording';
-        // Останавливаем таймер и полосу уровня
         clearInterval(timerId);
         clearInterval(levelId);
         levelFill.style.width = '0%';
-        // Меняем иконку паузы на иконку записи (треугольник play) и цвет на зелёный
         pauseBtn.innerHTML = '<svg viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20"/></svg>';
         pauseBtn.classList.add('resume');
         pauseBtn.title = 'Продолжить';
@@ -394,11 +395,12 @@
       listen('engine://recording-resumed', () => {
         statusEl.textContent = 'Запись...';
         statusEl.className = 'recording';
-        // Возобновляем таймер и полосу уровня
         timerId = setInterval(() => { timerSec++; timerEl.textContent = fmt(timerSec); }, 1000);
-        levelId = setInterval(() => { levelFill.style.width = (15 + Math.random()*65) + '%'; }, 130);
+        levelId = setInterval(async () => {
+          const level = await invoke('get_audio_level');
+          levelFill.style.width = level + '%';
+        }, 100);
         levelBar.classList.add('active');
-        // Возвращаем иконку и цвет паузы
         pauseBtn.innerHTML = '<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
         pauseBtn.classList.remove('resume');
         pauseBtn.title = 'Пауза';
@@ -407,7 +409,6 @@
       listen('engine://transcription-result', (ev) => {
         resultEl.textContent = ev.payload.text || '(пустой результат)';
         resultWrap.classList.add('visible');
-        // Показать скролл только если текст не влезает
         requestAnimationFrame(() => {
           resultEl.classList.toggle('scrollable', resultEl.scrollHeight > resultEl.clientHeight);
         });

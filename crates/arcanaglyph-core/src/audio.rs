@@ -1,6 +1,7 @@
 // crates/arcanaglyph-core/src/audio.rs
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -27,6 +28,7 @@ pub fn record_and_transcribe(
     sample_rate: u32,
     debug: bool,
     silence_timeout_secs: u64,
+    audio_level: Arc<AtomicU32>,
 ) -> Result<String, ArcanaError> {
     info!("Начинаю запись...");
 
@@ -42,10 +44,20 @@ pub fn record_and_transcribe(
     };
 
     let recognizer_clone = Arc::clone(&recognizer_arc);
+    let level_clone = Arc::clone(&audio_level);
     let stream = device
         .build_input_stream(
             &config,
             move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                // Считаем RMS (уровень громкости) и сохраняем в atomic (0-100)
+                if !data.is_empty() {
+                    let sum_sq: f64 = data.iter().map(|&s| (s as f64) * (s as f64)).sum();
+                    let rms = (sum_sq / data.len() as f64).sqrt();
+                    // Нормализуем: i16 max = 32768, логарифмическая шкала
+                    let level = ((rms / 3000.0).min(1.0) * 100.0) as u32;
+                    level_clone.store(level, Ordering::Relaxed);
+                }
+
                 let mut rec = recognizer_clone.lock().unwrap();
                 if let Err(e) = rec.accept_waveform(data) {
                     tracing::error!("Ошибка при обработке аудиоданных: {:?}", e);
@@ -99,6 +111,7 @@ pub fn record_and_transcribe(
                         .pause()
                         .map_err(|e| ArcanaError::AudioStream(format!("Не удалось приостановить аудиопоток: {}", e)))?;
                     paused = true;
+                    audio_level.store(0, Ordering::Relaxed);
                     if debug && has_output {
                         eprintln!();
                         has_output = false;
@@ -153,6 +166,7 @@ pub fn record_and_transcribe(
         eprintln!();
     }
     eprintln!("[Запись остановлена]");
+    audio_level.store(0, Ordering::Relaxed);
 
     if paused {
         // Если были на паузе — нужно возобновить перед закрытием
