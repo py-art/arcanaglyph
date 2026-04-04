@@ -47,7 +47,6 @@ impl ArcanaEngine {
     /// Создаёт новый экземпляр движка: загружает модель Vosk, инициализирует каналы.
     /// Должен вызываться из контекста Tokio runtime (сохраняет Handle для spawn).
     pub fn new(config: CoreConfig, window_visible: Arc<AtomicBool>) -> Result<Self, ArcanaError> {
-        crate::input::check_dependencies();
         vosk::set_log_level(LogLevel::Error);
 
         info!("Загрузка модели из: {:?}", config.model_path);

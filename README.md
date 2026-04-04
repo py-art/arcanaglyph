@@ -15,10 +15,10 @@ sudo apt-get update && sudo apt-get install \
   libxdo-dev
 ```
 
-Для вставки текста на **Wayland** (clipboard → Ctrl+V):
+Для вставки текста на **Wayland** (clipboard):
 
 ```bash
-sudo apt install wl-clipboard ydotool
+sudo apt install wl-clipboard
 ```
 
 Также необходима библиотека `libvosk`. Если она не установлена, можно собрать из исходников
@@ -153,13 +153,13 @@ export LIBRARY_PATH=/usr/local/lib
 ### Wayland: текст не вставляется в активное окно
 
 На Wayland приложения не могут напрямую эмулировать ввод в другие окна.
-ArcanaGlyph использует `wl-copy` + `ydotool` (clipboard → Ctrl+V). Установите:
+ArcanaGlyph использует `wl-copy` (clipboard) + XDG RemoteDesktop portal (симуляция Ctrl+V).
+При первом использовании GNOME покажет диалог подтверждения.
+Установите `wl-clipboard`:
 
 ```bash
-sudo apt install wl-clipboard ydotool
+sudo apt install wl-clipboard
 ```
-
-При запуске приложение проверит наличие этих утилит и предупредит, если они не установлены.
 
 ### X11: Ошибка "Не удалось создать Enigo"
 

@@ -57,10 +57,10 @@ Cargo workspace из двух крейтов:
 sudo apt-get install build-essential libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev
 ```
 
-Для вставки текста на Wayland (clipboard + ydotool через /dev/uinput):
+Для вставки текста на Wayland (clipboard + XDG RemoteDesktop portal):
 
 ```bash
-sudo apt install wl-clipboard ydotool
+sudo apt install wl-clipboard
 ```
 
 Также нужны: `libvosk.so` (в `/usr/local/lib/`) и Vosk-модель `models/vosk-model-ru-0.42/`.
