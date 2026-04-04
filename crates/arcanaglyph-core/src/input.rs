@@ -36,8 +36,33 @@ struct RdSession {
 /// Глобальная сессия RemoteDesktop (создаётся один раз)
 static RD_SESSION: OnceLock<Mutex<Option<RdSession>>> = OnceLock::new();
 
-/// Инициализирует RemoteDesktop сессию (при первом вызове покажется диалог GNOME)
+/// Путь к файлу с restore_token для сохранения разрешения между запусками
+fn restore_token_path() -> Option<std::path::PathBuf> {
+    directories::ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph")
+        .map(|dirs| dirs.data_dir().join("rd_restore_token"))
+}
+
+/// Загружает restore_token из файла
+fn load_restore_token() -> Option<String> {
+    let path = restore_token_path()?;
+    std::fs::read_to_string(&path).ok().filter(|s| !s.is_empty())
+}
+
+/// Сохраняет restore_token в файл
+fn save_restore_token(token: &str) {
+    if let Some(path) = restore_token_path() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&path, token);
+    }
+}
+
+/// Инициализирует RemoteDesktop сессию.
+/// При первом вызове GNOME покажет диалог подтверждения.
+/// При последующих запусках используется сохранённый restore_token.
 async fn init_rd_session() -> Result<RdSession, ArcanaError> {
+    use ashpd::desktop::PersistMode;
     use ashpd::desktop::remote_desktop::{DeviceType, RemoteDesktop, SelectDevicesOptions};
     use ashpd::enumflags2::BitFlags;
 
@@ -52,20 +77,33 @@ async fn init_rd_session() -> Result<RdSession, ArcanaError> {
         .await
         .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось создать RemoteDesktop сессию: {}", e)))?;
 
+    // Загружаем сохранённый токен для восстановления без диалога
+    let restore_token = load_restore_token();
+    let mut opts = SelectDevicesOptions::default()
+        .set_devices(BitFlags::from(DeviceType::Keyboard))
+        .set_persist_mode(PersistMode::ExplicitlyRevoked);
+    if let Some(ref token) = restore_token {
+        tracing::info!("Восстанавливаю RemoteDesktop сессию из сохранённого токена");
+        opts = opts.set_restore_token(token.as_str());
+    }
+
     proxy
-        .select_devices(
-            &session,
-            SelectDevicesOptions::default().set_devices(BitFlags::from(DeviceType::Keyboard)),
-        )
+        .select_devices(&session, opts)
         .await
         .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось выбрать устройства: {}", e)))?;
 
-    proxy
+    let response = proxy
         .start(&session, None, Default::default())
         .await
         .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось запустить RemoteDesktop сессию: {}", e)))?
         .response()
         .map_err(|e| ArcanaError::InputSimulation(format!("Пользователь отклонил запрос RemoteDesktop: {}", e)))?;
+
+    // Сохраняем новый restore_token для будущих запусков
+    if let Some(token) = response.restore_token() {
+        save_restore_token(token);
+        tracing::info!("RemoteDesktop restore_token сохранён");
+    }
 
     tracing::info!("RemoteDesktop сессия успешно создана");
     Ok(RdSession { proxy, session })
@@ -138,7 +176,6 @@ async fn type_text_wayland(text: &str) -> Result<(), ArcanaError> {
     if let Some(rd) = guard.as_ref() {
         if let Err(e) = simulate_ctrl_v(rd).await {
             tracing::warn!("Ошибка RemoteDesktop: {}. Пересоздаю сессию...", e);
-            // Сессия сломалась — сбрасываем для пересоздания при следующем вызове
             *guard = None;
             tracing::info!("Текст скопирован в буфер обмена — нажмите Ctrl+V для вставки");
         } else {
