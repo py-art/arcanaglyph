@@ -132,6 +132,13 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![trigger, is_recording])
+        .on_window_event(|window, event| {
+            // Перехватываем закрытие окна — скрываем в трей вместо закрытия
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .run(tauri::generate_context!())
         .expect("Ошибка запуска Tauri");
 }

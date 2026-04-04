@@ -6,6 +6,7 @@
     <title>ArcanaGlyph</title>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
+      html { overflow: hidden; }
 
       body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -15,15 +16,63 @@
         flex-direction: column;
         align-items: center;
         min-height: 100vh;
-        padding: 1.5rem 1rem;
+        padding: 0;
         user-select: none;
+      }
+
+      /* === Кастомный titlebar === */
+      .titlebar {
+        width: 100%;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        -webkit-app-region: drag;
+        flex-shrink: 0;
+        background: #1f2540;
+      }
+      .titlebar-btns {
+        display: flex;
+        -webkit-app-region: no-drag;
+        height: 100%;
+      }
+      .titlebar-btn {
+        width: 40px;
+        height: 100%;
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.15s;
+      }
+      .titlebar-btn svg {
+        width: 12px;
+        height: 12px;
+        stroke: #888;
+        stroke-width: 1.5;
+        fill: none;
+      }
+      .titlebar-btn:hover svg { stroke: #ccc; }
+      .titlebar-btn:hover { background: rgba(255,255,255,0.08); }
+      .btn-close:hover { background: #e94560; }
+      .btn-close:hover svg { stroke: #fff; }
+
+      .content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        flex: 1;
+        width: 100%;
+        padding: 1rem 1rem 1rem;
       }
 
       h1 {
         font-size: 1.3rem;
         color: #e94560;
         font-weight: 600;
-        margin-bottom: 2rem;
+        margin-bottom: 1.5rem;
       }
 
       /* === Микрофон === */
@@ -149,26 +198,68 @@
       }
 
       /* === Результат === */
+      .result-wrap {
+        position: relative;
+        width: 90%;
+        max-width: 360px;
+        display: none;
+        margin-top: 0.8rem;
+      }
+      .result-wrap.visible { display: block; }
       #result {
-        font-size: 0.95rem;
+        font-size: 0.9rem;
         background: #16213e;
         border: 1px solid #0f3460;
         border-radius: 10px;
-        padding: 1rem 1.2rem;
-        width: 90%;
-        max-width: 360px;
+        padding: 0.8rem 1rem;
         word-wrap: break-word;
         white-space: pre-wrap;
         color: #ccc;
         line-height: 1.5;
-        text-align: center;
-        display: none;
+        text-align: justify;
+        user-select: text;
+        max-height: 200px;
+        overflow: hidden;
       }
-      #result.visible { display: block; }
+      #result.scrollable { overflow-y: auto; }
+      .copy-btn {
+        position: absolute;
+        top: -12px;
+        right: -12px;
+        width: 28px;
+        height: 28px;
+        background: #16213e;
+        border: 1px solid #0f3460;
+        border-radius: 50%;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s, border-color 0.2s;
+      }
+      .copy-btn:hover { background: #1a4a80; border-color: #4ecca3; }
+      .copy-btn svg { width: 13px; height: 13px; fill: #aaa; }
+      .copy-btn.copied svg { fill: #4ecca3; }
     </style>
   </head>
   <body>
 
+    <!-- Кастомный titlebar -->
+    <div class="titlebar">
+      <div class="titlebar-btns">
+        <button class="titlebar-btn btn-minimize" id="tb-min" title="Свернуть">
+          <svg viewBox="0 0 12 12"><line x1="2" y1="6" x2="10" y2="6"/></svg>
+        </button>
+        <button class="titlebar-btn btn-maximize" id="tb-max" title="Развернуть">
+          <svg viewBox="0 0 12 12"><rect x="2" y="2" width="8" height="8" rx="1"/></svg>
+        </button>
+        <button class="titlebar-btn btn-close" id="tb-close" title="Закрыть">
+          <svg viewBox="0 0 12 12"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="content">
     <h1>ArcanaGlyph</h1>
 
     <!-- Микрофон -->
@@ -180,6 +271,14 @@
     </div>
 
     <p id="status">Готов к записи</p>
+
+    <!-- Результат (сразу под статусом) -->
+    <div class="result-wrap" id="result-wrap">
+      <div id="result"></div>
+      <button class="copy-btn" id="copy-btn" title="Копировать">
+        <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+      </button>
+    </div>
 
     <!-- Уровень звука -->
     <div class="level-bar" id="level-bar">
@@ -199,15 +298,24 @@
       </button>
     </div>
 
-    <!-- Результат -->
-    <div id="result"></div>
-
+    </div><!-- .content -->
     <script>
       const { invoke } = window.__TAURI__.core;
       const { listen } = window.__TAURI__.event;
+      const { getCurrentWindow } = window.__TAURI__.window;
+      const appWindow = getCurrentWindow();
+
+      /* --- Кнопки titlebar --- */
+      document.getElementById('tb-min').addEventListener('click', () => appWindow.minimize());
+      document.getElementById('tb-max').addEventListener('click', async () => {
+        (await appWindow.isMaximized()) ? appWindow.unmaximize() : appWindow.maximize();
+      });
+      document.getElementById('tb-close').addEventListener('click', () => appWindow.hide());
 
       const statusEl  = document.getElementById('status');
+      const resultWrap = document.getElementById('result-wrap');
       const resultEl  = document.getElementById('result');
+      const copyBtn   = document.getElementById('copy-btn');
       const micBtn    = document.getElementById('mic-btn');
       const micGlow   = document.getElementById('mic-glow');
       const timerEl   = document.getElementById('timer');
@@ -241,10 +349,17 @@
         /* TODO: реализовать паузу */
       });
 
+      /* --- Копирование результата --- */
+      copyBtn.addEventListener('click', async () => {
+        await navigator.clipboard.writeText(resultEl.textContent);
+        copyBtn.classList.add('copied');
+        setTimeout(() => copyBtn.classList.remove('copied'), 1500);
+      });
+
       /* --- События engine --- */
       listen('engine://recording-started', () => {
         recording = true;
-        resultEl.classList.remove('visible');
+        resultWrap.classList.remove('visible');
         resultEl.textContent = '';
 
         micBtn.classList.add('recording');
@@ -264,7 +379,11 @@
 
       listen('engine://transcription-result', (ev) => {
         resultEl.textContent = ev.payload.text || '(пустой результат)';
-        resultEl.classList.add('visible');
+        resultWrap.classList.add('visible');
+        // Показать скролл только если текст не влезает
+        requestAnimationFrame(() => {
+          resultEl.classList.toggle('scrollable', resultEl.scrollHeight > resultEl.clientHeight);
+        });
       });
 
       listen('engine://finished-processing', () => {
