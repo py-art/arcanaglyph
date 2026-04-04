@@ -10,6 +10,27 @@ fn is_wayland() -> bool {
         .unwrap_or(false)
 }
 
+/// Проверяет наличие системных утилит для вставки текста.
+/// На Wayland требуются wl-copy и wtype.
+pub fn check_dependencies() {
+    if is_wayland() {
+        let wl_copy = Command::new("wl-copy").arg("--version").output().is_ok();
+        let wtype = Command::new("wtype").arg("--version").output().is_ok();
+        if !wl_copy || !wtype {
+            let missing: Vec<&str> = [(!wl_copy, "wl-clipboard"), (!wtype, "wtype")]
+                .iter()
+                .filter(|(m, _)| *m)
+                .map(|(_, name)| *name)
+                .collect();
+            tracing::warn!(
+                "Для вставки текста на Wayland необходимы: {}. Установите: sudo apt install {}",
+                missing.join(", "),
+                missing.join(" ")
+            );
+        }
+    }
+}
+
 /// Вставляет текст туда, где стоит курсор.
 /// На Wayland: копирует в clipboard через wl-copy, затем Ctrl+V через wtype.
 /// На X11: использует enigo для прямой эмуляции ввода.
