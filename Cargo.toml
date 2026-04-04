@@ -1,0 +1,8 @@
+# ./Cargo.toml
+
+[workspace]
+members = [
+    "crates/arcanaglyph-app",
+    "crates/arcanaglyph-core",
+]
+resolver = "2"
