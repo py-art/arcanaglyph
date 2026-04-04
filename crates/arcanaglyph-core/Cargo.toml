@@ -5,12 +5,26 @@ name = "arcanaglyph-core"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "arcanaglyph_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "arcanaglyph-core"
+path = "src/main.rs"
+
 [dependencies]
 cpal = "0.16.0"
 vosk = "0.3.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tungstenite = "0.27.0"
+thiserror = "2"
 tokio = { version = "1.47.1", features = ["full"] }
+tracing = "0.1.41"
+tracing-subscriber = "0.3.20"
+tungstenite = "0.27.0"
 futures-util = "0.3.31"
 tokio-tungstenite = "0.27.0"
+enigo = "0.3"
+toml = "0.8"
+directories = "6"
