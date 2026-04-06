@@ -27,6 +27,8 @@ pub enum EngineEvent {
     FinishedProcessing,
     /// Запрос на вывод окна на передний план (когда окно видимо)
     RequestFocus,
+    /// Ошибка, которую нужно показать пользователю
+    Error(String),
 }
 
 /// Основной движок ArcanaGlyph: управляет записью, распознаванием и рассылкой событий
@@ -154,26 +156,34 @@ impl ArcanaEngine {
 
                     match result {
                         Ok(Ok(text)) => {
-                            let is_visible = window_visible.load(Ordering::Relaxed);
-                            // Вставляем текст только когда окно скрыто (в трее)
-                            if auto_type
-                                && !text.is_empty()
-                                && !is_visible
-                                && let Err(e) = crate::input::type_text(&text).await
-                            {
-                                tracing::error!("Не удалось вставить текст: {}", e);
-                            }
-                            let _ = event_tx_clone.send(EngineEvent::TranscriptionResult(text));
-                            // Если окно видимо — запрашиваем фокус для вывода на передний план
-                            if is_visible {
-                                let _ = event_tx_clone.send(EngineEvent::RequestFocus);
+                            if text.is_empty() {
+                                tracing::warn!("Распознавание вернуло пустой результат. Проверьте микрофон.");
+                                let _ = event_tx_clone.send(EngineEvent::Error(
+                                    "Микрофон не захватил речь. Проверьте, что микрофон подключён и выбран как устройство по умолчанию.".to_string(),
+                                ));
+                            } else {
+                                let is_visible = window_visible.load(Ordering::Relaxed);
+                                // Вставляем текст только когда окно скрыто (в трее)
+                                if auto_type
+                                    && !is_visible
+                                    && let Err(e) = crate::input::type_text(&text).await
+                                {
+                                    tracing::error!("Не удалось вставить текст: {}", e);
+                                }
+                                let _ = event_tx_clone.send(EngineEvent::TranscriptionResult(text));
+                                // Если окно видимо — запрашиваем фокус для вывода на передний план
+                                if is_visible {
+                                    let _ = event_tx_clone.send(EngineEvent::RequestFocus);
+                                }
                             }
                         }
                         Ok(Err(e)) => {
                             tracing::error!("Ошибка транскрибации: {}", e);
+                            let _ = event_tx_clone.send(EngineEvent::Error(format!("Ошибка транскрибации: {}", e)));
                         }
                         Err(e) => {
                             tracing::error!("Задача записи завершилась с ошибкой: {:?}", e);
+                            let _ = event_tx_clone.send(EngineEvent::Error(format!("Ошибка записи: {:?}", e)));
                         }
                     }
 

@@ -51,8 +51,10 @@ async fn handle_connection(
                                 serde_json::json!({"type": "status", "status": "finished_processing"})
                             }
                             EngineEvent::RequestFocus => {
-                                // В legacy-режиме RequestFocus не актуален
                                 continue;
+                            }
+                            EngineEvent::Error(msg) => {
+                                serde_json::json!({"type": "error", "message": msg})
                             }
                         };
                         let msg_text = Message::Text(msg_json.to_string().into());

@@ -45,6 +45,9 @@ pub fn record_and_transcribe(
 
     let recognizer_clone = Arc::clone(&recognizer_arc);
     let level_clone = Arc::clone(&audio_level);
+    // Счётчик ненулевых аудио-фреймов для детекции «мёртвого» микрофона
+    let audio_frames_received = Arc::new(AtomicU32::new(0));
+    let frames_clone = Arc::clone(&audio_frames_received);
     let stream = device
         .build_input_stream(
             &config,
@@ -56,6 +59,9 @@ pub fn record_and_transcribe(
                     // Нормализуем: i16 max = 32768, логарифмическая шкала
                     let level = ((rms / 3000.0).min(1.0) * 100.0) as u32;
                     level_clone.store(level, Ordering::Relaxed);
+                    if rms > 10.0 {
+                        frames_clone.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
 
                 let mut rec = recognizer_clone.lock().unwrap();
@@ -177,6 +183,13 @@ pub fn record_and_transcribe(
         .map_err(|e| ArcanaError::AudioStream(format!("Не удалось остановить аудиопоток: {}", e)))?;
 
     info!("Запись завершена. Начинаю транскрибацию...");
+
+    // Проверяем, приходил ли звук с микрофона
+    let frames = audio_frames_received.load(Ordering::Relaxed);
+    if frames == 0 {
+        tracing::warn!("За время записи не получено аудиоданных. Микрофон не подключён или выбрано неверное устройство.");
+        eprintln!("[Ошибка] Микрофон не захватил звук. Проверьте подключение и настройки аудиоустройства.");
+    }
 
     let mut recognizer_guard = recognizer_arc
         .lock()
