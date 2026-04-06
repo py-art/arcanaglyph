@@ -19,6 +19,7 @@
         min-height: 100vh;
         padding: 0;
         user-select: none;
+        overflow: hidden;
       }
 
       /* === Кастомный titlebar === */
@@ -78,7 +79,7 @@
 
       h1 {
         font-size: 1.3rem;
-        color: #bb9af7;
+        color: #89b4fa;
         font-weight: 600;
         margin-bottom: 1.5rem;
       }
@@ -285,10 +286,8 @@
       .menu-btn.back { width: auto; padding: 0 6px; }
       /* Иконка по центру titlebar */
       .titlebar-icon-center {
-        position: absolute;
-        left: 50%;
-        transform: translateX(-50%);
         height: 18px;
+        margin: 0 auto;
         pointer-events: none;
       }
 
@@ -395,19 +394,27 @@
       }
       .custom-select-options {
         display: none;
+        background: #1f2335;
+        border: 1px solid #7aa2f7;
+        border-radius: 6px;
+        max-height: 200px;
+        overflow-y: auto;
+      }
+      /* Когда dropdown портирован в body — fixed позиция */
+      .custom-select-options.portal {
+        display: block;
+        position: fixed;
+        z-index: 10000;
+      }
+      /* Когда НЕ портирован (fallback) */
+      .custom-select.open .custom-select-options:not(.portal) {
+        display: block;
         position: absolute;
         top: 100%;
         left: 0;
         right: 0;
-        background: #1f2335;
-        border: 1px solid #292e42;
-        border-top: none;
-        border-radius: 0 0 6px 6px;
-        z-index: 100;
-        max-height: 200px;
-        overflow-y: auto;
+        z-index: 1000;
       }
-      .custom-select.open .custom-select-options { display: block; }
       .custom-select-option {
         padding: 0.5rem 0.6rem;
         color: #c0caf5;
@@ -517,6 +524,148 @@
         display: none;
       }
       .save-notice.visible { display: block; }
+
+      /* === Модальный диалог === */
+      .modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 20000;
+        align-items: center;
+        justify-content: center;
+      }
+      .modal-overlay.visible { display: flex; }
+      .modal-box {
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 12px;
+        padding: 1.5rem;
+        max-width: 300px;
+        width: 90%;
+        text-align: center;
+      }
+      .modal-box p {
+        color: #c0caf5;
+        font-size: 0.9rem;
+        margin-bottom: 1.2rem;
+        line-height: 1.4;
+      }
+      .modal-buttons {
+        display: flex;
+        gap: 0.5rem;
+      }
+      .modal-btn {
+        flex: 1;
+        padding: 0.5rem;
+        border: none;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: opacity 0.15s;
+      }
+      .modal-btn:hover { opacity: 0.85; }
+      .modal-btn.cancel {
+        background: #292e42;
+        color: #565f89;
+      }
+      .modal-btn.confirm {
+        background: #f7768e;
+        color: #1a1b26;
+      }
+
+      /* === История === */
+      .hist-entry {
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 8px;
+        padding: 0.6rem 0.8rem;
+        margin-bottom: 0.5rem;
+        position: relative;
+      }
+      .hist-meta {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0.3rem;
+        font-size: 0.72rem;
+        color: #565f89;
+        min-height: 24px;
+      }
+      .hist-model {
+        background: #292e42;
+        padding: 1px 6px;
+        border-radius: 4px;
+        color: #7aa2f7;
+        font-size: 0.7rem;
+      }
+      .hist-text {
+        font-size: 0.82rem;
+        color: #a9b1d6;
+        line-height: 1.4;
+        word-wrap: break-word;
+        white-space: pre-wrap;
+      }
+      .hist-actions {
+        display: flex;
+        gap: 0.3rem;
+        margin-left: auto;
+        flex-shrink: 0;
+      }
+      .hist-btn {
+        width: 24px;
+        height: 24px;
+        background: transparent;
+        border: 1px solid #292e42;
+        border-radius: 4px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.15s, border-color 0.15s;
+      }
+      .hist-btn:hover { background: #292e42; border-color: #7aa2f7; }
+      .hist-btn.delete:hover { border-color: #f7768e; }
+      .hist-btn svg { width: 12px; height: 12px; fill: #565f89; }
+      .hist-btn:hover svg { fill: #c0caf5; }
+      .hist-btn.delete:hover svg { fill: #f7768e; }
+      .hist-btn.play:hover svg { fill: #9ece6a; }
+      .hist-btn.play.playing { border-color: #f7768e; }
+      .hist-btn.play.playing svg { fill: #f7768e; }
+
+      .hist-entry .custom-select-trigger.original {
+        border-color: #9ece6a;
+        color: #9ece6a;
+      }
+
+      .hist-retranscribe-btn {
+        width: 100%;
+        padding: 0.5rem;
+        background: transparent;
+        border: 1px solid #7aa2f7;
+        border-radius: 6px;
+        color: #7aa2f7;
+        font-size: 0.82rem;
+        cursor: pointer;
+        transition: background 0.15s;
+        margin: 0.3rem 0;
+      }
+      .hist-retranscribe-btn:hover { background: rgba(122, 162, 247, 0.1); }
+      .hist-retranscribe-btn:disabled { color: #565f89; border-color: #292e42; cursor: default; }
+
+      .hist-page-btn {
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 6px;
+        color: #c0caf5;
+        padding: 4px 12px;
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .hist-page-btn:hover:not(:disabled) { background: #292e42; }
+      .hist-page-btn:disabled { color: #565f89; cursor: default; }
     </style>
   </head>
   <body>
@@ -527,7 +676,6 @@
         <svg viewBox="0 0 16 16"><line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="14" y2="8"/><line x1="2" y1="12" x2="14" y2="12"/></svg>
         <span class="back-text">← Назад</span>
       </button>
-      <img class="titlebar-icon-center" src="icon.png" alt="" />
       <div class="titlebar-btns">
         <button class="titlebar-btn btn-minimize" id="tb-min" title="Свернуть">
           <svg viewBox="0 0 12 12"><line x1="2" y1="6" x2="10" y2="6"/></svg>
@@ -552,7 +700,7 @@
       </div>
     </div>
 
-    <p id="status">Готов к записи</p>
+    <p id="status">Загрузка модели...</p>
 
     <!-- Результат (сразу под статусом) -->
     <div class="result-wrap" id="result-wrap">
@@ -588,6 +736,51 @@
       <div class="menu-item" id="menu-settings">
         <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Настройки
+      </div>
+      <div class="menu-item" id="menu-history">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        История
+      </div>
+    </div>
+
+    <!-- Страница истории -->
+    <div class="settings-page" id="history-page">
+      <h2>История</h2>
+
+      <div class="setting-group">
+        <label>Период</label>
+        <div class="custom-select" id="h-period" data-value="86400">
+          <div class="custom-select-trigger">24 часа</div>
+          <div class="custom-select-options">
+            <div class="custom-select-option" data-value="1800">30 минут</div>
+            <div class="custom-select-option" data-value="3600">1 час</div>
+            <div class="custom-select-option" data-value="43200">12 часов</div>
+            <div class="custom-select-option selected" data-value="86400">24 часа</div>
+            <div class="custom-select-option" data-value="172800">2 дня</div>
+            <div class="custom-select-option" data-value="604800">7 дней</div>
+            <div class="custom-select-option" data-value="1296000">15 дней</div>
+            <div class="custom-select-option" data-value="2592000">30 дней</div>
+            <div class="custom-select-option" data-value="5184000">2 месяца</div>
+            <div class="custom-select-option" data-value="15552000">6 месяцев</div>
+            <div class="custom-select-option" data-value="31536000">1 год</div>
+            <div class="custom-select-option" data-value="0">Все записи</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="history-list"></div>
+      <div id="history-empty" style="display:none;text-align:center;color:#565f89;padding:2rem 0;">Записей нет</div>
+
+      <div id="history-pagination" style="display:none;padding:0.8rem 0;text-align:center;">
+        <button class="hist-page-btn" id="h-prev" disabled>← Пред</button>
+        <span id="h-page-info" style="color:#565f89;font-size:0.8rem;margin:0 0.8rem;"></span>
+        <button class="hist-page-btn" id="h-next" disabled>След →</button>
+      </div>
+
+      <div class="save-area">
+        <div class="save-buttons">
+          <button class="save-btn" id="h-clear-btn" style="background:#292e42 !important;color:#f7768e !important;">Очистить историю</button>
+        </div>
       </div>
     </div>
 
@@ -657,6 +850,17 @@
       </div>
     </div>
 
+    <!-- Модальный диалог подтверждения -->
+    <div class="modal-overlay" id="modal-overlay">
+      <div class="modal-box">
+        <p id="modal-text"></p>
+        <div class="modal-buttons">
+          <button class="modal-btn cancel" id="modal-cancel">Отмена</button>
+          <button class="modal-btn confirm" id="modal-confirm">Удалить</button>
+        </div>
+      </div>
+    </div>
+
     <script>
       const { invoke } = window.__TAURI__.core;
       const { listen } = window.__TAURI__.event;
@@ -669,6 +873,13 @@
         (await appWindow.isMaximized()) ? appWindow.unmaximize() : appWindow.maximize();
       });
       document.getElementById('tb-close').addEventListener('click', () => invoke('hide_window'));
+
+      /* --- Перетаскивание окна за titlebar (Wayland: -webkit-app-region: drag не работает) --- */
+      document.querySelector('.titlebar').addEventListener('mousedown', (e) => {
+        // Не перетаскивать если клик по кнопке или no-drag элементу
+        if (e.target.closest('.titlebar-btns') || e.target.closest('.menu-btn')) return;
+        appWindow.startDragging();
+      });
 
       const statusEl  = document.getElementById('status');
       const resultWrap = document.getElementById('result-wrap');
@@ -684,17 +895,25 @@
       const pauseBtn  = document.getElementById('pause-btn');
 
       let recording = false;
-      let timerSec = 0;
+      let timerMs = 0;
       let timerId = null;
       let levelId = null;
 
-      function fmt(s) {
-        return String(Math.floor(s/60)).padStart(2,'0') + ':' + String(s%60).padStart(2,'0');
+      function fmt(ms) {
+        const totalSec = Math.floor(ms / 1000);
+        const m = Math.floor(totalSec / 60);
+        const s = totalSec % 60;
+        const cs = Math.floor((ms % 1000) / 10);
+        return String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0') + '.' + String(cs).padStart(2,'0');
       }
 
       /* --- Клик по микрофону = начать запись --- */
+      let modelReady = false;
+      micBtn.style.opacity = '0.4';
+      micBtn.style.cursor = 'default';
+
       micBtn.addEventListener('click', () => {
-        if (!recording) invoke('trigger');
+        if (!recording && modelReady) invoke('trigger');
       });
 
       /* --- Клик по стопу = остановить --- */
@@ -715,6 +934,28 @@
       });
 
       /* --- События engine --- */
+      listen('engine://model-loaded', onModelReady);
+
+      // Поллинг на случай если event пришёл до подписки
+      (async function pollModelReady() {
+        while (!modelReady) {
+          await new Promise(r => setTimeout(r, 500));
+          try {
+            const loaded = await invoke('is_model_loaded');
+            if (loaded) { onModelReady(); break; }
+          } catch(_) {}
+        }
+      })();
+
+      function onModelReady() {
+        if (modelReady) return;
+        modelReady = true;
+        statusEl.textContent = 'Готов к записи';
+        statusEl.className = '';
+        micBtn.style.opacity = '';
+        micBtn.style.cursor = 'pointer';
+      }
+
       listen('engine://recording-started', () => {
         recording = true;
         resultWrap.classList.remove('visible');
@@ -730,9 +971,9 @@
         levelBar.classList.add('active');
         timerEl.classList.add('active');
 
-        timerSec = 0;
-        timerEl.textContent = '00:00';
-        timerId = setInterval(() => { timerSec++; timerEl.textContent = fmt(timerSec); }, 1000);
+        timerMs = 0;
+        timerEl.textContent = '00:00.00';
+        timerId = setInterval(() => { timerMs += 70; timerEl.textContent = fmt(timerMs); }, 70);
         levelId = setInterval(async () => {
           const level = await invoke('get_audio_level');
           levelFill.style.width = level + '%';
@@ -753,7 +994,7 @@
       listen('engine://recording-resumed', () => {
         statusEl.textContent = 'Запись...';
         statusEl.className = 'recording';
-        timerId = setInterval(() => { timerSec++; timerEl.textContent = fmt(timerSec); }, 1000);
+        timerId = setInterval(() => { timerMs += 70; timerEl.textContent = fmt(timerMs); }, 70);
         levelId = setInterval(async () => {
           const level = await invoke('get_audio_level');
           levelFill.style.width = level + '%';
@@ -826,16 +1067,7 @@
         currentPage = page;
       }
 
-      menuBtn.addEventListener('click', () => {
-        if (currentPage === 'main') {
-          showPage('menu');
-        } else if (currentPage === 'settings') {
-          showPage('menu');
-          saveNotice.classList.remove('visible');
-        } else {
-          showPage('main');
-        }
-      });
+      // Обработчик меню переопределяется ниже (в секции Истории)
 
       document.getElementById('menu-settings').addEventListener('click', async () => {
         showPage('settings');
@@ -928,47 +1160,82 @@
         saveNotice.classList.remove('visible');
       }
 
-      // Кастомные dropdown-ы
-      document.querySelectorAll('.custom-select').forEach(sel => {
-        const trigger = sel.querySelector('.custom-select-trigger');
-        const options = sel.querySelectorAll('.custom-select-option');
+      // Кастомные dropdown-ы с portal (dropdown переносится в body при открытии)
+      function initCustomSelects() {
+        document.querySelectorAll('.custom-select').forEach(sel => {
+          if (sel._initialized) return;
+          sel._initialized = true;
 
-        // Инициализация текста
-        const initVal = sel.dataset.value;
-        const initOpt = sel.querySelector(`[data-value="${initVal}"]`);
-        if (initOpt) {
-          trigger.textContent = initOpt.textContent;
-          initOpt.classList.add('selected');
-        }
+          const trigger = sel.querySelector('.custom-select-trigger');
+          const optionsEl = sel.querySelector('.custom-select-options');
+          const options = sel.querySelectorAll('.custom-select-option');
 
-        trigger.addEventListener('click', (e) => {
-          e.stopPropagation();
-          // Закрыть другие открытые
-          document.querySelectorAll('.custom-select.open').forEach(s => { if (s !== sel) s.classList.remove('open'); });
-          sel.classList.toggle('open');
-        });
+          const initVal = sel.dataset.value;
+          const initOpt = sel.querySelector(`[data-value="${initVal}"]`);
+          if (initOpt) {
+            trigger.textContent = initOpt.textContent;
+            initOpt.classList.add('selected');
+          }
 
-        options.forEach(opt => {
-          opt.addEventListener('click', (e) => {
-            e.stopPropagation();
-            sel.dataset.value = opt.dataset.value;
-            trigger.textContent = opt.textContent;
-            options.forEach(o => o.classList.remove('selected'));
-            opt.classList.add('selected');
+          function openDropdown() {
+            closeAllDropdowns();
+            // Portal: переносим options в body с fixed позицией
+            const rect = trigger.getBoundingClientRect();
+            document.body.appendChild(optionsEl);
+            optionsEl.classList.add('portal');
+            optionsEl.style.top = rect.bottom + 'px';
+            optionsEl.style.left = rect.left + 'px';
+            optionsEl.style.width = rect.width + 'px';
+            sel.classList.add('open');
+          }
+
+          function closeDropdown() {
+            optionsEl.classList.remove('portal');
+            optionsEl.style.display = '';
+            optionsEl.style.top = '';
+            optionsEl.style.left = '';
+            optionsEl.style.width = '';
+            if (optionsEl.parentNode !== sel) {
+              sel.appendChild(optionsEl);
+            }
             sel.classList.remove('open');
-            checkChanges();
+          }
+
+          trigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (sel.classList.contains('open')) closeDropdown();
+            else openDropdown();
           });
+
+          options.forEach(opt => {
+            opt.addEventListener('click', (e) => {
+              e.stopPropagation();
+              sel.dataset.value = opt.dataset.value;
+              trigger.textContent = opt.textContent;
+              options.forEach(o => o.classList.remove('selected'));
+              opt.classList.add('selected');
+              closeDropdown();
+              // Уведомляем об изменении
+              sel.dispatchEvent(new Event('change'));
+            });
+          });
+
+          sel._close = closeDropdown;
         });
-      });
+      }
 
-      // Закрыть dropdown при клике снаружи
-      document.addEventListener('click', () => {
-        document.querySelectorAll('.custom-select.open').forEach(s => s.classList.remove('open'));
-      });
+      function closeAllDropdowns() {
+        document.querySelectorAll('.custom-select').forEach(s => { if (s._close) s._close(); });
+      }
 
-      // Навешиваем обработчики изменений на текстовые поля
+      document.addEventListener('click', closeAllDropdowns);
+      initCustomSelects();
+
+      // Навешиваем обработчики изменений
       ['s-model-path', 's-whisper-path', 's-max-record', 's-hotkey']
         .forEach(id => document.getElementById(id).addEventListener('input', checkChanges));
+      ['s-transcriber', 's-sample-rate']
+        .forEach(id => document.getElementById(id).addEventListener('change', checkChanges));
 
       // Toggle-переключатели
       ['s-auto-type', 's-debug'].forEach(id => {
@@ -999,6 +1266,353 @@
         originalConfig = JSON.parse(JSON.stringify(cfg));
         saveBtn.disabled = true;
         saveNotice.classList.add('visible');
+      });
+
+      /* ──────── История ──────── */
+      const historyPage = document.getElementById('history-page');
+      const historyList = document.getElementById('history-list');
+      const historyEmpty = document.getElementById('history-empty');
+      const histPagination = document.getElementById('history-pagination');
+      const histPrev = document.getElementById('h-prev');
+      const histNext = document.getElementById('h-next');
+      const histPageInfo = document.getElementById('h-page-info');
+      const HIST_PER_PAGE = 10;
+      let histPage = 0;
+
+      // Навигация в меню → история
+      document.getElementById('menu-history').addEventListener('click', () => {
+        showPage('history');
+        histPage = 0;
+        loadHistory();
+      });
+
+      // Обновить showPage для history
+      const origShowPage = showPage;
+      showPage = function(page) {
+        contentEl.style.display = page === 'main' ? '' : 'none';
+        menuPage.classList.toggle('visible', page === 'menu');
+        settingsPage.classList.toggle('visible', page === 'settings');
+        historyPage.classList.toggle('visible', page === 'history');
+        closeAllDropdowns();
+        menuBtn.classList.toggle('back', page !== 'main');
+        currentPage = page;
+      };
+
+      // Обновить кнопку "Назад" для истории
+      const origMenuClick = menuBtn.onclick;
+      menuBtn.removeEventListener('click', menuBtn._handler);
+      menuBtn._handler = () => {
+        if (currentPage === 'main') showPage('menu');
+        else if (currentPage === 'settings' || currentPage === 'history') {
+          showPage('menu');
+          saveNotice.classList.remove('visible');
+        } else showPage('main');
+      };
+      menuBtn.addEventListener('click', menuBtn._handler);
+
+      // Фильтр периода (кастомный select — инициализируем)
+      const hPeriod = document.getElementById('h-period');
+      initCustomSelects();
+      hPeriod.addEventListener('change', () => { histPage = 0; loadHistory(); });
+
+      async function loadHistory() {
+        const sinceSecs = parseInt(hPeriod.dataset.value);
+        const result = await invoke('get_history', { sinceSecs, limit: HIST_PER_PAGE, offset: histPage * HIST_PER_PAGE });
+        renderHistory(result.entries, result.total);
+      }
+
+      function fmtDate(ts) {
+        const d = new Date(ts * 1000);
+        return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+      }
+
+      function fmtDuration(secs) {
+        const m = Math.floor(secs / 60);
+        const s = secs % 60;
+        return m > 0 ? `${m}м ${s}с` : `${s}с`;
+      }
+
+      // Доступные типы моделей для кнопки "Распознать"
+      const MODEL_TYPES = [
+        { type: 'vosk', label: 'Vosk' },
+        { type: 'whisper', label: 'Whisper' },
+      ];
+
+      function renderHistory(entries, total) {
+        historyList.innerHTML = '';
+        if (entries.length === 0) {
+          historyEmpty.style.display = 'block';
+          histPagination.style.display = 'none';
+          return;
+        }
+        historyEmpty.style.display = 'none';
+
+        for (const entry of entries) {
+          const r = entry.recording;
+          const trans = entry.transcriptions;
+          // Самая ранняя транскрибация — последняя в массиве (DESC порядок)
+          const firstTrans = trans.length > 0 ? trans[trans.length - 1] : null;
+          const defaultModel = firstTrans ? firstTrans.model_name : ALL_MODELS[0].label;
+
+          // Собираем модели: существующие транскрибации + одна "нераспознано" для другого типа
+          const modelOptions = [];
+          const seenTypes = new Set();
+          const originalModel = firstTrans ? firstTrans.model_name : null;
+          for (const t of trans) {
+            modelOptions.push({ label: t.model_name, text: t.text, type: t.transcriber_type, hasText: true, isOriginal: t.model_name === originalModel });
+            seenTypes.add(t.transcriber_type);
+          }
+          // Добавляем вариант "нераспознано" для типов, которых ещё нет
+          for (const m of MODEL_TYPES) {
+            if (!seenTypes.has(m.type)) {
+              modelOptions.push({ label: m.label + ' (не распознано)', text: null, type: m.type, hasText: false });
+            }
+          }
+
+          const div = document.createElement('div');
+          div.className = 'hist-entry';
+
+          // Первая строка: дата, длительность, кнопки
+          const metaDiv = document.createElement('div');
+          metaDiv.className = 'hist-meta';
+          metaDiv.innerHTML = `
+            <span>${fmtDate(r.timestamp)}</span>
+            <span>${fmtDuration(r.duration_secs)}</span>
+          `;
+          const actionsDiv = document.createElement('div');
+          actionsDiv.className = 'hist-actions';
+          actionsDiv.innerHTML = `
+            ${entry.audio_exists ? `<button class="hist-btn play" title="Воспроизвести" data-rid="${r.id}">
+              <svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
+            </button>` : ''}
+            <button class="hist-btn copy" title="Копировать">
+              <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+            </button>
+            <button class="hist-btn delete" title="Удалить">
+              <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+            </button>
+          `;
+          metaDiv.appendChild(actionsDiv);
+          div.appendChild(metaDiv);
+
+          // Вторая строка: кастомный dropdown с моделями
+          const selectWrap = document.createElement('div');
+          selectWrap.className = 'custom-select';
+          selectWrap.dataset.value = defaultModel;
+          selectWrap.style.margin = '0.4rem 0';
+          selectWrap.innerHTML = `
+            <div class="custom-select-trigger${defaultModel === originalModel ? ' original' : ''}">${defaultModel}${defaultModel === originalModel ? ' ★' : ''}</div>
+            <div class="custom-select-options">
+              ${modelOptions.map(m =>
+                `<div class="custom-select-option${m.label === defaultModel ? ' selected' : ''}" data-value="${m.label}" data-type="${m.type}" data-has-text="${m.hasText}">${m.label}${m.isOriginal ? ' ★' : ''}</div>`
+              ).join('')}
+            </div>
+          `;
+          div.appendChild(selectWrap);
+
+          // Третья строка: текст или кнопка "Распознать"
+          const contentDiv = document.createElement('div');
+          const defaultOpt = modelOptions.find(m => m.label === defaultModel);
+          if (defaultOpt && defaultOpt.hasText) {
+            contentDiv.className = 'hist-text';
+            contentDiv.textContent = defaultOpt.text;
+          } else if (entry.audio_exists) {
+            contentDiv.innerHTML = `<button class="hist-retranscribe-btn" data-rid="${r.id}" data-type="${defaultOpt ? defaultOpt.type : 'whisper'}">Распознать этой моделью</button>`;
+          } else {
+            contentDiv.innerHTML = `<span style="color:#565f89;font-size:0.8rem;font-style:italic;">Аудиофайл удалён</span>`;
+          }
+          div.appendChild(contentDiv);
+
+          // Инициализация кастомного select
+          initCustomSelects();
+
+          // Переключение модели
+          selectWrap.addEventListener('change', () => {
+            const selectedLabel = selectWrap.dataset.value;
+            const opt = modelOptions.find(m => m.label === selectedLabel);
+            const trigger = selectWrap.querySelector('.custom-select-trigger');
+            trigger.classList.toggle('original', opt && opt.isOriginal);
+            trigger.textContent = selectedLabel + (opt && opt.isOriginal ? ' ★' : '');
+            contentDiv.innerHTML = '';
+            contentDiv.className = '';
+            if (opt && opt.hasText) {
+              contentDiv.className = 'hist-text';
+              contentDiv.textContent = opt.text;
+            } else if (entry.audio_exists) {
+              contentDiv.innerHTML = `<button class="hist-retranscribe-btn" data-rid="${r.id}" data-type="${opt ? opt.type : 'whisper'}">Распознать этой моделью</button>`;
+              contentDiv.querySelector('.hist-retranscribe-btn').addEventListener('click', doRetranscribe);
+            } else {
+              contentDiv.innerHTML = `<span style="color:#565f89;font-size:0.8rem;font-style:italic;">Аудиофайл удалён</span>`;
+            }
+          });
+
+          // Кнопка распознать (если сразу видна)
+          const retBtn = contentDiv.querySelector('.hist-retranscribe-btn');
+          if (retBtn) retBtn.addEventListener('click', doRetranscribe);
+
+          async function doRetranscribe(e) {
+            const btn = e.target;
+            const rid = parseInt(btn.dataset.rid);
+            const ttype = btn.dataset.type;
+            btn.textContent = 'Распознавание...';
+            btn.disabled = true;
+            try {
+              await invoke('retranscribe', { recordingId: rid, transcriberType: ttype });
+              loadHistory();
+            } catch (err) {
+              alert('Ошибка: ' + err);
+              btn.textContent = 'Распознать этой моделью';
+              btn.disabled = false;
+            }
+          }
+
+          // Копировать
+          actionsDiv.querySelector('.hist-btn.copy').addEventListener('click', async () => {
+            const textEl = div.querySelector('.hist-text');
+            if (textEl) await navigator.clipboard.writeText(textEl.textContent);
+          });
+
+          // Удалить
+          actionsDiv.querySelector('.hist-btn.delete').addEventListener('click', async () => {
+            await invoke('delete_history_entry', { recordingId: r.id });
+            loadHistory();
+          });
+
+          // Воспроизвести запись
+          const playBtn = actionsDiv.querySelector('.hist-btn.play');
+          if (playBtn) {
+            playBtn.addEventListener('click', () => playAudio(parseInt(playBtn.dataset.rid), playBtn));
+          }
+
+          historyList.appendChild(div);
+        }
+
+        // Пагинация
+        const totalPages = Math.ceil(total / HIST_PER_PAGE);
+        if (totalPages > 1) {
+          histPagination.style.display = 'block';
+          histPrev.disabled = histPage === 0;
+          histNext.disabled = histPage >= totalPages - 1;
+          histPageInfo.textContent = `Стр. ${histPage + 1} из ${totalPages}`;
+        } else {
+          histPagination.style.display = 'none';
+        }
+      }
+
+      // Воспроизведение аудио через Web Audio API
+      const SVG_PLAY = '<svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>';
+      const SVG_STOP = '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';
+      const SVG_PAUSE = '<svg viewBox="0 0 24 24"><rect x="5" y="4" width="4" height="16"/><rect x="15" y="4" width="4" height="16"/></svg>';
+      const SVG_RESUME = '<svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>';
+
+      let currentPlayer = null; // { source, ctx, playBtn, pauseBtn, paused }
+
+      function stopCurrentPlayer() {
+        if (!currentPlayer) return;
+        currentPlayer.source.stop();
+        currentPlayer.ctx.close();
+        currentPlayer.playBtn.innerHTML = SVG_PLAY;
+        currentPlayer.playBtn.classList.remove('playing');
+        if (currentPlayer.pauseBtn) currentPlayer.pauseBtn.remove();
+        currentPlayer = null;
+      }
+
+      async function playAudio(recordingId, playBtn) {
+        // Если уже играет эту запись — стоп
+        if (currentPlayer && currentPlayer.playBtn === playBtn) {
+          stopCurrentPlayer();
+          return;
+        }
+        // Остановить предыдущее
+        stopCurrentPlayer();
+
+        playBtn.innerHTML = SVG_STOP;
+        playBtn.classList.add('playing');
+
+        try {
+          const result = await invoke('get_audio_data', { recordingId });
+          const raw = atob(result.data);
+          const bytes = new Uint8Array(raw.length);
+          for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+
+          const view = new DataView(bytes.buffer);
+          const numSamples = bytes.length / 2;
+          const audioCtx = new AudioContext({ sampleRate: result.sample_rate });
+          const buffer = audioCtx.createBuffer(1, numSamples, result.sample_rate);
+          const channel = buffer.getChannelData(0);
+          for (let i = 0; i < numSamples; i++) {
+            channel[i] = view.getInt16(i * 2, true) / 32768.0;
+          }
+
+          const source = audioCtx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(audioCtx.destination);
+
+          // Кнопка паузы — вставляем перед play/stop
+          const pauseBtn = document.createElement('button');
+          pauseBtn.className = 'hist-btn play';
+          pauseBtn.title = 'Пауза';
+          pauseBtn.innerHTML = SVG_PAUSE;
+          playBtn.parentNode.insertBefore(pauseBtn, playBtn);
+
+          let paused = false;
+          pauseBtn.addEventListener('click', () => {
+            if (!currentPlayer) return;
+            if (paused) {
+              audioCtx.resume();
+              pauseBtn.innerHTML = SVG_PAUSE;
+              pauseBtn.title = 'Пауза';
+              paused = false;
+            } else {
+              audioCtx.suspend();
+              pauseBtn.innerHTML = SVG_RESUME;
+              pauseBtn.title = 'Продолжить';
+              paused = true;
+            }
+          });
+
+          currentPlayer = { source, ctx: audioCtx, playBtn, pauseBtn, paused };
+
+          source.onended = () => {
+            if (currentPlayer && currentPlayer.source === source) {
+              stopCurrentPlayer();
+            }
+          };
+          source.start();
+        } catch (e) {
+          playBtn.innerHTML = SVG_PLAY;
+          playBtn.classList.remove('playing');
+          console.error('Ошибка воспроизведения:', e);
+        }
+      }
+
+      histPrev.addEventListener('click', () => { if (histPage > 0) { histPage--; loadHistory(); } });
+      histNext.addEventListener('click', () => { histPage++; loadHistory(); });
+
+      // Очистить историю
+      // Кастомный модальный диалог
+      function showConfirm(text) {
+        return new Promise(resolve => {
+          const overlay = document.getElementById('modal-overlay');
+          document.getElementById('modal-text').textContent = text;
+          overlay.classList.add('visible');
+          const onConfirm = () => { cleanup(); resolve(true); };
+          const onCancel = () => { cleanup(); resolve(false); };
+          const cleanup = () => {
+            overlay.classList.remove('visible');
+            document.getElementById('modal-confirm').removeEventListener('click', onConfirm);
+            document.getElementById('modal-cancel').removeEventListener('click', onCancel);
+          };
+          document.getElementById('modal-confirm').addEventListener('click', onConfirm);
+          document.getElementById('modal-cancel').addEventListener('click', onCancel);
+        });
+      }
+
+      document.getElementById('h-clear-btn').addEventListener('click', async () => {
+        if (await showConfirm('Удалить всю историю транскрибаций?')) {
+          await invoke('clear_history');
+          loadHistory();
+        }
       });
     </script>
   </body>
