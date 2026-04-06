@@ -133,19 +133,21 @@ impl ArcanaEngine {
                 })
                 .await;
 
-                match mic_check {
-                    Ok(Err(e)) => {
-                        tracing::error!("{}", e);
-                        eprintln!("[Ошибка] {}", e);
-                        let _ = event_tx.send(EngineEvent::Error(e.to_string()));
-                        return;
+                let mic_err = match mic_check {
+                    Ok(Err(e)) => Some(e.to_string()),
+                    Err(e) => Some(format!("Ошибка проверки микрофона: {:?}", e)),
+                    Ok(Ok(())) => None,
+                };
+                if let Some(msg) = mic_err {
+                    tracing::error!("{}", msg);
+                    eprintln!("[Ошибка] {}", msg);
+                    let is_visible = window_visible.load(Ordering::Relaxed);
+                    if !is_visible {
+                        let error_text = format!("[Ошибка микрофона] {}", msg);
+                        let _ = crate::input::type_text(&error_text).await;
                     }
-                    Err(e) => {
-                        tracing::error!("Ошибка проверки микрофона: {:?}", e);
-                        let _ = event_tx.send(EngineEvent::Error("Ошибка проверки микрофона".to_string()));
-                        return;
-                    }
-                    Ok(Ok(())) => {}
+                    let _ = event_tx.send(EngineEvent::Error(msg));
+                    return;
                 }
 
                 *busy_guard = true;
