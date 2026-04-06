@@ -2,6 +2,7 @@
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
+    <meta name="color-scheme" content="dark" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ArcanaGlyph</title>
     <style>
@@ -254,13 +255,279 @@
         border-color: #f7768e;
         color: #f7768e;
       }
+
+      /* === Гамбургер-меню (в titlebar, слева) === */
+      .menu-btn {
+        width: 32px;
+        height: 100%;
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        -webkit-app-region: no-drag;
+        color: #565f89;
+        transition: color 0.15s;
+        margin-left: 4px;
+        padding: 0;
+      }
+      .menu-btn:hover { color: #c0caf5; }
+      .menu-btn svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.5; fill: none; }
+      .menu-btn .back-text { display: none; }
+      .menu-btn.back svg { display: none; }
+      .menu-btn.back .back-text {
+        display: inline;
+        color: #7aa2f7;
+        font-size: 0.75rem;
+        white-space: nowrap;
+      }
+      .menu-btn.back { width: auto; padding: 0 6px; }
+      /* Иконка по центру titlebar */
+      .titlebar-icon-center {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        height: 18px;
+        pointer-events: none;
+      }
+
+      /* === Страница меню === */
+      .menu-page, .settings-page {
+        display: none;
+        flex-direction: column;
+        width: 100%;
+        height: calc(100vh - 32px);
+        padding: 1rem 1rem 0;
+        overflow-y: scroll;
+      }
+      .menu-page.visible, .settings-page.visible { display: flex; }
+
+      .menu-page h2, .settings-page h2 {
+        font-size: 1.1rem;
+        color: #bb9af7;
+        margin-bottom: 1rem;
+      }
+
+      /* Полоса прокрутки в стиле Tokyo Night */
+      .settings-page::-webkit-scrollbar { width: 6px; }
+      .settings-page::-webkit-scrollbar-track { background: transparent; }
+      .settings-page::-webkit-scrollbar-thumb { background: #292e42; border-radius: 3px; }
+      .settings-page::-webkit-scrollbar-thumb:hover { background: #565f89; }
+
+      .menu-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0.7rem 1rem;
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 8px;
+        cursor: pointer;
+        color: #c0caf5;
+        font-size: 0.9rem;
+        transition: background 0.15s, border-color 0.15s;
+        margin-bottom: 0.5rem;
+      }
+      .menu-item:hover { background: #292e42; border-color: #7aa2f7; }
+      .menu-item svg { width: 18px; height: 18px; stroke: #7aa2f7; stroke-width: 1.5; fill: none; }
+
+      /* === Настройки === */
+      .setting-group {
+        margin-bottom: 0.8rem;
+      }
+      .setting-group label {
+        display: block;
+        font-size: 0.78rem;
+        color: #565f89;
+        margin-bottom: 0.3rem;
+      }
+      .setting-group input[type="text"],
+      .setting-group input[type="number"] {
+        width: 100%;
+        height: 38px;
+        padding: 0 0.6rem;
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 6px;
+        color: #c0caf5;
+        font-size: 0.85rem;
+        font-family: inherit;
+        outline: none;
+        transition: border-color 0.15s;
+      }
+      .setting-group input:focus { border-color: #7aa2f7; }
+
+      /* Кастомный dropdown (замена <select>) */
+      .custom-select {
+        position: relative;
+        width: 100%;
+      }
+      .custom-select-trigger {
+        width: 100%;
+        height: 38px;
+        padding: 0 28px 0 0.6rem;
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 6px;
+        color: #c0caf5;
+        font-size: 0.85rem;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        transition: border-color 0.15s;
+        user-select: none;
+      }
+      .custom-select-trigger::after {
+        content: '';
+        position: absolute;
+        right: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        border: 4px solid transparent;
+        border-top-color: #565f89;
+      }
+      .custom-select.open .custom-select-trigger { border-color: #7aa2f7; }
+      .custom-select.open .custom-select-trigger::after {
+        border-top-color: transparent;
+        border-bottom-color: #565f89;
+        transform: translateY(-80%);
+      }
+      .custom-select-options {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-top: none;
+        border-radius: 0 0 6px 6px;
+        z-index: 100;
+        max-height: 200px;
+        overflow-y: auto;
+      }
+      .custom-select.open .custom-select-options { display: block; }
+      .custom-select-option {
+        padding: 0.5rem 0.6rem;
+        color: #c0caf5;
+        font-size: 0.85rem;
+        cursor: pointer;
+        transition: background 0.1s;
+      }
+      .custom-select-option:hover { background: #292e42; }
+      .custom-select-option.selected { background: #292e42; color: #7aa2f7; }
+
+      .setting-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.5rem 0;
+      }
+      .setting-row label {
+        font-size: 0.85rem;
+        color: #c0caf5;
+        margin: 0;
+      }
+
+      /* Чекбокс-переключатель */
+      .toggle {
+        position: relative;
+        width: 36px;
+        height: 20px;
+        background: #292e42;
+        border-radius: 10px;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      .toggle.on { background: #7aa2f7; }
+      .toggle::after {
+        content: '';
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 14px;
+        height: 14px;
+        background: #c0caf5;
+        border-radius: 50%;
+        transition: transform 0.2s;
+      }
+      .toggle.on::after { transform: translateX(16px); }
+
+      /* Подсветка изменённых полей */
+      .setting-group.changed input,
+      .setting-group.changed .custom-select-trigger {
+        border-color: #ff9e64;
+      }
+      .setting-row.changed .toggle {
+        box-shadow: 0 0 0 2px #ff9e64;
+      }
+
+      /* Кнопки сохранения/отмены — фиксированы внизу */
+      .save-area {
+        position: sticky;
+        bottom: 0;
+        background: #1a1b26;
+        padding: 0.8rem 0 1rem;
+        margin-top: auto;
+      }
+      .save-buttons {
+        display: flex;
+        gap: 0.5rem;
+      }
+      .save-btn, .cancel-btn {
+        flex: 1;
+        padding: 0.7rem;
+        border: none;
+        border-radius: 8px;
+        font-size: 0.9rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: background 0.2s, opacity 0.2s;
+      }
+      .save-btn:disabled {
+        background: #292e42;
+        color: #565f89;
+        cursor: default;
+      }
+      .save-btn:not(:disabled) {
+        background: #7aa2f7;
+        color: #1a1b26;
+      }
+      .save-btn:not(:disabled):hover { opacity: 0.9; }
+
+      .cancel-btn {
+        background: transparent;
+        border: 1px solid #292e42 !important;
+        color: #565f89;
+        cursor: default;
+      }
+      .cancel-btn:not(:disabled) {
+        border-color: #ff9e64 !important;
+        color: #ff9e64;
+        cursor: pointer;
+      }
+      .cancel-btn:not(:disabled):hover { background: rgba(255, 158, 100, 0.1); }
+
+      .save-notice {
+        text-align: center;
+        font-size: 0.75rem;
+        color: #9ece6a;
+        margin-top: 0.5rem;
+        display: none;
+      }
+      .save-notice.visible { display: block; }
     </style>
   </head>
   <body>
 
     <!-- Кастомный titlebar -->
     <div class="titlebar">
-      <img class="titlebar-icon" src="icon.png" alt="" />
+      <button class="menu-btn" id="menu-btn" title="Меню">
+        <svg viewBox="0 0 16 16"><line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="14" y2="8"/><line x1="2" y1="12" x2="14" y2="12"/></svg>
+        <span class="back-text">← Назад</span>
+      </button>
+      <img class="titlebar-icon-center" src="icon.png" alt="" />
       <div class="titlebar-btns">
         <button class="titlebar-btn btn-minimize" id="tb-min" title="Свернуть">
           <svg viewBox="0 0 12 12"><line x1="2" y1="6" x2="10" y2="6"/></svg>
@@ -314,6 +581,82 @@
     </div>
 
     </div><!-- .content -->
+
+    <!-- Страница меню -->
+    <div class="menu-page" id="menu-page">
+      <h2>Меню</h2>
+      <div class="menu-item" id="menu-settings">
+        <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Настройки
+      </div>
+    </div>
+
+    <!-- Страница настроек -->
+    <div class="settings-page" id="settings-page">
+      <h2>Настройки</h2>
+
+      <div class="setting-group">
+        <label>Движок транскрибации</label>
+        <div class="custom-select" id="s-transcriber" data-value="vosk">
+          <div class="custom-select-trigger"></div>
+          <div class="custom-select-options">
+            <div class="custom-select-option" data-value="vosk">Vosk — быстрый, менее точный</div>
+            <div class="custom-select-option" data-value="whisper">Whisper — точный, медленнее</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <label>Путь к Vosk-модели</label>
+        <input type="text" id="s-model-path" placeholder="models/vosk-model-ru-0.42" />
+      </div>
+
+      <div class="setting-group">
+        <label>Путь к Whisper-модели (ggml)</label>
+        <input type="text" id="s-whisper-path" placeholder="models/ggml-large-v3-turbo.bin" />
+      </div>
+
+      <div class="setting-group">
+        <label>Частота дискретизации (Гц)</label>
+        <div class="custom-select" id="s-sample-rate" data-value="48000">
+          <div class="custom-select-trigger"></div>
+          <div class="custom-select-options">
+            <div class="custom-select-option" data-value="16000">16000</div>
+            <div class="custom-select-option" data-value="24000">24000</div>
+            <div class="custom-select-option" data-value="48000">48000</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <label>Таймаут тишины (секунды)</label>
+        <input type="number" id="s-max-record" min="5" max="120" />
+      </div>
+
+      <div class="setting-group">
+        <label>Горячая клавиша</label>
+        <input type="text" id="s-hotkey" placeholder="Super+Alt+Control+Space" />
+      </div>
+
+      <div class="setting-row">
+        <label>Авто-вставка текста</label>
+        <div class="toggle" id="s-auto-type"></div>
+      </div>
+
+      <div class="setting-row">
+        <label>Режим отладки</label>
+        <div class="toggle" id="s-debug"></div>
+      </div>
+
+      <div class="save-area">
+        <div class="save-buttons">
+          <button class="cancel-btn" id="cancel-btn" disabled>Отменить</button>
+          <button class="save-btn" id="save-btn" disabled>Сохранить</button>
+        </div>
+        <div class="save-notice" id="save-notice">Настройки сохранены. Применятся при следующей записи.</div>
+      </div>
+    </div>
+
     <script>
       const { invoke } = window.__TAURI__.core;
       const { listen } = window.__TAURI__.event;
@@ -461,6 +804,201 @@
         clearInterval(timerId);
         clearInterval(levelId);
         levelFill.style.width = '0%';
+      });
+
+      /* ──────── Меню и настройки ──────── */
+      const menuBtn     = document.getElementById('menu-btn');
+      const menuPage    = document.getElementById('menu-page');
+      const settingsPage = document.getElementById('settings-page');
+      const contentEl   = document.querySelector('.content');
+      const saveBtn     = document.getElementById('save-btn');
+      const cancelBtn   = document.getElementById('cancel-btn');
+      const saveNotice  = document.getElementById('save-notice');
+
+      let currentPage = 'main'; // main | menu | settings
+      let originalConfig = null;
+
+      function showPage(page) {
+        contentEl.style.display = page === 'main' ? '' : 'none';
+        menuPage.classList.toggle('visible', page === 'menu');
+        settingsPage.classList.toggle('visible', page === 'settings');
+        menuBtn.classList.toggle('back', page !== 'main');
+        currentPage = page;
+      }
+
+      menuBtn.addEventListener('click', () => {
+        if (currentPage === 'main') {
+          showPage('menu');
+        } else if (currentPage === 'settings') {
+          showPage('menu');
+          saveNotice.classList.remove('visible');
+        } else {
+          showPage('main');
+        }
+      });
+
+      document.getElementById('menu-settings').addEventListener('click', async () => {
+        showPage('settings');
+        await loadSettings();
+      });
+
+      // Установить значение кастомного select
+      function setCustomSelect(id, value) {
+        const sel = document.getElementById(id);
+        sel.dataset.value = value;
+        const opt = sel.querySelector(`[data-value="${value}"]`);
+        const trigger = sel.querySelector('.custom-select-trigger');
+        if (opt) {
+          trigger.textContent = opt.textContent;
+          sel.querySelectorAll('.custom-select-option').forEach(o => o.classList.remove('selected'));
+          opt.classList.add('selected');
+        }
+      }
+
+      // Загрузка настроек из бэкенда
+      async function loadSettings() {
+        const cfg = await invoke('load_config');
+        // Нормализуем типы чтобы совпадали с getFormConfig()
+        originalConfig = {
+          transcriber: cfg.transcriber,
+          model_path: cfg.model_path,
+          whisper_model_path: cfg.whisper_model_path,
+          sample_rate: cfg.sample_rate,
+          max_record_secs: cfg.max_record_secs,
+          hotkey: cfg.hotkey,
+          auto_type: cfg.auto_type,
+          debug: cfg.debug,
+        };
+
+        setCustomSelect('s-transcriber', cfg.transcriber);
+        document.getElementById('s-model-path').value = cfg.model_path;
+        document.getElementById('s-whisper-path').value = cfg.whisper_model_path;
+        setCustomSelect('s-sample-rate', String(cfg.sample_rate));
+        document.getElementById('s-max-record').value = cfg.max_record_secs;
+        document.getElementById('s-hotkey').value = cfg.hotkey;
+        document.getElementById('s-auto-type').classList.toggle('on', cfg.auto_type);
+        document.getElementById('s-debug').classList.toggle('on', cfg.debug);
+
+        saveBtn.disabled = true;
+        saveNotice.classList.remove('visible');
+      }
+
+      // Собираем текущие значения из формы
+      function getFormConfig() {
+        return {
+          transcriber: document.getElementById('s-transcriber').dataset.value,
+          model_path: document.getElementById('s-model-path').value,
+          whisper_model_path: document.getElementById('s-whisper-path').value,
+          sample_rate: parseInt(document.getElementById('s-sample-rate').dataset.value),
+          max_record_secs: parseInt(document.getElementById('s-max-record').value),
+          hotkey: document.getElementById('s-hotkey').value,
+          auto_type: document.getElementById('s-auto-type').classList.contains('on'),
+          debug: document.getElementById('s-debug').classList.contains('on'),
+        };
+      }
+
+      // Маппинг полей конфига → DOM элементов для подсветки
+      const fieldMap = {
+        transcriber:       { el: 's-transcriber',  type: 'group' },
+        model_path:        { el: 's-model-path',   type: 'group' },
+        whisper_model_path:{ el: 's-whisper-path',  type: 'group' },
+        sample_rate:       { el: 's-sample-rate',  type: 'group' },
+        max_record_secs:   { el: 's-max-record',   type: 'group' },
+        hotkey:            { el: 's-hotkey',        type: 'group' },
+        auto_type:         { el: 's-auto-type',     type: 'row' },
+        debug:             { el: 's-debug',          type: 'row' },
+      };
+
+      // Проверка изменений + подсветка изменённых полей
+      function checkChanges() {
+        if (!originalConfig) return;
+        const current = getFormConfig();
+        let anyChanged = false;
+
+        for (const [key, info] of Object.entries(fieldMap)) {
+          const changed = JSON.stringify(current[key]) !== JSON.stringify(originalConfig[key]);
+          const el = document.getElementById(info.el);
+          const container = info.type === 'group' ? el.closest('.setting-group') : el.closest('.setting-row');
+          if (container) container.classList.toggle('changed', changed);
+          if (changed) anyChanged = true;
+        }
+
+        saveBtn.disabled = !anyChanged;
+        cancelBtn.disabled = !anyChanged;
+        saveNotice.classList.remove('visible');
+      }
+
+      // Кастомные dropdown-ы
+      document.querySelectorAll('.custom-select').forEach(sel => {
+        const trigger = sel.querySelector('.custom-select-trigger');
+        const options = sel.querySelectorAll('.custom-select-option');
+
+        // Инициализация текста
+        const initVal = sel.dataset.value;
+        const initOpt = sel.querySelector(`[data-value="${initVal}"]`);
+        if (initOpt) {
+          trigger.textContent = initOpt.textContent;
+          initOpt.classList.add('selected');
+        }
+
+        trigger.addEventListener('click', (e) => {
+          e.stopPropagation();
+          // Закрыть другие открытые
+          document.querySelectorAll('.custom-select.open').forEach(s => { if (s !== sel) s.classList.remove('open'); });
+          sel.classList.toggle('open');
+        });
+
+        options.forEach(opt => {
+          opt.addEventListener('click', (e) => {
+            e.stopPropagation();
+            sel.dataset.value = opt.dataset.value;
+            trigger.textContent = opt.textContent;
+            options.forEach(o => o.classList.remove('selected'));
+            opt.classList.add('selected');
+            sel.classList.remove('open');
+            checkChanges();
+          });
+        });
+      });
+
+      // Закрыть dropdown при клике снаружи
+      document.addEventListener('click', () => {
+        document.querySelectorAll('.custom-select.open').forEach(s => s.classList.remove('open'));
+      });
+
+      // Навешиваем обработчики изменений на текстовые поля
+      ['s-model-path', 's-whisper-path', 's-max-record', 's-hotkey']
+        .forEach(id => document.getElementById(id).addEventListener('input', checkChanges));
+
+      // Toggle-переключатели
+      ['s-auto-type', 's-debug'].forEach(id => {
+        document.getElementById(id).addEventListener('click', () => {
+          document.getElementById(id).classList.toggle('on');
+          checkChanges();
+        });
+      });
+
+      // Отмена изменений — восстанавливаем оригинальные значения
+      cancelBtn.addEventListener('click', () => {
+        if (!originalConfig) return;
+        setCustomSelect('s-transcriber', originalConfig.transcriber);
+        document.getElementById('s-model-path').value = originalConfig.model_path;
+        document.getElementById('s-whisper-path').value = originalConfig.whisper_model_path;
+        setCustomSelect('s-sample-rate', String(originalConfig.sample_rate));
+        document.getElementById('s-max-record').value = originalConfig.max_record_secs;
+        document.getElementById('s-hotkey').value = originalConfig.hotkey;
+        document.getElementById('s-auto-type').classList.toggle('on', originalConfig.auto_type);
+        document.getElementById('s-debug').classList.toggle('on', originalConfig.debug);
+        checkChanges();
+      });
+
+      // Сохранение
+      saveBtn.addEventListener('click', async () => {
+        const cfg = getFormConfig();
+        await invoke('save_config', { config: cfg });
+        originalConfig = JSON.parse(JSON.stringify(cfg));
+        saveBtn.disabled = true;
+        saveNotice.classList.add('visible');
       });
     </script>
   </body>

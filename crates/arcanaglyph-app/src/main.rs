@@ -36,6 +36,22 @@ async fn is_recording(engine: tauri::State<'_, Arc<ArcanaEngine>>) -> Result<boo
     Ok(engine.is_recording().await)
 }
 
+/// Tauri-команда: загрузить текущую конфигурацию
+#[tauri::command]
+fn load_config() -> Result<serde_json::Value, String> {
+    let config = CoreConfig::load().map_err(|e| e.to_string())?;
+    serde_json::to_value(&config).map_err(|e| e.to_string())
+}
+
+/// Tauri-команда: сохранить конфигурацию и применить к движку
+#[tauri::command]
+fn save_config(config: serde_json::Value, engine: tauri::State<'_, Arc<ArcanaEngine>>) -> Result<(), String> {
+    let config: CoreConfig = serde_json::from_value(config).map_err(|e| format!("Ошибка парсинга конфига: {}", e))?;
+    config.save().map_err(|e| e.to_string())?;
+    engine.update_config(config);
+    Ok(())
+}
+
 /// Tauri-команда: скрыть окно в трей и обновить флаг видимости
 #[tauri::command]
 async fn hide_window(
@@ -189,7 +205,7 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, hide_window])
+        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, hide_window, load_config, save_config])
         .on_window_event(|window, event| {
             // Перехватываем закрытие окна — скрываем в трей вместо закрытия
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
