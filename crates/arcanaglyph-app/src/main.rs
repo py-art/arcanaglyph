@@ -5,6 +5,7 @@
 mod tray;
 
 use arcanaglyph_core::{ArcanaEngine, CoreConfig, EngineEvent};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
@@ -35,9 +36,41 @@ async fn is_recording(engine: tauri::State<'_, Arc<ArcanaEngine>>) -> Result<boo
     Ok(engine.is_recording().await)
 }
 
+/// Tauri-команда: загрузить текущую конфигурацию
+#[tauri::command]
+fn load_config() -> Result<serde_json::Value, String> {
+    let config = CoreConfig::load().map_err(|e| e.to_string())?;
+    serde_json::to_value(&config).map_err(|e| e.to_string())
+}
+
+/// Tauri-команда: сохранить конфигурацию и применить к движку
+#[tauri::command]
+fn save_config(config: serde_json::Value, engine: tauri::State<'_, Arc<ArcanaEngine>>) -> Result<(), String> {
+    let config: CoreConfig = serde_json::from_value(config).map_err(|e| format!("Ошибка парсинга конфига: {}", e))?;
+    config.save().map_err(|e| e.to_string())?;
+    engine.update_config(config);
+    Ok(())
+}
+
+/// Tauri-команда: скрыть окно в трей и обновить флаг видимости
+#[tauri::command]
+async fn hide_window(
+    window: tauri::Window,
+    visible: tauri::State<'_, Arc<AtomicBool>>,
+) -> Result<(), String> {
+    let _ = window.hide();
+    visible.store(false, Ordering::Relaxed);
+    Ok(())
+}
+
 fn main() {
     // Инициализируем логирование
-    tracing_subscriber::fmt::init();
+    // Подавляем логи whisper.cpp (whisper_rs::whisper_sys_log) — оставляем только наши
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::new("info,whisper_rs=warn"),
+        )
+        .init();
 
     let config = CoreConfig::load().unwrap_or_else(|e| {
         tracing::warn!("Не удалось загрузить конфиг: {}, используем дефолтные настройки", e);
@@ -59,9 +92,13 @@ fn main() {
                 .build(),
         )
         .setup(move |app| {
+            // Флаг видимости окна: true при старте (окно видимо)
+            let window_visible = Arc::new(AtomicBool::new(true));
+            app.manage(window_visible.clone());
+
             // Создаём engine внутри async runtime, чтобы Handle::try_current() сработал
-            let engine =
-                tauri::async_runtime::block_on(async { ArcanaEngine::new(config) }).map_err(|e| e.to_string())?;
+            let engine = tauri::async_runtime::block_on(async { ArcanaEngine::new(config, window_visible) })
+                .map_err(|e| e.to_string())?;
             let engine = Arc::new(engine);
             app.manage(engine.clone());
 
@@ -111,16 +148,22 @@ fn main() {
                 loop {
                     match rx.recv().await {
                         Ok(event) => {
-                            // Обновляем текст пункта меню в трее
+                            // Обновляем текст и иконку в трее
                             match &event {
                                 EngineEvent::RecordingStarted | EngineEvent::RecordingResumed => {
                                     tray::set_tray_text(&app_handle, "Остановить запись");
+                                    tray::set_tray_recording(&app_handle, true);
                                 }
                                 EngineEvent::RecordingPaused => {
                                     tray::set_tray_text(&app_handle, "Продолжить запись");
                                 }
+                                EngineEvent::Transcribing => {
+                                    tray::set_tray_text(&app_handle, "Транскрибация...");
+                                    tray::set_tray_recording(&app_handle, false);
+                                }
                                 EngineEvent::FinishedProcessing => {
                                     tray::set_tray_text(&app_handle, "Начать запись");
+                                    tray::set_tray_recording(&app_handle, false);
                                 }
                                 _ => {}
                             }
@@ -132,8 +175,19 @@ fn main() {
                                 EngineEvent::TranscriptionResult(text) => {
                                     ("engine://transcription-result", serde_json::json!({"text": text}))
                                 }
+                                EngineEvent::Transcribing => {
+                                    ("engine://transcribing", serde_json::json!({}))
+                                }
                                 EngineEvent::FinishedProcessing => {
                                     ("engine://finished-processing", serde_json::json!({}))
+                                }
+                                EngineEvent::RequestFocus => {
+                                    // Выводим окно на передний план
+                                    tray::show_window(&app_handle);
+                                    continue;
+                                }
+                                EngineEvent::Error(msg) => {
+                                    ("engine://error", serde_json::json!({"message": msg}))
                                 }
                             };
                             let _ = app_handle.emit(event_name, payload);
@@ -151,12 +205,15 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording])
+        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, hide_window, load_config, save_config])
         .on_window_event(|window, event| {
             // Перехватываем закрытие окна — скрываем в трей вместо закрытия
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
+                if let Some(vis) = window.app_handle().try_state::<Arc<AtomicBool>>() {
+                    vis.store(false, Ordering::Relaxed);
+                }
             }
         })
         .run(tauri::generate_context!())

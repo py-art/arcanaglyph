@@ -3,6 +3,7 @@
 
 use arcanaglyph_core::{ArcanaEngine, CoreConfig, EngineEvent};
 use std::net::SocketAddr;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::net::{TcpListener, UdpSocket};
 use tracing::info;
@@ -49,6 +50,15 @@ async fn handle_connection(
                             EngineEvent::FinishedProcessing => {
                                 serde_json::json!({"type": "status", "status": "finished_processing"})
                             }
+                            EngineEvent::Transcribing => {
+                                serde_json::json!({"type": "status", "status": "transcribing"})
+                            }
+                            EngineEvent::RequestFocus => {
+                                continue;
+                            }
+                            EngineEvent::Error(msg) => {
+                                serde_json::json!({"type": "error", "message": msg})
+                            }
                         };
                         let msg_text = Message::Text(msg_json.to_string().into());
                         if ws_sender.send(msg_text).await.is_err() {
@@ -77,7 +87,9 @@ async fn main() {
     info!("Инициализация...");
 
     let config = CoreConfig::default();
-    let engine = Arc::new(ArcanaEngine::new(config).expect("Не удалось инициализировать движок"));
+    // Legacy-режим: окно всегда "скрыто", текст вставляется через enigo
+    let window_visible = Arc::new(AtomicBool::new(false));
+    let engine = Arc::new(ArcanaEngine::new(config, window_visible).expect("Не удалось инициализировать движок"));
 
     let tcp_listener = TcpListener::bind("127.0.0.1:9001")
         .await

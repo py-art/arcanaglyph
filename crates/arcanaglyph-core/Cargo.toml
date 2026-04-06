@@ -26,5 +26,7 @@ tungstenite = "0.27.0"
 futures-util = "0.3.31"
 tokio-tungstenite = "0.27.0"
 enigo = "0.3"
+whisper-rs = { version = "0.13", features = ["whisper-cpp-log"] }
+ashpd = { version = "0.13", features = ["remote_desktop", "screencast"] }
 toml = "0.8"
 directories = "6"
