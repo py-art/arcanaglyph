@@ -158,6 +158,9 @@ fn main() {
                                     tray::show_window(&app_handle);
                                     continue;
                                 }
+                                EngineEvent::Error(msg) => {
+                                    ("engine://error", serde_json::json!({"message": msg}))
+                                }
                             };
                             let _ = app_handle.emit(event_name, payload);
                         }

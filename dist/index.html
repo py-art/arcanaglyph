@@ -248,6 +248,12 @@
       .copy-btn:hover { background: #292e42; border-color: #7aa2f7; }
       .copy-btn svg { width: 13px; height: 13px; fill: #565f89; }
       .copy-btn.copied svg { fill: #9ece6a; }
+
+      /* === Ошибка === */
+      #result.error {
+        border-color: #f7768e;
+        color: #f7768e;
+      }
     </style>
   </head>
   <body>
@@ -370,6 +376,7 @@
         recording = true;
         resultWrap.classList.remove('visible');
         resultEl.textContent = '';
+        resultEl.classList.remove('error');
 
         micBtn.classList.add('recording');
         micGlow.classList.add('recording');
@@ -420,6 +427,12 @@
         requestAnimationFrame(() => {
           resultEl.classList.toggle('scrollable', resultEl.scrollHeight > resultEl.clientHeight);
         });
+      });
+
+      listen('engine://error', (ev) => {
+        resultEl.textContent = ev.payload.message || 'Неизвестная ошибка';
+        resultEl.classList.add('error');
+        resultWrap.classList.add('visible');
       });
 
       listen('engine://finished-processing', () => {
