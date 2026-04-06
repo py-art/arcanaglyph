@@ -5,11 +5,33 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Движок транскрибации
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum TranscriberType {
+    /// Vosk — быстрый, потоковый, менее точный
+    #[default]
+    Vosk,
+    /// Whisper — медленнее, значительно точнее
+    Whisper,
+}
+
 /// Конфигурация ядра ArcanaGlyph
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoreConfig {
-    /// Путь к Vosk-модели
+    /// Движок транскрибации: vosk, whisper
+    #[serde(default)]
+    pub transcriber: TranscriberType,
+    /// Путь к Vosk-модели (для transcriber = "vosk")
     pub model_path: PathBuf,
+    /// Путь к Whisper-модели в формате ggml (для transcriber = "whisper")
+    /// Доступные модели (скачать с HuggingFace ggerganov/whisper.cpp):
+    ///   ggml-large-v3-turbo.bin  — лучший баланс скорости/качества (~1.5 ГБ)
+    ///   ggml-large-v3.bin        — максимальное качество, медленнее (~3 ГБ)
+    ///   ggml-medium.bin          — средний вариант (~1.5 ГБ)
+    ///   ggml-small.bin           — быстрый, менее точный (~500 МБ)
+    #[serde(default = "default_whisper_model_path")]
+    pub whisper_model_path: PathBuf,
     /// Частота дискретизации аудио (Гц)
     pub sample_rate: u32,
     /// Таймаут тишины (секунды): если нет новых слов столько времени — запись автоматически останавливается
@@ -22,6 +44,12 @@ pub struct CoreConfig {
     pub debug: bool,
 }
 
+fn default_whisper_model_path() -> PathBuf {
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("models/ggml-large-v3-turbo.bin")
+}
+
 impl Default for CoreConfig {
     fn default() -> Self {
         // Пытаемся найти модель относительно текущей директории
@@ -29,8 +57,14 @@ impl Default for CoreConfig {
             .unwrap_or_else(|_| PathBuf::from("."))
             .join("models/vosk-model-ru-0.42");
 
+        let whisper_model_path = std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("models/ggml-large-v3-turbo.bin");
+
         Self {
+            transcriber: TranscriberType::Vosk,
             model_path,
+            whisper_model_path,
             sample_rate: 48000,
             max_record_secs: 20,
             auto_type: true,
@@ -59,6 +93,10 @@ impl CoreConfig {
                 toml::from_str(&content).map_err(|e| ArcanaError::Config(format!("Ошибка парсинга конфига: {}", e)))?;
 
             tracing::info!("Конфигурация загружена из {}", config_path.display());
+            // Пересохраняем — добавляет новые поля со значениями по умолчанию
+            if let Err(e) = config.save() {
+                tracing::warn!("Не удалось обновить конфиг: {}", e);
+            }
             Ok(config)
         } else {
             let config = Self::default();
@@ -100,12 +138,14 @@ mod tests {
     #[test]
     fn test_default_config_has_valid_values() {
         let config = CoreConfig::default();
+        assert_eq!(config.transcriber, TranscriberType::Vosk);
         assert_eq!(config.sample_rate, 48000);
         assert_eq!(config.max_record_secs, 20);
         assert!(config.auto_type);
         assert!(config.debug);
         assert_eq!(config.hotkey, "Super+Alt+Control+Space");
         assert!(config.model_path.ends_with("models/vosk-model-ru-0.42"));
+        assert!(config.whisper_model_path.ends_with("models/ggml-large-v3-turbo.bin"));
     }
 
     #[test]
@@ -139,7 +179,9 @@ auto_type = false
         let file_path = dir.join("test_config.toml");
 
         let config = CoreConfig {
+            transcriber: TranscriberType::Vosk,
             model_path: PathBuf::from("/tmp/test-model"),
+            whisper_model_path: PathBuf::from("/tmp/test-whisper-model"),
             sample_rate: 16000,
             max_record_secs: 30,
             auto_type: false,

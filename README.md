@@ -2,7 +2,12 @@
 
 Десктопное приложение для голосового ввода текста на Linux. Нажимаете горячую клавишу — говорите —
 нажимаете ещё раз — распознанный текст автоматически вставляется в активное окно.
-Вся транскрибация происходит локально через модель Vosk, без передачи данных в облако.
+Вся транскрибация происходит локально, без передачи данных в облако.
+
+Поддерживаются два движка распознавания:
+
+- **Vosk** — быстрый, потоковый, менее точный (~42 МБ модель)
+- **Whisper** (whisper.cpp) — значительно точнее, медленнее на CPU (~1.5 ГБ модель)
 
 ## Системные зависимости
 
@@ -24,19 +29,34 @@ sudo apt install wl-clipboard
 Также необходима библиотека `libvosk`. Если она не установлена, можно собрать из исходников
 скриптом `scripts/legacy/install_libvosk.bash`.
 
-## Установка Vosk-модели
+## Установка моделей
 
-Скачайте русскую модель и распакуйте в директорию `models/`:
+### Vosk (по умолчанию)
 
 ```bash
-mkdir -p models
-cd models
+mkdir -p models && cd models
 wget https://alphacephei.com/vosk/models/vosk-model-ru-0.42.zip
-unzip vosk-model-ru-0.42.zip
+unzip vosk-model-ru-0.42.zip && cd ..
+```
+
+### Whisper (рекомендуется для точности)
+
+```bash
+mkdir -p models && cd models
+wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
 cd ..
 ```
 
-Либо укажите путь к модели в конфигурационном файле (см. раздел "Конфигурация").
+Доступные модели Whisper (скачать из [ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp)):
+
+| Модель | Размер | Качество | Скорость |
+| --- | --- | --- | --- |
+| ggml-large-v3-turbo.bin | ~1.5 ГБ | Лучший баланс | Средняя |
+| ggml-large-v3.bin | ~3 ГБ | Максимальное | Медленная |
+| ggml-medium.bin | ~1.5 ГБ | Среднее | Быстрее |
+| ggml-small.bin | ~500 МБ | Базовое | Быстрая |
+
+Для переключения между движками измените `transcriber` в конфигурационном файле.
 
 ## Запуск
 
@@ -63,8 +83,14 @@ make run
 Файл: `~/.config/ArcanaGlyph/config.toml`
 
 ```toml
-# Путь к Vosk-модели
-model_path = "/home/user/projects/arcanaglyph/models/vosk-model-ru-0.42"
+# Движок транскрибации: vosk, whisper
+transcriber = "vosk"
+
+# Путь к Vosk-модели (для transcriber = "vosk")
+model_path = "models/vosk-model-ru-0.42"
+
+# Путь к Whisper-модели в формате ggml (для transcriber = "whisper")
+whisper_model_path = "models/ggml-large-v3-turbo.bin"
 
 # Частота дискретизации аудио (Гц)
 sample_rate = 48000
@@ -77,17 +103,23 @@ auto_type = true
 
 # Горячая клавиша (формат: модификаторы через + и клавиша)
 hotkey = "Super+Alt+Control+Space"
+
+# Режим отладки: выводить промежуточные результаты в терминал
+debug = true
 ```
 
 ### Параметры
 
 | Параметр | Тип | По умолчанию | Описание |
 | --- | --- | --- | --- |
-| model_path | string | ./models/vosk-model-ru-0.42 | Путь к директории с Vosk-моделью |
+| transcriber | string | vosk | Движок: "vosk" или "whisper" |
+| model_path | string | models/vosk-model-ru-0.42 | Путь к Vosk-модели |
+| whisper_model_path | string | models/ggml-large-v3-turbo.bin | Путь к Whisper-модели (ggml) |
 | sample_rate | число | 48000 | Частота дискретизации микрофона |
 | max_record_secs | число | 20 | Таймаут автоостановки записи |
 | auto_type | bool | true | Вставлять текст в активное окно |
 | hotkey | string | Super+Alt+Control+Space | Глобальная горячая клавиша |
+| debug | bool | true | Выводить отладочную информацию в терминал |
 
 ## Сборка дистрибутива
 
@@ -120,12 +152,13 @@ make clean    # Очистка кэша
 
 ```text
 crates/
-  arcanaglyph-core/    # Библиотека: движок (Vosk + cpal + wl-copy/wtype/enigo)
+  arcanaglyph-core/    # Библиотека: движок (Vosk/Whisper + cpal + clipboard/RemoteDesktop)
   arcanaglyph-app/     # Tauri v2 приложение (GUI + tray + горячие клавиши)
 dist/
   index.html           # Фронтенд (vanilla HTML/JS)
 models/
   vosk-model-ru-0.42/  # Vosk-модель (не в git)
+  ggml-large-v3-turbo.bin  # Whisper-модель (не в git)
 ```
 
 ## Troubleshooting

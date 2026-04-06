@@ -5,9 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Описание проекта
 
 ArcanaGlyph — десктопное приложение для голосового ввода текста на Linux (Rust + Tauri v2).
-Единый процесс: нажатие глобальной горячей клавиши начинает запись с микрофона,
-повторное нажатие останавливает, Vosk транскрибирует речь локально,
-enigo вставляет текст в активное окно. Иконка в системном трее.
+Нажатие горячей клавиши начинает запись, повторное — останавливает и транскрибирует.
+Два движка: Vosk (быстрый) и Whisper/whisper.cpp (точный), выбор через config.toml.
+Вставка текста в активное окно через clipboard + XDG RemoteDesktop portal (Shift+Insert).
+Иконка в системном трее (красная при записи).
 
 ## Команды
 
@@ -29,9 +30,10 @@ Cargo workspace из двух крейтов:
 - **arcanaglyph-core** (`crates/arcanaglyph-core/`) — библиотека + legacy бинарник:
   - `lib.rs` — публичный API: `ArcanaEngine`, `CoreConfig`, `EngineEvent`, `ArcanaError`
   - `engine.rs` — основной движок: управление записью (start/stop), broadcast событий
-  - `audio.rs` — захват аудио через `cpal`, транскрибация через `vosk`
-  - `input.rs` — вставка текста: `wl-copy` + `wtype` на Wayland, `enigo` на X11
-  - `config.rs` — конфигурация с load/save из `~/.config/ArcanaGlyph/config.toml`
+  - `transcriber.rs` — трейт `Transcriber` + реализации `VoskTranscriber`, `WhisperTranscriber`
+  - `audio.rs` — захват аудио через `cpal`, передача в transcriber
+  - `input.rs` — вставка текста: `wl-copy` + XDG RemoteDesktop (Shift+Insert) на Wayland, `enigo` на X11
+  - `config.rs` — конфигурация с load/save из `~/.config/arcanaglyph/config.toml`
   - `error.rs` — типизированные ошибки через `thiserror`
   - `main.rs` — legacy standalone-сервер (UDP + WebSocket, для отладки)
 
@@ -63,4 +65,7 @@ sudo apt-get install build-essential libasound2-dev libgtk-3-dev libwebkit2gtk-4
 sudo apt install wl-clipboard
 ```
 
-Также нужны: `libvosk.so` (в `/usr/local/lib/`) и Vosk-модель `models/vosk-model-ru-0.42/`.
+Также нужны: `libvosk.so` (в `/usr/local/lib/`) и модели в `models/`:
+
+- Vosk: `models/vosk-model-ru-0.42/`
+- Whisper: `models/ggml-large-v3-turbo.bin` (скачать с HuggingFace ggerganov/whisper.cpp)

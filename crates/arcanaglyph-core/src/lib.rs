@@ -5,6 +5,7 @@ pub mod config;
 pub mod engine;
 pub mod error;
 pub mod input;
+pub mod transcriber;
 
 pub use config::CoreConfig;
 pub use engine::{ArcanaEngine, EngineEvent};

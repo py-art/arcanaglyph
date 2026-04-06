@@ -50,6 +50,9 @@ async fn handle_connection(
                             EngineEvent::FinishedProcessing => {
                                 serde_json::json!({"type": "status", "status": "finished_processing"})
                             }
+                            EngineEvent::Transcribing => {
+                                serde_json::json!({"type": "status", "status": "transcribing"})
+                            }
                             EngineEvent::RequestFocus => {
                                 continue;
                             }
