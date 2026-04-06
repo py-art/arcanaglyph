@@ -302,7 +302,10 @@ pub fn record_and_transcribe(
         .map_err(|e| ArcanaError::Internal(format!("Mutex отравлен: {}", e)))?;
 
     let transcription_start = std::time::Instant::now();
-    let result_text = transcriber.transcribe(&samples, sample_rate)?;
+    // Для streaming (Vosk) — данные уже обработаны через accept_waveform, передаём пустой slice
+    // Для batch (Whisper) — передаём все сэмплы
+    let transcribe_samples = if streaming { &[][..] } else { &samples[..] };
+    let result_text = transcriber.transcribe(transcribe_samples, sample_rate)?;
     let transcription_duration = transcription_start.elapsed();
     transcriber.reset();
 

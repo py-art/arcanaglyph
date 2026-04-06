@@ -79,7 +79,15 @@ impl Default for CoreConfig {
 }
 
 impl CoreConfig {
-    /// Путь к конфигурационному файлу: ~/.config/arcanaglyph/config.toml
+    /// Дефолтный конфиг с Whisper по умолчанию (для новых пользователей)
+    pub fn default_whisper() -> Self {
+        Self {
+            transcriber: TranscriberType::Whisper,
+            ..Self::default()
+        }
+    }
+
+    /// Путь к конфигурационному файлу (legacy): ~/.config/arcanaglyph/config.toml
     pub fn config_path() -> Option<PathBuf> {
         ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph").map(|dirs| dirs.config_dir().join("config.toml"))
     }
@@ -114,51 +122,62 @@ impl CoreConfig {
         }
     }
 
-    /// Загружает конфигурацию из файла. Если файл не существует — создаёт с дефолтными значениями.
+    /// Загружает конфигурацию из SQLite БД. При первом запуске импортирует из config.toml если есть.
     pub fn load() -> Result<Self, ArcanaError> {
-        let config_path = Self::config_path()
-            .ok_or_else(|| ArcanaError::Config("Не удалось определить директорию конфигурации".into()))?;
+        let db_path = Self::history_db_path()
+            .ok_or_else(|| ArcanaError::Config("Не удалось определить путь к БД".into()))?;
+        let audio_cache = Self::audio_cache_dir()
+            .ok_or_else(|| ArcanaError::Config("Не удалось определить путь к кэшу".into()))?;
 
-        if config_path.exists() {
-            let content = std::fs::read_to_string(&config_path)
-                .map_err(|e| ArcanaError::Config(format!("Не удалось прочитать {}: {}", config_path.display(), e)))?;
+        // Открываем БД (применяет миграции, создаёт таблицу settings)
+        let db = crate::history::HistoryDB::new(&db_path, audio_cache)?;
 
-            let config: CoreConfig =
-                toml::from_str(&content).map_err(|e| ArcanaError::Config(format!("Ошибка парсинга конфига: {}", e)))?;
-
-            tracing::info!("Конфигурация загружена из {}", config_path.display());
-            // Пересохраняем — добавляет новые поля со значениями по умолчанию
-            if let Err(e) = config.save() {
-                tracing::warn!("Не удалось обновить конфиг: {}", e);
-            }
-            Ok(config)
-        } else {
-            let config = Self::default();
-            // Создаём файл с дефолтными значениями
-            if let Err(e) = config.save() {
-                tracing::warn!("Не удалось сохранить дефолтный конфиг: {}", e);
-            }
-            tracing::info!("Создан дефолтный конфиг: {}", config_path.display());
-            Ok(config)
+        // Пробуем загрузить из SQLite
+        if let Some(json_str) = db.get_setting("core_config") {
+            let config: CoreConfig = serde_json::from_str(&json_str)
+                .map_err(|e| ArcanaError::Config(format!("Ошибка парсинга конфига из БД: {}", e)))?;
+            tracing::info!("Конфигурация загружена из БД");
+            return Ok(config);
         }
+
+        // Нет настроек в БД — пробуем импортировать из config.toml
+        let config = if let Some(config_path) = Self::config_path() {
+            if config_path.exists() {
+                let content = std::fs::read_to_string(&config_path)
+                    .map_err(|e| ArcanaError::Config(format!("Не удалось прочитать {}: {}", config_path.display(), e)))?;
+                let config: CoreConfig = toml::from_str(&content)
+                    .map_err(|e| ArcanaError::Config(format!("Ошибка парсинга config.toml: {}", e)))?;
+
+                tracing::info!("Импорт настроек из config.toml");
+                let _ = std::fs::remove_file(&config_path);
+                tracing::info!("config.toml удалён после импорта в БД");
+
+                config
+            } else {
+                Self::default_whisper()
+            }
+        } else {
+            Self::default_whisper()
+        };
+
+        // Сохраняем в БД
+        config.save()?;
+        tracing::info!("Конфигурация сохранена в БД");
+
+        Ok(config)
     }
 
-    /// Сохраняет конфигурацию в файл
+    /// Сохраняет конфигурацию в SQLite БД
     pub fn save(&self) -> Result<(), ArcanaError> {
-        let config_path = Self::config_path()
-            .ok_or_else(|| ArcanaError::Config("Не удалось определить директорию конфигурации".into()))?;
+        let db_path = Self::history_db_path()
+            .ok_or_else(|| ArcanaError::Config("Не удалось определить путь к БД".into()))?;
+        let audio_cache = Self::audio_cache_dir()
+            .ok_or_else(|| ArcanaError::Config("Не удалось определить путь к кэшу".into()))?;
 
-        // Создаём директорию, если не существует
-        if let Some(parent) = config_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| ArcanaError::Config(format!("Не удалось создать директорию конфигурации: {}", e)))?;
-        }
-
-        let content = toml::to_string_pretty(self)
+        let db = crate::history::HistoryDB::new(&db_path, audio_cache)?;
+        let json_str = serde_json::to_string(self)
             .map_err(|e| ArcanaError::Config(format!("Ошибка сериализации конфига: {}", e)))?;
-
-        std::fs::write(&config_path, content)
-            .map_err(|e| ArcanaError::Config(format!("Не удалось записать {}: {}", config_path.display(), e)))?;
+        db.set_setting("core_config", &json_str)?;
 
         Ok(())
     }
