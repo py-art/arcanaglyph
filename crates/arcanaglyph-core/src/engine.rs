@@ -125,8 +125,29 @@ impl ArcanaEngine {
                     info!("Игнорирую триггер, идет обработка...");
                 }
             } else {
-                // Начинаем новую запись
+                // Проверяем микрофон перед записью (fail fast)
                 info!("Получен триггер для начала записи.");
+                let mic_check = tokio::task::spawn_blocking({
+                    let sr = sample_rate;
+                    move || audio::check_microphone(sr)
+                })
+                .await;
+
+                match mic_check {
+                    Ok(Err(e)) => {
+                        tracing::error!("{}", e);
+                        eprintln!("[Ошибка] {}", e);
+                        let _ = event_tx.send(EngineEvent::Error(e.to_string()));
+                        return;
+                    }
+                    Err(e) => {
+                        tracing::error!("Ошибка проверки микрофона: {:?}", e);
+                        let _ = event_tx.send(EngineEvent::Error("Ошибка проверки микрофона".to_string()));
+                        return;
+                    }
+                    Ok(Ok(())) => {}
+                }
+
                 *busy_guard = true;
                 *is_paused.lock().await = false;
                 drop(busy_guard);

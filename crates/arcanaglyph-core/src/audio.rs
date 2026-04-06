@@ -19,6 +19,60 @@ pub enum AudioCommand {
     TogglePause,
 }
 
+/// Проверяет доступность микрофона перед началом записи (fail fast).
+/// Открывает аудиопоток на 200 мс и проверяет, приходят ли данные.
+pub fn check_microphone(sample_rate: u32) -> Result<(), ArcanaError> {
+    let host = cpal::default_host();
+    let device = host
+        .default_input_device()
+        .ok_or_else(|| ArcanaError::AudioDevice("Микрофон не найден. Подключите микрофон и проверьте настройки звука.".into()))?;
+
+    let device_name = device.name().unwrap_or_else(|_| "неизвестно".into());
+    info!("Микрофон: {}", device_name);
+
+    let config = cpal::StreamConfig {
+        channels: 1,
+        sample_rate: cpal::SampleRate(sample_rate),
+        buffer_size: cpal::BufferSize::Default,
+    };
+
+    let got_audio = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let got_audio_clone = Arc::clone(&got_audio);
+
+    let stream = device
+        .build_input_stream(
+            &config,
+            move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                if data.iter().any(|&s| s != 0) {
+                    got_audio_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            },
+            |err| tracing::error!("Ошибка проверки микрофона: {}", err),
+            None,
+        )
+        .map_err(|e| ArcanaError::AudioDevice(format!(
+            "Не удалось открыть микрофон '{}': {}. Проверьте настройки звука.", device_name, e
+        )))?;
+
+    stream.play().map_err(|e| ArcanaError::AudioDevice(format!(
+        "Не удалось запустить микрофон '{}': {}", device_name, e
+    )))?;
+
+    // Ждём 200 мс — достаточно для получения первых фреймов
+    thread::sleep(Duration::from_millis(200));
+
+    drop(stream);
+
+    if !got_audio.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err(ArcanaError::AudioDevice(format!(
+            "Микрофон '{}' не передаёт звук. Возможно, он отключён или выбрано неверное устройство.", device_name
+        )));
+    }
+
+    info!("Микрофон '{}' работает", device_name);
+    Ok(())
+}
+
 /// Записывает аудио с микрофона и транскрибирует через Vosk.
 /// Блокирующая функция — ждёт команд через `cmd_rx`.
 /// Автоматически останавливается, если нет новых слов `silence_timeout_secs` секунд.
