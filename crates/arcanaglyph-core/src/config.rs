@@ -80,6 +80,36 @@ impl CoreConfig {
         ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph").map(|dirs| dirs.config_dir().join("config.toml"))
     }
 
+    /// Путь к базе данных истории: ~/.config/arcanaglyph/history.db
+    pub fn history_db_path() -> Option<PathBuf> {
+        ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph").map(|dirs| dirs.config_dir().join("history.db"))
+    }
+
+    /// Директория кэша аудио: ~/.cache/arcanaglyph/audio/
+    pub fn audio_cache_dir() -> Option<PathBuf> {
+        ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph").map(|dirs| dirs.cache_dir().join("audio"))
+    }
+
+    /// Название текущей модели (для записи в историю)
+    pub fn transcriber_model_name(&self) -> String {
+        match self.transcriber {
+            TranscriberType::Vosk => self.model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "vosk".to_string()),
+            TranscriberType::Whisper => self.whisper_model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "whisper".to_string()),
+        }
+    }
+
+    /// Тип транскрайбера как строка
+    pub fn transcriber_type_str(&self) -> String {
+        match self.transcriber {
+            TranscriberType::Vosk => "vosk".to_string(),
+            TranscriberType::Whisper => "whisper".to_string(),
+        }
+    }
+
     /// Загружает конфигурацию из файла. Если файл не существует — создаёт с дефолтными значениями.
     pub fn load() -> Result<Self, ArcanaError> {
         let config_path = Self::config_path()

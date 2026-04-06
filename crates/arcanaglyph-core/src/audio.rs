@@ -79,9 +79,20 @@ pub fn check_microphone(sample_rate: u32) -> Result<(), ArcanaError> {
     Ok(())
 }
 
+/// Результат записи и транскрибации
+pub struct RecordResult {
+    /// Распознанный текст
+    pub text: String,
+    /// Путь к аудиофайлу в кэше
+    pub audio_path: String,
+    /// Длительность записи (секунды)
+    pub duration_secs: u32,
+}
+
 /// Записывает аудио с микрофона и транскрибирует через выбранный движок.
 /// Блокирующая функция — ждёт команд через `cmd_rx`.
 /// Автоматически останавливается, если нет новых слов `silence_timeout_secs` секунд.
+#[allow(clippy::too_many_arguments)]
 pub fn record_and_transcribe(
     cmd_rx: std_mpsc::Receiver<AudioCommand>,
     transcriber: &dyn Transcriber,
@@ -90,7 +101,8 @@ pub fn record_and_transcribe(
     silence_timeout_secs: u64,
     audio_level: Arc<AtomicU32>,
     event_tx: tokio::sync::broadcast::Sender<EngineEvent>,
-) -> Result<String, ArcanaError> {
+    audio_cache_dir: &std::path::Path,
+) -> Result<RecordResult, ArcanaError> {
     let recording_start = std::time::Instant::now();
     info!("Начинаю запись...");
 
@@ -306,5 +318,34 @@ pub fn record_and_transcribe(
         result_text
     );
 
-    Ok(result_text)
+    // Сохраняем аудио в кэш для повторной транскрибации другой моделью
+    let timestamp = chrono::Utc::now().timestamp();
+    let audio_filename = format!("{}.raw", timestamp);
+    let audio_path = audio_cache_dir.join(&audio_filename);
+    if let Err(e) = save_raw_audio(&audio_path, &samples) {
+        tracing::warn!("Не удалось сохранить аудио в кэш: {}", e);
+    }
+
+    let duration_secs = recording_duration.as_secs() as u32;
+
+    Ok(RecordResult {
+        text: result_text,
+        audio_path: audio_path.to_string_lossy().to_string(),
+        duration_secs,
+    })
+}
+
+/// Сохраняет сырые i16 сэмплы в файл
+fn save_raw_audio(path: &std::path::Path, samples: &[i16]) -> Result<(), ArcanaError> {
+    use std::io::Write;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| ArcanaError::Internal(format!("Не удалось создать директорию: {}", e)))?;
+    }
+    let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+    let mut file = std::fs::File::create(path)
+        .map_err(|e| ArcanaError::Internal(format!("Не удалось создать файл: {}", e)))?;
+    file.write_all(&bytes)
+        .map_err(|e| ArcanaError::Internal(format!("Не удалось записать аудио: {}", e)))?;
+    Ok(())
 }
