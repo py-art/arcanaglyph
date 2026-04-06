@@ -164,11 +164,11 @@ impl ArcanaEngine {
                             } else {
                                 let is_visible = window_visible.load(Ordering::Relaxed);
                                 // Вставляем текст только когда окно скрыто (в трее)
-                                if auto_type
-                                    && !is_visible
-                                    && let Err(e) = crate::input::type_text(&text).await
-                                {
-                                    tracing::error!("Не удалось вставить текст: {}", e);
+                                if auto_type && !is_visible {
+                                    eprintln!("[Вставка] в активное окно...");
+                                    if let Err(e) = crate::input::type_text(&text).await {
+                                        tracing::error!("Не удалось вставить текст: {}", e);
+                                    }
                                 }
                                 let _ = event_tx_clone.send(EngineEvent::TranscriptionResult(text));
                                 // Если окно видимо — запрашиваем фокус для вывода на передний план

@@ -201,7 +201,9 @@ pub fn record_and_transcribe(
         .ok_or_else(|| ArcanaError::Recognizer("Не удалось получить результат распознавания".into()))?;
 
     if debug {
+        eprintln!("─────────────────────────────────────────");
         eprintln!("[Результат] {}", final_result.text);
+        eprintln!("─────────────────────────────────────────");
     }
     info!("Финальный результат: {}", final_result.text);
     let result_text = final_result.text.to_string();
