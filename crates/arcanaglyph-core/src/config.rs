@@ -42,6 +42,9 @@ pub struct CoreConfig {
     pub hotkey: String,
     /// Режим отладки: выводить промежуточные результаты распознавания в терминал
     pub debug: bool,
+    /// Модели для предзагрузки при старте (помимо основной)
+    #[serde(default)]
+    pub preload_models: Vec<TranscriberType>,
 }
 
 fn default_whisper_model_path() -> PathBuf {
@@ -70,6 +73,7 @@ impl Default for CoreConfig {
             auto_type: true,
             hotkey: "Super+Alt+Control+Space".to_string(),
             debug: true,
+            preload_models: vec![],
         }
     }
 }
@@ -217,6 +221,7 @@ auto_type = false
             auto_type: false,
             hotkey: "Ctrl+Shift+R".to_string(),
             debug: true,
+            preload_models: vec![],
         };
 
         let content = toml::to_string_pretty(&config).unwrap();

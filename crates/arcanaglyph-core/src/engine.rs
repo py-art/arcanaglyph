@@ -1,5 +1,6 @@
 // crates/arcanaglyph-core/src/engine.rs
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
@@ -39,7 +40,10 @@ pub enum EngineEvent {
 /// Основной движок ArcanaGlyph: управляет записью, распознаванием и рассылкой событий
 pub struct ArcanaEngine {
     config: std::sync::RwLock<CoreConfig>,
-    transcriber: std::sync::RwLock<Arc<dyn Transcriber>>,
+    /// Пул загруженных транскрайберов (ключ — имя модели)
+    transcribers: Arc<std::sync::RwLock<HashMap<String, Arc<dyn Transcriber>>>>,
+    /// Имя активной модели (ключ в transcribers)
+    active_model: Arc<std::sync::RwLock<String>>,
     config_changed: AtomicBool,
     is_busy: Arc<tokio::sync::Mutex<bool>>,
     is_paused: Arc<tokio::sync::Mutex<bool>>,
@@ -57,14 +61,11 @@ impl ArcanaEngine {
     /// Создаёт новый экземпляр движка: загружает модель, инициализирует каналы.
     /// Должен вызываться из контекста Tokio runtime (сохраняет Handle для spawn).
     pub fn new(config: CoreConfig, window_visible: Arc<AtomicBool>) -> Result<Self, ArcanaError> {
-        let transcriber: Arc<dyn Transcriber> = match config.transcriber {
-            TranscriberType::Vosk => {
-                Arc::new(VoskTranscriber::new(&config.model_path, config.sample_rate as f32)?)
-            }
-            TranscriberType::Whisper => {
-                Arc::new(WhisperTranscriber::new(&config.whisper_model_path)?)
-            }
-        };
+        // Загружаем основную модель
+        let (model_name, transcriber) = Self::create_transcriber(&config, &config.transcriber)?;
+
+        let mut transcribers = HashMap::new();
+        transcribers.insert(model_name.clone(), transcriber);
 
         // Инициализация БД истории
         let db_path = CoreConfig::history_db_path()
@@ -81,7 +82,8 @@ impl ArcanaEngine {
 
         Ok(Self {
             config: std::sync::RwLock::new(config),
-            transcriber: std::sync::RwLock::new(transcriber),
+            transcribers: Arc::new(std::sync::RwLock::new(transcribers)),
+            active_model: Arc::new(std::sync::RwLock::new(model_name)),
             config_changed: AtomicBool::new(false),
             is_busy: Arc::new(tokio::sync::Mutex::new(false)),
             is_paused: Arc::new(tokio::sync::Mutex::new(false)),
@@ -94,12 +96,78 @@ impl ArcanaEngine {
         })
     }
 
-    /// Обновить конфигурацию — транскрайбер пересоздастся при следующей записи
+    /// Создаёт транскрайбер по типу, возвращает (model_name, Arc<dyn Transcriber>)
+    fn create_transcriber(config: &CoreConfig, t_type: &TranscriberType) -> Result<(String, Arc<dyn Transcriber>), ArcanaError> {
+        match t_type {
+            TranscriberType::Vosk => {
+                let t = VoskTranscriber::new(&config.model_path, config.sample_rate as f32)?;
+                let name = config.model_path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "vosk".to_string());
+                Ok((name, Arc::new(t)))
+            }
+            TranscriberType::Whisper => {
+                let t = WhisperTranscriber::new(&config.whisper_model_path)?;
+                let name = config.whisper_model_path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "whisper".to_string());
+                Ok((name, Arc::new(t)))
+            }
+        }
+    }
+
+    /// Предзагрузить модель в пул (вызывать из фонового потока)
+    pub fn preload_model(&self, t_type: &TranscriberType) -> Result<String, ArcanaError> {
+        let config = self.config.read().map_err(|e| ArcanaError::Internal(format!("RwLock: {}", e)))?;
+        let (name, transcriber) = Self::create_transcriber(&config, t_type)?;
+
+        let mut pool = self.transcribers.write().map_err(|e| ArcanaError::Internal(format!("RwLock: {}", e)))?;
+        if !pool.contains_key(&name) {
+            pool.insert(name.clone(), transcriber);
+            info!("Модель '{}' предзагружена в пул", name);
+        }
+        Ok(name)
+    }
+
+    /// Список загруженных моделей
+    pub fn loaded_models(&self) -> Vec<String> {
+        self.transcribers.read().map(|pool| pool.keys().cloned().collect()).unwrap_or_default()
+    }
+
+    /// Имя активной модели
+    pub fn active_model_name(&self) -> String {
+        self.active_model.read().map(|m| m.clone()).unwrap_or_default()
+    }
+
+    /// Обновить конфигурацию — если модель уже в пуле, мгновенное переключение
     pub fn update_config(&self, new_config: CoreConfig) {
+        // Определяем имя модели для нового конфига
+        let new_model_name = match new_config.transcriber {
+            TranscriberType::Vosk => new_config.model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "vosk".to_string()),
+            TranscriberType::Whisper => new_config.whisper_model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "whisper".to_string()),
+        };
+
+        // Если модель уже в пуле — мгновенное переключение
+        let already_loaded = self.transcribers.read()
+            .map(|pool| pool.contains_key(&new_model_name))
+            .unwrap_or(false);
+
+        if already_loaded {
+            if let Ok(mut active) = self.active_model.write() {
+                *active = new_model_name.clone();
+            }
+            info!("Модель '{}' уже загружена — мгновенное переключение", new_model_name);
+        } else {
+            self.config_changed.store(true, Ordering::Relaxed);
+            info!("Модель '{}' не в пуле — загрузится при следующей записи", new_model_name);
+        }
+
         if let Ok(mut cfg) = self.config.write() {
             *cfg = new_config;
-            self.config_changed.store(true, Ordering::Relaxed);
-            info!("Конфигурация обновлена, применится при следующей записи");
         }
     }
 
@@ -129,9 +197,14 @@ impl ArcanaEngine {
         let is_paused = Arc::clone(&self.is_paused);
         let current_cmd_tx = Arc::clone(&self.current_cmd_tx);
         let event_tx = self.event_tx.clone();
-        let mut transcriber = self.transcriber.read().unwrap().clone();
+        let active_name = self.active_model.read().unwrap().clone();
+        let mut transcriber = self.transcribers.read().unwrap()
+            .get(&active_name).cloned()
+            .unwrap_or_else(|| self.transcribers.read().unwrap().values().next().unwrap().clone());
         let need_reload = self.config_changed.swap(false, Ordering::Relaxed);
         let config = self.config.read().unwrap().clone();
+        let transcribers_rw = Arc::clone(&self.transcribers);
+        let active_model_rw = Arc::clone(&self.active_model);
         let silence_timeout_secs = config.max_record_secs;
         let sample_rate = config.sample_rate;
         let auto_type = config.auto_type;
@@ -159,25 +232,22 @@ impl ArcanaEngine {
                 if need_reload {
                     let _ = event_tx.send(EngineEvent::Error("Загрузка модели...".to_string()));
                     let cfg = config.clone();
+                    let transcribers_pool = Arc::clone(&transcribers_rw);
                     let reload_result = tokio::task::spawn_blocking(move || {
-                        let new_t: Result<Arc<dyn Transcriber>, _> = match cfg.transcriber {
-                            TranscriberType::Vosk => {
-                                VoskTranscriber::new(&cfg.model_path, cfg.sample_rate as f32)
-                                    .map(|t| Arc::new(t) as _)
-                            }
-                            TranscriberType::Whisper => {
-                                WhisperTranscriber::new(&cfg.whisper_model_path)
-                                    .map(|t| Arc::new(t) as _)
-                            }
-                        };
-                        new_t
+                        ArcanaEngine::create_transcriber(&cfg, &cfg.transcriber)
                     })
                     .await;
 
                     match reload_result {
-                        Ok(Ok(t)) => {
-                            transcriber = t;
-                            info!("Транскрайбер пересоздан по новому конфигу");
+                        Ok(Ok((name, t))) => {
+                            transcriber = t.clone();
+                            if let Ok(mut pool) = transcribers_pool.write() {
+                                pool.insert(name.clone(), t);
+                            }
+                            if let Ok(mut active) = active_model_rw.write() {
+                                *active = name.clone();
+                            }
+                            info!("Модель '{}' загружена и добавлена в пул", name);
                         }
                         Ok(Err(e)) => {
                             tracing::error!("Не удалось пересоздать транскрайбер: {}", e);
