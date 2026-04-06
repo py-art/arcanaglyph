@@ -10,6 +10,7 @@ use tracing::info;
 use crate::audio::{self, AudioCommand};
 use crate::config::{CoreConfig, TranscriberType};
 use crate::error::ArcanaError;
+use crate::history::HistoryDB;
 use crate::transcriber::{Transcriber, VoskTranscriber, WhisperTranscriber};
 
 /// События движка, рассылаемые подписчикам
@@ -29,6 +30,8 @@ pub enum EngineEvent {
     FinishedProcessing,
     /// Запрос на вывод окна на передний план (когда окно видимо)
     RequestFocus,
+    /// Модель загружена, приложение готово к работе
+    ModelLoaded,
     /// Ошибка, которую нужно показать пользователю
     Error(String),
 }
@@ -46,6 +49,8 @@ pub struct ArcanaEngine {
     rt_handle: Handle,
     /// Флаг видимости окна: true — окно видимо, false — свёрнуто в трей
     window_visible: Arc<AtomicBool>,
+    /// База данных истории транскрибаций
+    history_db: Arc<HistoryDB>,
 }
 
 impl ArcanaEngine {
@@ -60,6 +65,13 @@ impl ArcanaEngine {
                 Arc::new(WhisperTranscriber::new(&config.whisper_model_path)?)
             }
         };
+
+        // Инициализация БД истории
+        let db_path = CoreConfig::history_db_path()
+            .ok_or_else(|| ArcanaError::Database("Не удалось определить путь к БД истории".into()))?;
+        let audio_cache = CoreConfig::audio_cache_dir()
+            .ok_or_else(|| ArcanaError::Database("Не удалось определить путь к кэшу аудио".into()))?;
+        let history_db = Arc::new(HistoryDB::new(&db_path, audio_cache)?);
 
         let (event_tx, _) = broadcast::channel::<EngineEvent>(32);
 
@@ -78,6 +90,7 @@ impl ArcanaEngine {
             audio_level: Arc::new(AtomicU32::new(0)),
             rt_handle,
             window_visible,
+            history_db,
         })
     }
 
@@ -88,6 +101,11 @@ impl ArcanaEngine {
             self.config_changed.store(true, Ordering::Relaxed);
             info!("Конфигурация обновлена, применится при следующей записи");
         }
+    }
+
+    /// Доступ к БД истории (для Tauri команд)
+    pub fn history_db(&self) -> &Arc<HistoryDB> {
+        &self.history_db
     }
 
     /// Подписаться на события движка
@@ -107,34 +125,12 @@ impl ArcanaEngine {
 
     /// Переключатель записи: если не записывает — начать, если записывает — остановить.
     pub fn trigger(&self) {
-        // Если конфиг изменился — пересоздаём транскрайбер
-        if self.config_changed.swap(false, Ordering::Relaxed)
-            && let Ok(cfg) = self.config.read()
-        {
-                let new_transcriber: Result<Arc<dyn Transcriber>, _> = match cfg.transcriber {
-                    TranscriberType::Vosk => {
-                        VoskTranscriber::new(&cfg.model_path, cfg.sample_rate as f32).map(|t| Arc::new(t) as _)
-                    }
-                    TranscriberType::Whisper => {
-                        WhisperTranscriber::new(&cfg.whisper_model_path).map(|t| Arc::new(t) as _)
-                    }
-                };
-                match new_transcriber {
-                    Ok(t) => {
-                        if let Ok(mut tr) = self.transcriber.write() {
-                            *tr = t;
-                            info!("Транскрайбер пересоздан по новому конфигу");
-                        }
-                    }
-                    Err(e) => tracing::error!("Не удалось пересоздать транскрайбер: {}", e),
-                }
-        }
-
         let is_busy = Arc::clone(&self.is_busy);
         let is_paused = Arc::clone(&self.is_paused);
         let current_cmd_tx = Arc::clone(&self.current_cmd_tx);
         let event_tx = self.event_tx.clone();
-        let transcriber = self.transcriber.read().unwrap().clone();
+        let mut transcriber = self.transcriber.read().unwrap().clone();
+        let need_reload = self.config_changed.swap(false, Ordering::Relaxed);
         let config = self.config.read().unwrap().clone();
         let silence_timeout_secs = config.max_record_secs;
         let sample_rate = config.sample_rate;
@@ -143,6 +139,7 @@ impl ArcanaEngine {
         let audio_level = Arc::clone(&self.audio_level);
         let handle = self.rt_handle.clone();
         let window_visible = Arc::clone(&self.window_visible);
+        let history_db = Arc::clone(&self.history_db);
 
         self.rt_handle.spawn(async move {
             let mut busy_guard = is_busy.lock().await;
@@ -156,8 +153,45 @@ impl ArcanaEngine {
                     info!("Игнорирую триггер, идет обработка...");
                 }
             } else {
-                // Проверяем микрофон перед записью (fail fast)
                 info!("Получен триггер для начала записи.");
+
+                // Если конфиг изменился — пересоздаём транскрайбер (в фоне)
+                if need_reload {
+                    let _ = event_tx.send(EngineEvent::Error("Загрузка модели...".to_string()));
+                    let cfg = config.clone();
+                    let reload_result = tokio::task::spawn_blocking(move || {
+                        let new_t: Result<Arc<dyn Transcriber>, _> = match cfg.transcriber {
+                            TranscriberType::Vosk => {
+                                VoskTranscriber::new(&cfg.model_path, cfg.sample_rate as f32)
+                                    .map(|t| Arc::new(t) as _)
+                            }
+                            TranscriberType::Whisper => {
+                                WhisperTranscriber::new(&cfg.whisper_model_path)
+                                    .map(|t| Arc::new(t) as _)
+                            }
+                        };
+                        new_t
+                    })
+                    .await;
+
+                    match reload_result {
+                        Ok(Ok(t)) => {
+                            transcriber = t;
+                            info!("Транскрайбер пересоздан по новому конфигу");
+                        }
+                        Ok(Err(e)) => {
+                            tracing::error!("Не удалось пересоздать транскрайбер: {}", e);
+                            let _ = event_tx.send(EngineEvent::Error(format!("Ошибка загрузки модели: {}", e)));
+                            return;
+                        }
+                        Err(e) => {
+                            tracing::error!("Ошибка загрузки модели: {:?}", e);
+                            return;
+                        }
+                    }
+                }
+
+                // Проверяем микрофон перед записью (fail fast)
                 let mic_check = tokio::task::spawn_blocking({
                     let sr = sample_rate;
                     move || audio::check_microphone(sr)
@@ -197,6 +231,7 @@ impl ArcanaEngine {
                 handle.spawn(async move {
                     let event_tx_audio = event_tx_clone.clone();
                     let transcriber_clone = transcriber;
+                    let audio_cache = history_db.audio_cache_path().to_path_buf();
                     let result = tokio::task::spawn_blocking(move || {
                         audio::record_and_transcribe(
                             cmd_rx,
@@ -206,27 +241,39 @@ impl ArcanaEngine {
                             silence_timeout_secs,
                             audio_level,
                             event_tx_audio,
+                            &audio_cache,
                         )
                     })
                     .await;
 
                     match result {
-                        Ok(Ok(text)) => {
-                            if text.is_empty() {
+                        Ok(Ok(rec)) => {
+                            if rec.text.is_empty() {
                                 tracing::warn!("Распознавание вернуло пустой результат. Проверьте микрофон.");
                                 let _ = event_tx_clone.send(EngineEvent::Error(
                                     "Микрофон не захватил речь. Проверьте, что микрофон подключён и выбран как устройство по умолчанию.".to_string(),
                                 ));
                             } else {
+                                // Сохраняем в историю
+                                let model_name = config.transcriber_model_name();
+                                let transcriber_type_str = config.transcriber_type_str();
+                                if let Err(e) = (|| -> Result<(), crate::error::ArcanaError> {
+                                    let rec_id = history_db.add_recording(&rec.audio_path, rec.duration_secs)?;
+                                    history_db.add_transcription(rec_id, &rec.text, &model_name, &transcriber_type_str)?;
+                                    Ok(())
+                                })() {
+                                    tracing::warn!("Не удалось сохранить в историю: {}", e);
+                                }
+
                                 let is_visible = window_visible.load(Ordering::Relaxed);
                                 // Вставляем текст только когда окно скрыто (в трее)
                                 if auto_type && !is_visible {
                                     eprintln!("[Вставка] в активное окно...");
-                                    if let Err(e) = crate::input::type_text(&text).await {
+                                    if let Err(e) = crate::input::type_text(&rec.text).await {
                                         tracing::error!("Не удалось вставить текст: {}", e);
                                     }
                                 }
-                                let _ = event_tx_clone.send(EngineEvent::TranscriptionResult(text));
+                                let _ = event_tx_clone.send(EngineEvent::TranscriptionResult(rec.text));
                                 // Если окно видимо — запрашиваем фокус для вывода на передний план
                                 if is_visible {
                                     let _ = event_tx_clone.send(EngineEvent::RequestFocus);

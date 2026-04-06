@@ -56,8 +56,14 @@ impl VoskTranscriber {
 }
 
 impl Transcriber for VoskTranscriber {
-    fn transcribe(&self, _samples: &[i16], _sample_rate: u32) -> Result<String, ArcanaError> {
+    fn transcribe(&self, samples: &[i16], _sample_rate: u32) -> Result<String, ArcanaError> {
         let mut rec = self.recognizer.lock().map_err(|e| ArcanaError::Internal(format!("Mutex отравлен: {}", e)))?;
+
+        // Прогоняем все сэмплы (нужно для retranscribe, когда данные не шли через accept_waveform)
+        if !samples.is_empty() {
+            rec.accept_waveform(samples)
+                .map_err(|e| ArcanaError::Recognizer(format!("Ошибка обработки аудио: {:?}", e)))?;
+        }
 
         let final_result = rec
             .final_result()
@@ -166,7 +172,27 @@ impl Transcriber for WhisperTranscriber {
             }
         }
 
-        Ok(text.trim().to_string())
+        let mut result = text.trim().to_string();
+
+        // Удаляем типичные галлюцинации Whisper в конце текста
+        let hallucinations = [
+            "Продолжение следует...",
+            "Продолжение следует.",
+            "Продолжение следует",
+            "Спасибо за просмотр.",
+            "Спасибо за просмотр!",
+            "Субтитры сделал DimaTorzworworworworworwor",
+        ];
+        for h in &hallucinations {
+            if result.ends_with(h) {
+                result.truncate(result.len() - h.len());
+                result = result.trim_end().to_string();
+                tracing::info!("Удалена галлюцинация Whisper: '{}'", h);
+                break;
+            }
+        }
+
+        Ok(result)
     }
 
     fn supports_streaming(&self) -> bool {

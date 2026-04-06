@@ -23,6 +23,9 @@ pub enum ArcanaError {
     #[error("Ошибка симуляции ввода: {0}")]
     InputSimulation(String),
 
+    #[error("Ошибка базы данных: {0}")]
+    Database(String),
+
     #[error("Ошибка конфигурации: {0}")]
     Config(String),
 
