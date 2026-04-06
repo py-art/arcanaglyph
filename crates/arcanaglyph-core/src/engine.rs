@@ -35,8 +35,9 @@ pub enum EngineEvent {
 
 /// Основной движок ArcanaGlyph: управляет записью, распознаванием и рассылкой событий
 pub struct ArcanaEngine {
-    config: CoreConfig,
-    transcriber: Arc<dyn Transcriber>,
+    config: std::sync::RwLock<CoreConfig>,
+    transcriber: std::sync::RwLock<Arc<dyn Transcriber>>,
+    config_changed: AtomicBool,
     is_busy: Arc<tokio::sync::Mutex<bool>>,
     is_paused: Arc<tokio::sync::Mutex<bool>>,
     current_cmd_tx: Arc<tokio::sync::Mutex<Option<std_mpsc::Sender<AudioCommand>>>>,
@@ -67,8 +68,9 @@ impl ArcanaEngine {
         })?;
 
         Ok(Self {
-            config,
-            transcriber,
+            config: std::sync::RwLock::new(config),
+            transcriber: std::sync::RwLock::new(transcriber),
+            config_changed: AtomicBool::new(false),
             is_busy: Arc::new(tokio::sync::Mutex::new(false)),
             is_paused: Arc::new(tokio::sync::Mutex::new(false)),
             current_cmd_tx: Arc::new(tokio::sync::Mutex::new(None)),
@@ -77,6 +79,15 @@ impl ArcanaEngine {
             rt_handle,
             window_visible,
         })
+    }
+
+    /// Обновить конфигурацию — транскрайбер пересоздастся при следующей записи
+    pub fn update_config(&self, new_config: CoreConfig) {
+        if let Ok(mut cfg) = self.config.write() {
+            *cfg = new_config;
+            self.config_changed.store(true, Ordering::Relaxed);
+            info!("Конфигурация обновлена, применится при следующей записи");
+        }
     }
 
     /// Подписаться на события движка
@@ -96,15 +107,39 @@ impl ArcanaEngine {
 
     /// Переключатель записи: если не записывает — начать, если записывает — остановить.
     pub fn trigger(&self) {
+        // Если конфиг изменился — пересоздаём транскрайбер
+        if self.config_changed.swap(false, Ordering::Relaxed)
+            && let Ok(cfg) = self.config.read()
+        {
+                let new_transcriber: Result<Arc<dyn Transcriber>, _> = match cfg.transcriber {
+                    TranscriberType::Vosk => {
+                        VoskTranscriber::new(&cfg.model_path, cfg.sample_rate as f32).map(|t| Arc::new(t) as _)
+                    }
+                    TranscriberType::Whisper => {
+                        WhisperTranscriber::new(&cfg.whisper_model_path).map(|t| Arc::new(t) as _)
+                    }
+                };
+                match new_transcriber {
+                    Ok(t) => {
+                        if let Ok(mut tr) = self.transcriber.write() {
+                            *tr = t;
+                            info!("Транскрайбер пересоздан по новому конфигу");
+                        }
+                    }
+                    Err(e) => tracing::error!("Не удалось пересоздать транскрайбер: {}", e),
+                }
+        }
+
         let is_busy = Arc::clone(&self.is_busy);
         let is_paused = Arc::clone(&self.is_paused);
         let current_cmd_tx = Arc::clone(&self.current_cmd_tx);
         let event_tx = self.event_tx.clone();
-        let transcriber = Arc::clone(&self.transcriber);
-        let silence_timeout_secs = self.config.max_record_secs;
-        let sample_rate = self.config.sample_rate;
-        let auto_type = self.config.auto_type;
-        let debug = self.config.debug;
+        let transcriber = self.transcriber.read().unwrap().clone();
+        let config = self.config.read().unwrap().clone();
+        let silence_timeout_secs = config.max_record_secs;
+        let sample_rate = config.sample_rate;
+        let auto_type = config.auto_type;
+        let debug = config.debug;
         let audio_level = Arc::clone(&self.audio_level);
         let handle = self.rt_handle.clone();
         let window_visible = Arc::clone(&self.window_visible);
@@ -161,10 +196,11 @@ impl ArcanaEngine {
                 let is_paused_clone = Arc::clone(&is_paused);
                 handle.spawn(async move {
                     let event_tx_audio = event_tx_clone.clone();
+                    let transcriber_clone = transcriber;
                     let result = tokio::task::spawn_blocking(move || {
                         audio::record_and_transcribe(
                             cmd_rx,
-                            transcriber.as_ref(),
+                            transcriber_clone.as_ref(),
                             sample_rate,
                             debug,
                             silence_timeout_secs,
