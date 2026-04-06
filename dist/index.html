@@ -337,8 +337,8 @@
       }
       .setting-group label {
         display: block;
-        font-size: 0.78rem;
-        color: #565f89;
+        font-size: 0.85rem;
+        color: #c0caf5;
         margin-bottom: 0.3rem;
       }
       .setting-group input[type="text"],
@@ -460,6 +460,7 @@
         transition: transform 0.2s;
       }
       .toggle.on::after { transform: translateX(16px); }
+      .toggle.locked { cursor: default; pointer-events: none; }
 
       /* Подсветка изменённых полей */
       .setting-group.changed input,
@@ -799,6 +800,15 @@
         </div>
       </div>
 
+      <div class="setting-row">
+        <label>Предзагрузка Vosk</label>
+        <div class="toggle" id="s-preload-vosk"></div>
+      </div>
+      <div class="setting-row" style="margin-bottom:0.5rem;">
+        <label>Предзагрузка Whisper</label>
+        <div class="toggle" id="s-preload-whisper"></div>
+      </div>
+
       <div class="setting-group">
         <label>Путь к Vosk-модели</label>
         <input type="text" id="s-model-path" placeholder="models/vosk-model-ru-0.42" />
@@ -840,6 +850,7 @@
         <label>Режим отладки</label>
         <div class="toggle" id="s-debug"></div>
       </div>
+
 
       <div class="save-area">
         <div class="save-buttons">
@@ -1087,6 +1098,17 @@
         }
       }
 
+      // Блокировка toggle предзагрузки для модели по умолчанию
+      function updatePreloadLocks(transcriber) {
+        const voskToggle = document.getElementById('s-preload-vosk');
+        const whisperToggle = document.getElementById('s-preload-whisper');
+        voskToggle.classList.toggle('locked', transcriber === 'vosk');
+        whisperToggle.classList.toggle('locked', transcriber === 'whisper');
+        // Модель по умолчанию всегда ON
+        if (transcriber === 'vosk') voskToggle.classList.add('on');
+        if (transcriber === 'whisper') whisperToggle.classList.add('on');
+      }
+
       // Загрузка настроек из бэкенда
       async function loadSettings() {
         const cfg = await invoke('load_config');
@@ -1100,6 +1122,7 @@
           hotkey: cfg.hotkey,
           auto_type: cfg.auto_type,
           debug: cfg.debug,
+          preload_models: cfg.preload_models || [],
         };
 
         setCustomSelect('s-transcriber', cfg.transcriber);
@@ -1110,6 +1133,10 @@
         document.getElementById('s-hotkey').value = cfg.hotkey;
         document.getElementById('s-auto-type').classList.toggle('on', cfg.auto_type);
         document.getElementById('s-debug').classList.toggle('on', cfg.debug);
+        const preload = cfg.preload_models || [];
+        document.getElementById('s-preload-vosk').classList.toggle('on', preload.includes('vosk') || cfg.transcriber === 'vosk');
+        document.getElementById('s-preload-whisper').classList.toggle('on', preload.includes('whisper') || cfg.transcriber === 'whisper');
+        updatePreloadLocks(cfg.transcriber);
 
         saveBtn.disabled = true;
         saveNotice.classList.remove('visible');
@@ -1126,6 +1153,10 @@
           hotkey: document.getElementById('s-hotkey').value,
           auto_type: document.getElementById('s-auto-type').classList.contains('on'),
           debug: document.getElementById('s-debug').classList.contains('on'),
+          preload_models: [
+            ...(document.getElementById('s-preload-vosk').classList.contains('on') ? ['vosk'] : []),
+            ...(document.getElementById('s-preload-whisper').classList.contains('on') ? ['whisper'] : []),
+          ],
         };
       }
 
@@ -1139,6 +1170,7 @@
         hotkey:            { el: 's-hotkey',        type: 'group' },
         auto_type:         { el: 's-auto-type',     type: 'row' },
         debug:             { el: 's-debug',          type: 'row' },
+        preload_models:    { el: 's-preload-vosk',   type: 'row' },
       };
 
       // Проверка изменений + подсветка изменённых полей
@@ -1236,9 +1268,13 @@
         .forEach(id => document.getElementById(id).addEventListener('input', checkChanges));
       ['s-transcriber', 's-sample-rate']
         .forEach(id => document.getElementById(id).addEventListener('change', checkChanges));
+      // При смене модели по умолчанию — обновить блокировки предзагрузки
+      document.getElementById('s-transcriber').addEventListener('change', () => {
+        updatePreloadLocks(document.getElementById('s-transcriber').dataset.value);
+      });
 
       // Toggle-переключатели
-      ['s-auto-type', 's-debug'].forEach(id => {
+      ['s-auto-type', 's-debug', 's-preload-vosk', 's-preload-whisper'].forEach(id => {
         document.getElementById(id).addEventListener('click', () => {
           document.getElementById(id).classList.toggle('on');
           checkChanges();
@@ -1256,6 +1292,9 @@
         document.getElementById('s-hotkey').value = originalConfig.hotkey;
         document.getElementById('s-auto-type').classList.toggle('on', originalConfig.auto_type);
         document.getElementById('s-debug').classList.toggle('on', originalConfig.debug);
+        const preloadOrig = originalConfig.preload_models || [];
+        document.getElementById('s-preload-vosk').classList.toggle('on', preloadOrig.includes('vosk'));
+        document.getElementById('s-preload-whisper').classList.toggle('on', preloadOrig.includes('whisper'));
         checkChanges();
       });
 

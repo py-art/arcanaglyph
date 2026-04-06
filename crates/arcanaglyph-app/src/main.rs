@@ -51,6 +51,16 @@ fn is_model_loaded(engine: tauri::State<'_, EngineState>) -> bool {
     engine.get().is_some()
 }
 
+/// Tauri-команда: получить список загруженных моделей
+#[tauri::command]
+fn get_loaded_models(engine: tauri::State<'_, EngineState>) -> Result<serde_json::Value, String> {
+    let e = get_engine(&engine)?;
+    Ok(serde_json::json!({
+        "loaded": e.loaded_models(),
+        "active": e.active_model_name(),
+    }))
+}
+
 /// Tauri-команда: загрузить текущую конфигурацию
 #[tauri::command]
 fn load_config() -> Result<serde_json::Value, String> {
@@ -276,6 +286,29 @@ fn main() {
                         tracing::info!("Engine готов к работе");
                         let _ = app_handle_load.emit("engine://model-loaded", serde_json::json!({}));
 
+                        // Предзагрузка дополнительных моделей в фоне
+                        if engine_state_load.get().is_some() {
+                            let preload_list: Vec<_> = {
+                                let cfg = arcanaglyph_core::CoreConfig::load().ok();
+                                cfg.map(|c| c.preload_models).unwrap_or_default()
+                            };
+                            for t_type in preload_list {
+                                let app_h = app_handle_load.clone();
+                                let es = engine_state_load.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    if let Some(e) = es.get() {
+                                        match e.preload_model(&t_type) {
+                                            Ok(name) => {
+                                                tracing::info!("Модель '{}' предзагружена", name);
+                                                let _ = app_h.emit("engine://model-preloaded", serde_json::json!({"model": name}));
+                                            }
+                                            Err(err) => tracing::warn!("Не удалось предзагрузить модель: {}", err),
+                                        }
+                                    }
+                                });
+                            }
+                        }
+
                         // Event loop: пробрасываем события engine → фронтенд
                         let app_handle_events = app_handle_load.clone();
                         tokio::spawn(async move {
@@ -374,7 +407,7 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_model_loaded, hide_window, load_config, save_config, get_history, delete_history_entry, clear_history, retranscribe, get_audio_data])
+        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_model_loaded, get_loaded_models, hide_window, load_config, save_config, get_history, delete_history_entry, clear_history, retranscribe, get_audio_data])
         .on_window_event(|window, event| {
             // Перехватываем закрытие окна — скрываем в трей вместо закрытия
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
