@@ -2,15 +2,15 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc as std_mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 use tracing::info;
-use vosk::{LogLevel, Model, Recognizer};
 
 use crate::audio::{self, AudioCommand};
-use crate::config::CoreConfig;
+use crate::config::{CoreConfig, TranscriberType};
 use crate::error::ArcanaError;
+use crate::transcriber::{Transcriber, VoskTranscriber, WhisperTranscriber};
 
 /// События движка, рассылаемые подписчикам
 #[derive(Debug, Clone)]
@@ -23,6 +23,8 @@ pub enum EngineEvent {
     RecordingResumed,
     /// Результат транскрибации
     TranscriptionResult(String),
+    /// Транскрибация началась (запись завершена, идёт распознавание)
+    Transcribing,
     /// Обработка завершена, система готова к новой записи
     FinishedProcessing,
     /// Запрос на вывод окна на передний план (когда окно видимо)
@@ -34,7 +36,7 @@ pub enum EngineEvent {
 /// Основной движок ArcanaGlyph: управляет записью, распознаванием и рассылкой событий
 pub struct ArcanaEngine {
     config: CoreConfig,
-    recognizer: Arc<Mutex<Recognizer>>,
+    transcriber: Arc<dyn Transcriber>,
     is_busy: Arc<tokio::sync::Mutex<bool>>,
     is_paused: Arc<tokio::sync::Mutex<bool>>,
     current_cmd_tx: Arc<tokio::sync::Mutex<Option<std_mpsc::Sender<AudioCommand>>>>,
@@ -46,23 +48,17 @@ pub struct ArcanaEngine {
 }
 
 impl ArcanaEngine {
-    /// Создаёт новый экземпляр движка: загружает модель Vosk, инициализирует каналы.
+    /// Создаёт новый экземпляр движка: загружает модель, инициализирует каналы.
     /// Должен вызываться из контекста Tokio runtime (сохраняет Handle для spawn).
     pub fn new(config: CoreConfig, window_visible: Arc<AtomicBool>) -> Result<Self, ArcanaError> {
-        vosk::set_log_level(LogLevel::Error);
-
-        info!("Загрузка модели из: {:?}", config.model_path);
-        let model_path_str = config
-            .model_path
-            .to_str()
-            .ok_or_else(|| ArcanaError::ModelLoad("Невалидный путь к модели (не UTF-8)".into()))?;
-
-        let model = Model::new(model_path_str)
-            .ok_or_else(|| ArcanaError::ModelLoad(format!("Не удалось загрузить модель из: {}", model_path_str)))?;
-        info!("Модель успешно загружена.");
-
-        let recognizer = Recognizer::new(&model, config.sample_rate as f32)
-            .ok_or_else(|| ArcanaError::Recognizer("Не удалось создать распознаватель".into()))?;
+        let transcriber: Arc<dyn Transcriber> = match config.transcriber {
+            TranscriberType::Vosk => {
+                Arc::new(VoskTranscriber::new(&config.model_path, config.sample_rate as f32)?)
+            }
+            TranscriberType::Whisper => {
+                Arc::new(WhisperTranscriber::new(&config.whisper_model_path)?)
+            }
+        };
 
         let (event_tx, _) = broadcast::channel::<EngineEvent>(32);
 
@@ -72,7 +68,7 @@ impl ArcanaEngine {
 
         Ok(Self {
             config,
-            recognizer: Arc::new(Mutex::new(recognizer)),
+            transcriber,
             is_busy: Arc::new(tokio::sync::Mutex::new(false)),
             is_paused: Arc::new(tokio::sync::Mutex::new(false)),
             current_cmd_tx: Arc::new(tokio::sync::Mutex::new(None)),
@@ -104,7 +100,7 @@ impl ArcanaEngine {
         let is_paused = Arc::clone(&self.is_paused);
         let current_cmd_tx = Arc::clone(&self.current_cmd_tx);
         let event_tx = self.event_tx.clone();
-        let recognizer = Arc::clone(&self.recognizer);
+        let transcriber = Arc::clone(&self.transcriber);
         let silence_timeout_secs = self.config.max_record_secs;
         let sample_rate = self.config.sample_rate;
         let auto_type = self.config.auto_type;
@@ -164,15 +160,16 @@ impl ArcanaEngine {
                 let is_busy_clone = Arc::clone(&is_busy);
                 let is_paused_clone = Arc::clone(&is_paused);
                 handle.spawn(async move {
-                    let recognizer_clone = Arc::clone(&recognizer);
+                    let event_tx_audio = event_tx_clone.clone();
                     let result = tokio::task::spawn_blocking(move || {
                         audio::record_and_transcribe(
                             cmd_rx,
-                            recognizer_clone,
+                            transcriber.as_ref(),
                             sample_rate,
                             debug,
                             silence_timeout_secs,
                             audio_level,
+                            event_tx_audio,
                         )
                     })
                     .await;

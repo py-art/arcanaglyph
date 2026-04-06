@@ -49,7 +49,12 @@ async fn hide_window(
 
 fn main() {
     // Инициализируем логирование
-    tracing_subscriber::fmt::init();
+    // Подавляем логи whisper.cpp (whisper_rs::whisper_sys_log) — оставляем только наши
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::new("info,whisper_rs=warn"),
+        )
+        .init();
 
     let config = CoreConfig::load().unwrap_or_else(|e| {
         tracing::warn!("Не удалось загрузить конфиг: {}, используем дефолтные настройки", e);
@@ -136,6 +141,10 @@ fn main() {
                                 EngineEvent::RecordingPaused => {
                                     tray::set_tray_text(&app_handle, "Продолжить запись");
                                 }
+                                EngineEvent::Transcribing => {
+                                    tray::set_tray_text(&app_handle, "Транскрибация...");
+                                    tray::set_tray_recording(&app_handle, false);
+                                }
                                 EngineEvent::FinishedProcessing => {
                                     tray::set_tray_text(&app_handle, "Начать запись");
                                     tray::set_tray_recording(&app_handle, false);
@@ -149,6 +158,9 @@ fn main() {
                                 EngineEvent::RecordingResumed => ("engine://recording-resumed", serde_json::json!({})),
                                 EngineEvent::TranscriptionResult(text) => {
                                     ("engine://transcription-result", serde_json::json!({"text": text}))
+                                }
+                                EngineEvent::Transcribing => {
+                                    ("engine://transcribing", serde_json::json!({}))
                                 }
                                 EngineEvent::FinishedProcessing => {
                                     ("engine://finished-processing", serde_json::json!({}))

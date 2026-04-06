@@ -421,6 +421,17 @@
         pauseBtn.title = 'Пауза';
       });
 
+      listen('engine://transcribing', () => {
+        // Запись окончена, идёт распознавание — обновляем UI
+        statusEl.textContent = 'Транскрибация...';
+        statusEl.className = 'recording';
+        clearInterval(timerId);
+        clearInterval(levelId);
+        levelFill.style.width = '0%';
+        levelBar.classList.remove('active');
+        controlsEl.classList.remove('active');
+      });
+
       listen('engine://transcription-result', (ev) => {
         resultEl.textContent = ev.payload.text || '(пустой результат)';
         resultWrap.classList.add('visible');
