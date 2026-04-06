@@ -1,0 +1,42 @@
+// crates/arcanaglyph-core/src/transcription_models/mod.rs
+//
+// Реестр доступных моделей для распознавания речи.
+// Каждый файл описывает одну модель: тип, имя, путь, размер, URL скачивания.
+// Добавление новой модели: создать файл *_speech_model.rs и добавить в all().
+
+pub mod vosk_russian_speech_model;
+pub mod whisper_large_v3_turbo_speech_model;
+
+use serde::Serialize;
+
+/// Описание модели распознавания речи
+#[derive(Debug, Clone, Serialize)]
+pub struct SpeechModelInfo {
+    /// Уникальный идентификатор модели
+    pub id: &'static str,
+    /// Отображаемое имя в UI
+    pub display_name: &'static str,
+    /// Тип транскрайбера: "vosk" или "whisper"
+    pub transcriber_type: &'static str,
+    /// Имя файла/директории модели по умолчанию
+    pub default_filename: &'static str,
+    /// Описание модели
+    pub description: &'static str,
+    /// Примерный размер модели
+    pub size: &'static str,
+    /// URL для скачивания
+    pub download_url: &'static str,
+}
+
+/// Все доступные модели распознавания речи
+pub fn all() -> Vec<&'static SpeechModelInfo> {
+    vec![
+        &vosk_russian_speech_model::MODEL,
+        &whisper_large_v3_turbo_speech_model::MODEL,
+    ]
+}
+
+/// Найти модель по идентификатору
+pub fn find(id: &str) -> Option<&'static SpeechModelInfo> {
+    all().into_iter().find(|m| m.id == id)
+}

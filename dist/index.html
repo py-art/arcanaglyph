@@ -139,6 +139,13 @@
         margin-bottom: 1.2rem;
       }
       #status.recording { color: #f7768e; }
+      .model-badge {
+        font-size: 0.7rem !important;
+        color: #565f89 !important;
+        font-weight: 400 !important;
+        margin-top: -0.6rem;
+        margin-bottom: 0.8rem;
+      }
 
       /* === Уровень === */
       .level-bar {
@@ -702,6 +709,7 @@
     </div>
 
     <p id="status">Загрузка модели...</p>
+    <p id="model-badge" class="model-badge"></p>
 
     <!-- Результат (сразу под статусом) -->
     <div class="result-wrap" id="result-wrap">
@@ -958,6 +966,25 @@
         }
       })();
 
+      const modelBadge = document.getElementById('model-badge');
+
+      // Короткие имена моделей для главного экрана
+      const MODEL_SHORT_NAMES = {
+        'vosk-model-ru-0.42': 'Vosk',
+        'ggml-large-v3-turbo.bin': 'Whisper Turbo',
+        'ggml-large-v3.bin': 'Whisper V3',
+        'ggml-medium.bin': 'Whisper Medium',
+        'ggml-small.bin': 'Whisper Small',
+      };
+
+      async function updateModelBadge() {
+        try {
+          const result = await invoke('get_loaded_models');
+          const active = result.active || '';
+          modelBadge.textContent = MODEL_SHORT_NAMES[active] || active;
+        } catch(_) {}
+      }
+
       function onModelReady() {
         if (modelReady) return;
         modelReady = true;
@@ -965,6 +992,7 @@
         statusEl.className = '';
         micBtn.style.opacity = '';
         micBtn.style.cursor = 'pointer';
+        updateModelBadge();
       }
 
       listen('engine://recording-started', () => {
@@ -1043,6 +1071,7 @@
 
       listen('engine://finished-processing', () => {
         recording = false;
+        updateModelBadge();
 
         micBtn.classList.remove('recording');
         micGlow.classList.remove('recording');
@@ -1098,6 +1127,13 @@
         }
       }
 
+      // Нормализовать preload_models — модель по умолчанию всегда включена
+      function normalizePreload(preload, transcriber) {
+        const set = new Set(preload);
+        set.add(transcriber);
+        return [...set].sort();
+      }
+
       // Блокировка toggle предзагрузки для модели по умолчанию
       function updatePreloadLocks(transcriber) {
         const voskToggle = document.getElementById('s-preload-vosk');
@@ -1122,7 +1158,7 @@
           hotkey: cfg.hotkey,
           auto_type: cfg.auto_type,
           debug: cfg.debug,
-          preload_models: cfg.preload_models || [],
+          preload_models: normalizePreload(cfg.preload_models || [], cfg.transcriber),
         };
 
         setCustomSelect('s-transcriber', cfg.transcriber);
@@ -1153,10 +1189,10 @@
           hotkey: document.getElementById('s-hotkey').value,
           auto_type: document.getElementById('s-auto-type').classList.contains('on'),
           debug: document.getElementById('s-debug').classList.contains('on'),
-          preload_models: [
+          preload_models: normalizePreload([
             ...(document.getElementById('s-preload-vosk').classList.contains('on') ? ['vosk'] : []),
             ...(document.getElementById('s-preload-whisper').classList.contains('on') ? ['whisper'] : []),
-          ],
+          ], document.getElementById('s-transcriber').dataset.value),
         };
       }
 
@@ -1303,8 +1339,9 @@
         const cfg = getFormConfig();
         await invoke('save_config', { config: cfg });
         originalConfig = JSON.parse(JSON.stringify(cfg));
-        saveBtn.disabled = true;
+        checkChanges();
         saveNotice.classList.add('visible');
+        updateModelBadge();
       });
 
       /* ──────── История ──────── */

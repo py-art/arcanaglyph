@@ -230,6 +230,19 @@ impl ArcanaEngine {
 
                 // Если конфиг изменился — пересоздаём транскрайбер (в фоне)
                 if need_reload {
+                    // Проверяем, может модель уже в пуле (предзагружена)
+                    let target_name = config.transcriber_model_name();
+                    let already_in_pool = transcribers_rw.read()
+                        .map(|pool| pool.get(&target_name).cloned())
+                        .unwrap_or(None);
+
+                    if let Some(t) = already_in_pool {
+                        transcriber = t;
+                        if let Ok(mut active) = active_model_rw.write() {
+                            *active = target_name.clone();
+                        }
+                        info!("Модель '{}' взята из пула (была предзагружена)", target_name);
+                    } else {
                     let _ = event_tx.send(EngineEvent::Error("Загрузка модели...".to_string()));
                     let cfg = config.clone();
                     let transcribers_pool = Arc::clone(&transcribers_rw);
@@ -259,6 +272,7 @@ impl ArcanaEngine {
                             return;
                         }
                     }
+                    } // else — модель не в пуле
                 }
 
                 // Проверяем микрофон перед записью (fail fast)
