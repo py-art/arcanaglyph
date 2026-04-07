@@ -20,5 +20,8 @@ pub static MODEL: SpeechModelInfo = SpeechModelInfo {
     default_filename: "gigaam-v3-e2e-ctc",
     description: "Лучшая модель для русского от SberDevices. WER ~8.4%, пунктуация, INT8 квантизация.",
     size: "~225 МБ",
-    download_url: "https://huggingface.co/istupakov/gigaam-v3-onnx",
+    download_url: "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/main/v3_e2e_ctc.int8.onnx",
+    extra_files: Some(&[
+        ("https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/main/v3_e2e_ctc_vocab.txt", "v3_e2e_ctc_vocab.txt"),
+    ]),
 };

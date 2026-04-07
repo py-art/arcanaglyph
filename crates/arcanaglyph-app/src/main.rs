@@ -100,7 +100,59 @@ fn install_wayland_scripts() {
     }
 }
 
-/// Tauri-команда: скачать модель по URL с прогрессом
+/// Скачивание одного файла с прогрессом
+async fn download_file(
+    url: &str,
+    dest: &std::path::Path,
+    model_id: &str,
+    file_idx: usize,
+    total_files: usize,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    use futures_util::StreamExt;
+    use tauri::Emitter;
+
+    if let Some(parent) = dest.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let filename = dest.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+    tracing::info!("Скачивание [{}/{}] {} → {}", file_idx + 1, total_files, filename, dest.display());
+
+    let response = reqwest::get(url).await.map_err(|e| format!("Ошибка запроса {}: {}", filename, e))?;
+    let total_size = response.content_length().unwrap_or(0);
+
+    let mut stream = response.bytes_stream();
+    let mut file = tokio::fs::File::create(dest).await
+        .map_err(|e| format!("Не удалось создать {}: {}", filename, e))?;
+
+    let mut downloaded: u64 = 0;
+    let mut last_progress: u64 = 0;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Ошибка скачивания {}: {}", filename, e))?;
+        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk).await
+            .map_err(|e| format!("Ошибка записи {}: {}", filename, e))?;
+
+        downloaded += chunk.len() as u64;
+        let progress_pct = if total_size > 0 { downloaded * 100 / total_size } else { 0 };
+        if progress_pct != last_progress {
+            last_progress = progress_pct;
+            let _ = app.emit("download://progress", serde_json::json!({
+                "model_id": model_id,
+                "file": filename,
+                "file_idx": file_idx,
+                "total_files": total_files,
+                "downloaded": downloaded,
+                "total": total_size,
+                "percent": progress_pct,
+            }));
+        }
+    }
+    Ok(())
+}
+
+/// Tauri-команда: скачать модель (один или несколько файлов) с прогрессом
 #[tauri::command]
 async fn download_model(
     model_id: String,
@@ -108,53 +160,36 @@ async fn download_model(
     dest_dir: String,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    use futures_util::StreamExt;
     use tauri::Emitter;
 
     let dest_path = std::path::PathBuf::from(&dest_dir);
     let _ = std::fs::create_dir_all(&dest_path);
 
-    // Определяем имя файла из URL
-    let filename = url.rsplit('/').next().unwrap_or("model");
-    let file_path = dest_path.join(filename);
+    // Находим модель в реестре для extra_files
+    let model_info = arcanaglyph_core::transcription_models::find(&model_id);
+    let extra_files: Vec<(&str, &str)> = model_info
+        .and_then(|m| m.extra_files)
+        .map(|files| files.to_vec())
+        .unwrap_or_default();
 
-    tracing::info!("Скачивание модели '{}': {} → {}", model_id, url, file_path.display());
+    let total_files = 1 + extra_files.len();
 
-    let response = reqwest::get(&url).await.map_err(|e| format!("Ошибка запроса: {}", e))?;
-    let total_size = response.content_length().unwrap_or(0);
+    // Скачиваем основной файл
+    let main_filename = url.rsplit('/').next().unwrap_or("model");
+    let main_dest = dest_path.join(main_filename);
+    download_file(&url, &main_dest, &model_id, 0, total_files, &app).await?;
 
-    let mut stream = response.bytes_stream();
-    let mut file = tokio::fs::File::create(&file_path).await
-        .map_err(|e| format!("Не удалось создать файл: {}", e))?;
-
-    let mut downloaded: u64 = 0;
-    let mut last_progress: u64 = 0;
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("Ошибка скачивания: {}", e))?;
-        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk).await
-            .map_err(|e| format!("Ошибка записи: {}", e))?;
-
-        downloaded += chunk.len() as u64;
-
-        // Отправляем прогресс каждые 1% или 100KB
-        let progress_pct = if total_size > 0 { downloaded * 100 / total_size } else { 0 };
-        if progress_pct != last_progress {
-            last_progress = progress_pct;
-            let _ = app.emit("download://progress", serde_json::json!({
-                "model_id": model_id,
-                "downloaded": downloaded,
-                "total": total_size,
-                "percent": progress_pct,
-            }));
-        }
+    // Скачиваем дополнительные файлы
+    for (idx, (extra_url, rel_path)) in extra_files.iter().enumerate() {
+        let extra_dest = dest_path.join(rel_path);
+        download_file(extra_url, &extra_dest, &model_id, idx + 1, total_files, &app).await?;
     }
 
     let _ = app.emit("download://complete", serde_json::json!({
         "model_id": model_id,
     }));
 
-    tracing::info!("Модель '{}' скачана: {}", model_id, file_path.display());
+    tracing::info!("Модель '{}' скачана ({} файлов)", model_id, total_files);
     Ok(())
 }
 
@@ -330,6 +365,19 @@ fn register_gnome_hotkeys(hotkey_trigger: String, hotkey_pause: String) -> Resul
     Ok(())
 }
 
+/// Проверяет, установлена ли модель (не просто существование директории, а ключевые файлы)
+fn is_model_installed(path: &std::path::Path, transcriber_type: &str) -> bool {
+    if !path.exists() {
+        return false;
+    }
+    match transcriber_type {
+        "gigaam" => path.join("v3_e2e_ctc.int8.onnx").exists() && path.join("v3_e2e_ctc_vocab.txt").exists(),
+        "qwen3asr" => path.join("onnx_models/encoder_conv.onnx").exists() && path.join("tokenizer.json").exists(),
+        "vosk" => path.join("conf").exists() || path.join("am").exists() || path.join("graph").exists(),
+        _ => path.exists(),
+    }
+}
+
 /// Tauri-команда: получить реестр моделей с проверкой наличия файлов
 #[tauri::command]
 fn get_models() -> Result<serde_json::Value, String> {
@@ -340,6 +388,7 @@ fn get_models() -> Result<serde_json::Value, String> {
             "vosk" => &config.model_path,
             "whisper" => &config.whisper_model_path,
             "gigaam" => &config.gigaam_model_path,
+            "qwen3asr" => &config.qwen3asr_model_path,
             _ => &config.model_path,
         };
         serde_json::json!({
@@ -350,7 +399,7 @@ fn get_models() -> Result<serde_json::Value, String> {
             "description": m.description,
             "size": m.size,
             "download_url": m.download_url,
-            "installed": path.exists(),
+            "installed": is_model_installed(path, m.transcriber_type),
         })
     }).collect();
     Ok(serde_json::json!(result))
@@ -451,6 +500,12 @@ async fn retranscribe(
                 .unwrap_or_else(|| "gigaam".to_string());
             (name, "gigaam".to_string())
         }
+        "qwen3asr" => {
+            let name = config.qwen3asr_model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "qwen3asr".to_string());
+            (name, "qwen3asr".to_string())
+        }
         _ => return Err("Неизвестный тип транскрайбера".to_string()),
     };
 
@@ -472,6 +527,10 @@ async fn retranscribe(
         }
         "gigaam" => {
             let t = GigaAmTranscriber::new(&config.gigaam_model_path).map_err(|e| e.to_string())?;
+            (Box::new(t), config.sample_rate)
+        }
+        "qwen3asr" => {
+            let t = arcanaglyph_core::qwen3asr::transcriber::Qwen3AsrTranscriber::new(&config.qwen3asr_model_path).map_err(|e| e.to_string())?;
             (Box::new(t), config.sample_rate)
         }
         _ => unreachable!(),

@@ -13,6 +13,7 @@ use crate::config::{CoreConfig, TranscriberType};
 use crate::error::ArcanaError;
 use crate::history::HistoryDB;
 use crate::gigaam::transcriber::GigaAmTranscriber;
+use crate::qwen3asr::transcriber::Qwen3AsrTranscriber;
 use crate::transcriber::{Transcriber, VoskTranscriber, WhisperTranscriber};
 
 /// События движка, рассылаемые подписчикам
@@ -126,6 +127,13 @@ impl ArcanaEngine {
                     .unwrap_or_else(|| "gigaam".to_string());
                 Ok((name, Arc::new(t)))
             }
+            TranscriberType::Qwen3Asr => {
+                let t = Qwen3AsrTranscriber::new(&config.qwen3asr_model_path)?;
+                let name = config.qwen3asr_model_path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "qwen3asr".to_string());
+                Ok((name, Arc::new(t)))
+            }
         }
     }
 
@@ -145,6 +153,9 @@ impl ArcanaEngine {
             TranscriberType::GigaAm => config.gigaam_model_path.file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "gigaam".to_string()),
+            TranscriberType::Qwen3Asr => config.qwen3asr_model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "qwen3asr".to_string()),
         };
 
         // Если модель уже в пуле — пропускаем загрузку
@@ -185,6 +196,9 @@ impl ArcanaEngine {
             TranscriberType::GigaAm => new_config.gigaam_model_path.file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "gigaam".to_string()),
+            TranscriberType::Qwen3Asr => new_config.qwen3asr_model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "qwen3asr".to_string()),
         };
 
         // Если модель уже в пуле — мгновенное переключение
