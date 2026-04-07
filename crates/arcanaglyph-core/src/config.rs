@@ -69,6 +69,9 @@ pub struct CoreConfig {
     /// Срок хранения записей в часах (0 = хранить вечно)
     #[serde(default = "default_retention_hours")]
     pub retention_hours: u64,
+    /// Автозапуск при входе в систему
+    #[serde(default)]
+    pub autostart: bool,
     /// Запускать в свёрнутом виде (сразу в трей)
     #[serde(default)]
     pub start_minimized: bool,
@@ -77,10 +80,24 @@ pub struct CoreConfig {
     pub preload_models: Vec<TranscriberType>,
 }
 
+fn default_models_dir() -> PathBuf {
+    CoreConfig::models_dir().unwrap_or_else(|| {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("models")
+    })
+}
+
 fn default_whisper_model_path() -> PathBuf {
-    std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("models/ggml-large-v3-turbo.bin")
+    default_models_dir().join("ggml-large-v3-turbo.bin")
+}
+
+fn default_qwen3asr_model_path() -> PathBuf {
+    default_models_dir().join("qwen3-asr-0.6b")
+}
+
+fn default_gigaam_model_path() -> PathBuf {
+    default_models_dir().join("gigaam-v3-e2e-ctc")
 }
 
 fn default_true() -> bool {
@@ -95,36 +112,13 @@ fn default_retention_hours() -> u64 {
     24
 }
 
-fn default_qwen3asr_model_path() -> PathBuf {
-    std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("models/qwen3-asr-0.6b")
-}
-
-fn default_gigaam_model_path() -> PathBuf {
-    std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("models/gigaam-v3-e2e-ctc")
-}
-
 impl Default for CoreConfig {
     fn default() -> Self {
-        // Пытаемся найти модель относительно текущей директории
-        let model_path = std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join("models/vosk-model-ru-0.42");
-
-        let whisper_model_path = std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join("models/ggml-large-v3-turbo.bin");
-
-        let qwen3asr_model_path = std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join("models/qwen3-asr-0.6b");
-
-        let gigaam_model_path = std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join("models/gigaam-v3-e2e-ctc");
+        let models = default_models_dir();
+        let model_path = models.join("vosk-model-ru-0.42");
+        let whisper_model_path = models.join("ggml-large-v3-turbo.bin");
+        let qwen3asr_model_path = models.join("qwen3-asr-0.6b");
+        let gigaam_model_path = models.join("gigaam-v3-e2e-ctc");
 
         Self {
             transcriber: TranscriberType::Vosk,
@@ -135,13 +129,14 @@ impl Default for CoreConfig {
             sample_rate: 48000,
             max_record_secs: 20,
             auto_type: true,
-            hotkey: "Super+W".to_string(),
-            hotkey_pause: "Super+Shift+W".to_string(),
-            debug: true,
+            hotkey: "Control+`".to_string(),
+            hotkey_pause: "Control+Shift+`".to_string(),
+            debug: false,
             vad_enabled: true,
             vad_silence_secs: 7,
             remove_fillers: true,
             retention_hours: 24,
+            autostart: false,
             start_minimized: false,
             preload_models: vec![],
         }
@@ -149,10 +144,10 @@ impl Default for CoreConfig {
 }
 
 impl CoreConfig {
-    /// Дефолтный конфиг с Whisper по умолчанию (для новых пользователей)
-    pub fn default_whisper() -> Self {
+    /// Дефолтный конфиг с GigaAM по умолчанию (для новых пользователей)
+    pub fn default_gigaam() -> Self {
         Self {
-            transcriber: TranscriberType::Whisper,
+            transcriber: TranscriberType::GigaAm,
             ..Self::default()
         }
     }
@@ -170,6 +165,16 @@ impl CoreConfig {
     /// Директория кэша аудио: ~/.cache/arcanaglyph/audio/
     pub fn audio_cache_dir() -> Option<PathBuf> {
         ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph").map(|dirs| dirs.cache_dir().join("audio"))
+    }
+
+    /// Директория моделей: ~/.local/share/arcanaglyph/models/
+    pub fn models_dir() -> Option<PathBuf> {
+        ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph").map(|dirs| dirs.data_dir().join("models"))
+    }
+
+    /// Директория скриптов: ~/.config/arcanaglyph/scripts/
+    pub fn scripts_dir() -> Option<PathBuf> {
+        ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph").map(|dirs| dirs.config_dir().join("scripts"))
     }
 
     /// Название текущей модели (для записи в историю)
@@ -232,10 +237,10 @@ impl CoreConfig {
 
                 config
             } else {
-                Self::default_whisper()
+                Self::default_gigaam()
             }
         } else {
-            Self::default_whisper()
+            Self::default_gigaam()
         };
 
         // Сохраняем в БД
@@ -273,8 +278,8 @@ mod tests {
         assert_eq!(config.sample_rate, 48000);
         assert_eq!(config.max_record_secs, 20);
         assert!(config.auto_type);
-        assert!(config.debug);
-        assert_eq!(config.hotkey, "Super+W");
+        assert!(!config.debug);
+        assert_eq!(config.hotkey, "Control+`");
         assert!(config.model_path.ends_with("models/vosk-model-ru-0.42"));
         assert!(config.whisper_model_path.ends_with("models/ggml-large-v3-turbo.bin"));
         assert!(config.gigaam_model_path.ends_with("models/gigaam-v3-e2e-ctc"));
@@ -321,11 +326,12 @@ auto_type = false
             auto_type: false,
             hotkey: "Ctrl+Shift+R".to_string(),
             hotkey_pause: String::new(),
-            debug: true,
+            debug: false,
             vad_enabled: true,
             vad_silence_secs: 7,
             remove_fillers: true,
             retention_hours: 24,
+            autostart: false,
             start_minimized: false,
             preload_models: vec![],
         };

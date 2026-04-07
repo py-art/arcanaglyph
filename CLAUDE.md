@@ -5,10 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Описание проекта
 
 ArcanaGlyph — десктопное приложение для голосового ввода текста на Linux (Rust + Tauri v2).
-Нажатие горячей клавиши начинает запись, повторное — останавливает и транскрибирует.
-Два движка: Vosk (быстрый) и Whisper/whisper.cpp (точный), выбор через config.toml.
-Вставка текста в активное окно через clipboard + XDG RemoteDesktop portal (Shift+Insert).
-Иконка в системном трее (красная при записи).
+Горячая клавиша (Ctrl+Ё) начинает запись, повторная — останавливает и транскрибирует.
+Четыре STT-движка: Vosk, Whisper, GigaAM v3 (по умолчанию), Qwen3-ASR.
+Вставка текста в активное окно через clipboard + XDG RemoteDesktop portal.
+Иконка в трее: белая (idle), красная (запись), оранжевая (пауза).
 
 ## Команды
 
@@ -22,6 +22,36 @@ make build         # Release-сборка
 make dist          # cargo tauri build (.deb, .AppImage)
 make clean         # Полная очистка
 ```
+
+## Сборка и установка .deb пакета
+
+```bash
+# 1. Сборка (несколько минут)
+make dist
+
+# 2. Результат
+ls target/release/bundle/deb/arcanaglyph_*.deb
+
+# 3. Установка
+sudo dpkg -i target/release/bundle/deb/ArcanaGlyph_1.0.0_amd64.deb
+sudo apt-get install -f   # если не хватает зависимостей
+
+# 4. Запуск
+arcanaglyph                # из терминала
+# или через меню приложений GNOME → ArcanaGlyph
+
+# 5. Удаление
+sudo dpkg -r arcanaglyph
+```
+
+## XDG-пути (после установки)
+
+- Модели: `~/.local/share/arcanaglyph/models/`
+- БД и конфиг: `~/.config/arcanaglyph/`
+- Скрипты (Wayland): `~/.config/arcanaglyph/scripts/`
+- Аудио-кэш: `~/.cache/arcanaglyph/audio/`
+
+При первом запуске автоматически скачивается GigaAM v3 (~225 МБ).
 
 ## Архитектура
 
@@ -59,7 +89,7 @@ Cargo workspace из двух крейтов:
 ## Системные зависимости
 
 ```bash
-sudo apt-get install build-essential libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev
+sudo apt-get install build-essential libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev
 ```
 
 Для вставки текста на Wayland (clipboard + XDG RemoteDesktop portal):

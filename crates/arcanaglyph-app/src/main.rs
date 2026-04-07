@@ -61,7 +61,48 @@ fn get_loaded_models(engine: tauri::State<'_, EngineState>) -> Result<serde_json
     }))
 }
 
-/// Устанавливает UDP-скрипты ag-trigger и ag-pause в ~/.local/bin/ (для Wayland)
+/// Управляет автозапуском через .desktop файл в ~/.config/autostart/
+fn set_autostart(enabled: bool) {
+    let home = match std::env::var("HOME") {
+        Ok(h) => std::path::PathBuf::from(h),
+        Err(_) => return,
+    };
+    let autostart_dir = home.join(".config/autostart");
+    let desktop_file = autostart_dir.join("arcanaglyph.desktop");
+
+    if enabled {
+        let _ = std::fs::create_dir_all(&autostart_dir);
+
+        // Определяем путь к исполняемому файлу
+        let exec_path = std::env::current_exe()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "arcanaglyph-app".to_string());
+
+        let content = format!(
+            "[Desktop Entry]\n\
+             Type=Application\n\
+             Name=ArcanaGlyph\n\
+             Comment=Голосовой ввод текста\n\
+             Exec={}\n\
+             Icon=arcanaglyph\n\
+             Terminal=false\n\
+             Categories=Utility;Audio;\n\
+             X-GNOME-Autostart-enabled=true\n",
+            exec_path
+        );
+
+        if let Err(e) = std::fs::write(&desktop_file, content) {
+            tracing::warn!("Не удалось создать autostart: {}", e);
+        } else {
+            tracing::info!("Автозапуск включён: {}", desktop_file.display());
+        }
+    } else if desktop_file.exists() {
+        let _ = std::fs::remove_file(&desktop_file);
+        tracing::info!("Автозапуск отключён");
+    }
+}
+
+/// Устанавливает UDP-скрипты ag-trigger и ag-pause (для Wayland)
 fn install_wayland_scripts() {
     let is_wayland = std::env::var("XDG_SESSION_TYPE")
         .map(|v| v == "wayland")
@@ -70,11 +111,10 @@ fn install_wayland_scripts() {
         return;
     }
 
-    let home = match std::env::var("HOME") {
-        Ok(h) => std::path::PathBuf::from(h),
-        Err(_) => return,
+    let bin_dir = match CoreConfig::scripts_dir() {
+        Some(d) => d,
+        None => return,
     };
-    let bin_dir = home.join(".local/bin");
     let _ = std::fs::create_dir_all(&bin_dir);
 
     let scripts = [
@@ -215,10 +255,44 @@ fn tauri_hotkey_to_gsettings(hotkey: &str) -> String {
             "Alt" => mods.push_str("<Alt>"),
             "Control" => mods.push_str("<Control>"),
             "Shift" => mods.push_str("<Shift>"),
+            "`" => key = "grave".to_string(),
             k => key = k.to_lowercase(),
         }
     }
     format!("{}{}", mods, key)
+}
+
+/// Маппинг латинских клавиш → XKB keysym кириллических (для GNOME gsettings)
+fn latin_to_cyrillic_keysym(key: &str) -> Option<&'static str> {
+    match key {
+        "q" => Some("Cyrillic_shorti"),    // й
+        "w" => Some("Cyrillic_tse"),       // ц
+        "e" => Some("Cyrillic_u"),         // у
+        "r" => Some("Cyrillic_ka"),        // к
+        "t" => Some("Cyrillic_ie"),        // е
+        "y" => Some("Cyrillic_en"),        // н
+        "u" => Some("Cyrillic_ghe"),       // г
+        "i" => Some("Cyrillic_sha"),       // ш
+        "o" => Some("Cyrillic_shcha"),     // щ
+        "p" => Some("Cyrillic_ze"),        // з
+        "a" => Some("Cyrillic_ef"),        // ф
+        "s" => Some("Cyrillic_yeru"),      // ы
+        "d" => Some("Cyrillic_ve"),        // в
+        "f" => Some("Cyrillic_a"),         // а
+        "g" => Some("Cyrillic_pe"),        // п
+        "h" => Some("Cyrillic_er"),        // р
+        "j" => Some("Cyrillic_o"),         // о
+        "k" => Some("Cyrillic_el"),        // л
+        "l" => Some("Cyrillic_de"),        // д
+        "z" => Some("Cyrillic_ya"),        // я
+        "x" => Some("Cyrillic_che"),       // ч
+        "c" => Some("Cyrillic_es"),        // с
+        "v" => Some("Cyrillic_em"),        // м
+        "b" => Some("Cyrillic_i"),         // и
+        "n" => Some("Cyrillic_te"),        // т
+        "m" => Some("Cyrillic_softsign"),  // ь
+        _ => None,
+    }
 }
 
 /// Tauri-команда: проверить, занята ли комбинация клавиш в GNOME
@@ -307,7 +381,9 @@ fn register_gnome_hotkeys(hotkey_trigger: String, hotkey_pause: String) -> Resul
 
     // Определяем слоты для ArcanaGlyph (ищем существующие или берём свободные)
     let ag_trigger_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/arcanaglyph-trigger/";
+    let ag_trigger_cyr_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/arcanaglyph-trigger-cyr/";
     let ag_pause_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/arcanaglyph-pause/";
+    let ag_pause_cyr_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/arcanaglyph-pause-cyr/";
     let base = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding";
 
     // Вспомогательная функция для выполнения gsettings set
@@ -320,20 +396,46 @@ fn register_gnome_hotkeys(hotkey_trigger: String, hotkey_pause: String) -> Resul
         Ok(())
     };
 
-    // Регистрируем trigger
+    // Определяем путь к скриптам
+    let scripts_dir = CoreConfig::scripts_dir()
+        .ok_or_else(|| "Не удалось определить директорию скриптов".to_string())?;
+    let trigger_cmd = scripts_dir.join("ag-trigger").display().to_string();
+    let pause_cmd = scripts_dir.join("ag-pause").display().to_string();
+
+    // Регистрируем trigger (латиница)
     if !hotkey_trigger.is_empty() {
         let binding = tauri_hotkey_to_gsettings(&hotkey_trigger);
         gs_set(ag_trigger_path, "name", "'ArcanaGlyph Trigger'")?;
-        gs_set(ag_trigger_path, "command", "'/home/py-art/.local/bin/ag-trigger'")?;
+        gs_set(ag_trigger_path, "command", &format!("'{}'", trigger_cmd))?;
         gs_set(ag_trigger_path, "binding", &format!("'{}'", binding))?;
+
+        // Кириллический дубль (для русской раскладки)
+        let key = binding.rsplit('>').next().unwrap_or("");
+        if let Some(cyrillic) = latin_to_cyrillic_keysym(key) {
+            let mods = &binding[..binding.len() - key.len()];
+            let cyr_binding = format!("{}{}", mods, cyrillic);
+            gs_set(ag_trigger_cyr_path, "name", "'ArcanaGlyph Trigger (RU)'")?;
+            gs_set(ag_trigger_cyr_path, "command", &format!("'{}'", trigger_cmd))?;
+            gs_set(ag_trigger_cyr_path, "binding", &format!("'{}'", cyr_binding))?;
+        }
     }
 
-    // Регистрируем pause (если задана)
+    // Регистрируем pause (латиница)
     if !hotkey_pause.is_empty() {
         let binding = tauri_hotkey_to_gsettings(&hotkey_pause);
         gs_set(ag_pause_path, "name", "'ArcanaGlyph Pause'")?;
-        gs_set(ag_pause_path, "command", "'/home/py-art/.local/bin/ag-pause'")?;
+        gs_set(ag_pause_path, "command", &format!("'{}'", pause_cmd))?;
         gs_set(ag_pause_path, "binding", &format!("'{}'", binding))?;
+
+        // Кириллический дубль
+        let key = binding.rsplit('>').next().unwrap_or("");
+        if let Some(cyrillic) = latin_to_cyrillic_keysym(key) {
+            let mods = &binding[..binding.len() - key.len()];
+            let cyr_binding = format!("{}{}", mods, cyrillic);
+            gs_set(ag_pause_cyr_path, "name", "'ArcanaGlyph Pause (RU)'")?;
+            gs_set(ag_pause_cyr_path, "command", &format!("'{}'", pause_cmd))?;
+            gs_set(ag_pause_cyr_path, "binding", &format!("'{}'", cyr_binding))?;
+        }
     }
 
     // Обновляем список custom-keybindings — добавляем наши пути если их нет
@@ -351,8 +453,24 @@ fn register_gnome_hotkeys(hotkey_trigger: String, hotkey_pause: String) -> Resul
     if !hotkey_trigger.is_empty() && !paths.iter().any(|p| p == ag_trigger_path) {
         paths.push(ag_trigger_path.to_string());
     }
+    // Кириллический дубль trigger
+    let trigger_binding = tauri_hotkey_to_gsettings(&hotkey_trigger);
+    let trigger_key = trigger_binding.rsplit('>').next().unwrap_or("");
+    if !hotkey_trigger.is_empty() && latin_to_cyrillic_keysym(trigger_key).is_some()
+        && !paths.iter().any(|p| p == ag_trigger_cyr_path)
+    {
+        paths.push(ag_trigger_cyr_path.to_string());
+    }
     if !hotkey_pause.is_empty() && !paths.iter().any(|p| p == ag_pause_path) {
         paths.push(ag_pause_path.to_string());
+    }
+    // Кириллический дубль pause
+    let pause_binding = tauri_hotkey_to_gsettings(&hotkey_pause);
+    let pause_key = pause_binding.rsplit('>').next().unwrap_or("");
+    if !hotkey_pause.is_empty() && latin_to_cyrillic_keysym(pause_key).is_some()
+        && !paths.iter().any(|p| p == ag_pause_cyr_path)
+    {
+        paths.push(ag_pause_cyr_path.to_string());
     }
 
     let paths_str = format!("[{}]", paths.iter().map(|p| format!("'{}'", p)).collect::<Vec<_>>().join(", "));
@@ -417,6 +535,10 @@ fn load_config() -> Result<serde_json::Value, String> {
 fn save_config(config: serde_json::Value, engine: tauri::State<'_, EngineState>) -> Result<(), String> {
     let config: CoreConfig = serde_json::from_value(config).map_err(|e| format!("Ошибка парсинга конфига: {}", e))?;
     config.save().map_err(|e| e.to_string())?;
+
+    // Управляем автозапуском
+    set_autostart(config.autostart);
+
     if let Some(e) = engine.get() {
         e.update_config(config);
     }
@@ -634,6 +756,44 @@ fn main() {
         )
         .setup(move |app| {
             // Устанавливаем UDP-скрипты для Wayland (если ещё не установлены)
+            // Создаём директорию моделей если не существует
+            if let Some(models_dir) = CoreConfig::models_dir() {
+                let _ = std::fs::create_dir_all(&models_dir);
+
+                // Автоскачивание GigaAM v3 при первом запуске
+                let gigaam_dir = models_dir.join("gigaam-v3-e2e-ctc");
+                if !gigaam_dir.join("v3_e2e_ctc.int8.onnx").exists() {
+                    tracing::info!("GigaAM v3 не найдена — скачиваю автоматически...");
+                    let _ = std::fs::create_dir_all(&gigaam_dir);
+                    let files = [
+                        ("https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/main/v3_e2e_ctc.int8.onnx", "v3_e2e_ctc.int8.onnx"),
+                        ("https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/main/v3_e2e_ctc_vocab.txt", "v3_e2e_ctc_vocab.txt"),
+                    ];
+                    let gd = gigaam_dir.clone();
+                    tauri::async_runtime::spawn(async move {
+                        for (url, filename) in &files {
+                            let dest = gd.join(filename);
+                            tracing::info!("Скачиваю {} ...", filename);
+                            match reqwest::get(*url).await {
+                                Ok(response) => {
+                                    match response.bytes().await {
+                                        Ok(bytes) => {
+                                            if let Err(e) = tokio::fs::write(&dest, &bytes).await {
+                                                tracing::error!("Ошибка записи {}: {}", filename, e);
+                                            } else {
+                                                tracing::info!("{} скачан ({}MB)", filename, bytes.len() / 1_000_000);
+                                            }
+                                        }
+                                        Err(e) => tracing::error!("Ошибка скачивания {}: {}", filename, e),
+                                    }
+                                }
+                                Err(e) => tracing::error!("Ошибка запроса {}: {}", filename, e),
+                            }
+                        }
+                    });
+                }
+            }
+
             install_wayland_scripts();
 
             // Автоочистка старых записей при старте + периодически
@@ -820,6 +980,30 @@ fn main() {
                     }
                     Err(e) => {
                         tracing::error!("Невалидная клавиша паузы '{}': {}", hotkey_pause, e);
+                    }
+                }
+            }
+
+            // Авторегистрация горячих клавиш в GNOME (Wayland) при первом запуске
+            {
+                let is_wayland = std::env::var("XDG_SESSION_TYPE")
+                    .map(|v| v == "wayland")
+                    .unwrap_or(false);
+                if is_wayland && !hotkey.is_empty() {
+                    // Проверяем, зарегистрированы ли уже наши хоткеи
+                    let check = std::process::Command::new("gsettings")
+                        .args(["get", "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/arcanaglyph-trigger/", "binding"])
+                        .output();
+                    let needs_register = match check {
+                        Ok(out) => {
+                            let val = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                            val.is_empty() || val == "''" || val.contains("No such")
+                        }
+                        Err(_) => true,
+                    };
+                    if needs_register {
+                        tracing::info!("Первый запуск на Wayland — регистрирую горячие клавиши в GNOME...");
+                        let _ = register_gnome_hotkeys(hotkey.clone(), hotkey_pause.clone());
                     }
                 }
             }
