@@ -5,6 +5,7 @@ pub mod config;
 pub mod db;
 pub mod engine;
 pub mod error;
+pub mod gigaam;
 pub mod history;
 pub mod input;
 pub mod transcriber;

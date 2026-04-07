@@ -201,8 +201,8 @@ impl Transcriber for WhisperTranscriber {
 }
 
 /// Обрезает тишину с обеих сторон аудио.
-/// Whisper галлюцинирует на тихих участках, а короткое аудио = быстрее транскрибация.
-fn trim_silence(samples: &[i16], sample_rate: u32) -> &[i16] {
+/// Whisper/GigaAM галлюцинируют на тихих участках, а короткое аудио = быстрее транскрибация.
+pub(crate) fn trim_silence(samples: &[i16], sample_rate: u32) -> &[i16] {
     let block_size = sample_rate as usize / 10; // 100 мс блоки
     let threshold: f64 = 50.0; // RMS порог (тишина < 50)
     let padding = sample_rate as usize / 5; // 200 мс отступ для естественного затухания
@@ -262,7 +262,7 @@ fn trim_silence(samples: &[i16], sample_rate: u32) -> &[i16] {
 }
 
 /// Простой ресемплинг через линейную интерполяцию
-fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+pub(crate) fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
     if from_rate == to_rate || input.is_empty() {
         return input.to_vec();
     }

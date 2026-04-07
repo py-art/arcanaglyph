@@ -533,6 +533,86 @@
       }
       .save-notice.visible { display: block; }
 
+      /* === Табы настроек === */
+      .settings-tabs {
+        display: flex;
+        gap: 0;
+        margin-bottom: 1rem;
+        border-bottom: 1px solid #292e42;
+      }
+      .settings-tab {
+        padding: 0.5rem 1rem;
+        font-size: 0.85rem;
+        color: #565f89;
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        transition: color 0.15s, border-color 0.15s;
+        user-select: none;
+      }
+      .settings-tab:hover { color: #c0caf5; }
+      .settings-tab.active {
+        color: #7aa2f7;
+        border-bottom-color: #7aa2f7;
+      }
+      .settings-tab-content { display: none; }
+      .settings-tab-content.active { display: block; }
+
+      /* === Карточки моделей === */
+      .models-section-title {
+        font-size: 0.85rem;
+        color: #bb9af7;
+        margin: 1rem 0 0.6rem;
+      }
+      .model-card {
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 8px;
+        padding: 0.8rem;
+        margin-bottom: 0.6rem;
+      }
+      .model-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .model-card-name {
+        font-size: 0.9rem;
+        color: #c0caf5;
+        font-weight: 500;
+      }
+      .model-card-size {
+        font-size: 0.75rem;
+        color: #565f89;
+      }
+      .model-card-desc {
+        font-size: 0.8rem;
+        color: #565f89;
+        margin: 0.4rem 0;
+        line-height: 1.3;
+      }
+      .model-card-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 0.4rem;
+      }
+      .model-card-status {
+        font-size: 0.75rem;
+      }
+      .model-card-status.found { color: #9ece6a; }
+      .model-card-status.missing { color: #f7768e; }
+      .model-download-btn {
+        padding: 0.3rem 0.7rem;
+        background: #292e42;
+        border: 1px solid #7aa2f7;
+        border-radius: 6px;
+        color: #7aa2f7;
+        font-size: 0.75rem;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .model-download-btn:hover { background: rgba(122, 162, 247, 0.15); }
+
       /* === Модальный диалог === */
       .modal-overlay {
         display: none;
@@ -662,6 +742,18 @@
       .hist-retranscribe-btn:hover { background: rgba(122, 162, 247, 0.1); }
       .hist-retranscribe-btn:disabled { color: #565f89; border-color: #292e42; cursor: default; }
 
+      .hist-pagination {
+        display: none;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.8rem 0;
+      }
+      .hist-pagination.visible { display: flex; }
+      .hist-page-info {
+        color: #565f89;
+        font-size: 0.8rem;
+      }
+
       .hist-page-btn {
         background: #1f2335;
         border: 1px solid #292e42;
@@ -780,9 +872,9 @@
       <div id="history-list"></div>
       <div id="history-empty" style="display:none;text-align:center;color:#565f89;padding:2rem 0;">Записей нет</div>
 
-      <div id="history-pagination" style="display:none;padding:0.8rem 0;text-align:center;">
+      <div id="history-pagination" class="hist-pagination">
         <button class="hist-page-btn" id="h-prev" disabled>← Пред</button>
-        <span id="h-page-info" style="color:#565f89;font-size:0.8rem;margin:0 0.8rem;"></span>
+        <span id="h-page-info" class="hist-page-info"></span>
         <button class="hist-page-btn" id="h-next" disabled>След →</button>
       </div>
 
@@ -797,68 +889,96 @@
     <div class="settings-page" id="settings-page">
       <h2>Настройки</h2>
 
-      <div class="setting-group">
-        <label>Движок транскрибации</label>
-        <div class="custom-select" id="s-transcriber" data-value="vosk">
-          <div class="custom-select-trigger"></div>
-          <div class="custom-select-options">
-            <div class="custom-select-option" data-value="vosk">Vosk — быстрый, менее точный</div>
-            <div class="custom-select-option" data-value="whisper">Whisper — точный, медленнее</div>
+      <div class="settings-tabs">
+        <div class="settings-tab active" data-tab="general">Основное</div>
+        <div class="settings-tab" data-tab="models">Модели</div>
+      </div>
+
+      <!-- Таб: Основное -->
+      <div class="settings-tab-content active" id="tab-general">
+        <div class="setting-group">
+          <label>Движок транскрибации</label>
+          <div class="custom-select" id="s-transcriber" data-value="vosk">
+            <div class="custom-select-trigger"></div>
+            <div class="custom-select-options">
+              <div class="custom-select-option" data-value="vosk">Vosk — быстрый, менее точный</div>
+              <div class="custom-select-option" data-value="whisper">Whisper — точный, медленнее</div>
+              <div class="custom-select-option" data-value="gigaam">GigaAM v3 — лучший для русского</div>
+            </div>
           </div>
+        </div>
+
+        <div class="setting-row">
+          <label>Предзагрузка Vosk</label>
+          <div class="toggle" id="s-preload-vosk"></div>
+        </div>
+        <div class="setting-row">
+          <label>Предзагрузка Whisper</label>
+          <div class="toggle" id="s-preload-whisper"></div>
+        </div>
+        <div class="setting-row" style="margin-bottom:0.5rem;">
+          <label>Предзагрузка GigaAM</label>
+          <div class="toggle" id="s-preload-gigaam"></div>
+        </div>
+
+        <div class="setting-group">
+          <label>Частота дискретизации (Гц)</label>
+          <div class="custom-select" id="s-sample-rate" data-value="48000">
+            <div class="custom-select-trigger"></div>
+            <div class="custom-select-options">
+              <div class="custom-select-option" data-value="16000">16000</div>
+              <div class="custom-select-option" data-value="24000">24000</div>
+              <div class="custom-select-option" data-value="48000">48000</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <label>Таймаут тишины (секунды)</label>
+          <input type="number" id="s-max-record" min="5" max="120" />
+        </div>
+
+        <div class="setting-group">
+          <label>Горячая клавиша</label>
+          <input type="text" id="s-hotkey" placeholder="Super+Alt+Control+Space" />
+        </div>
+
+        <div class="setting-row">
+          <label>Авто-вставка текста</label>
+          <div class="toggle" id="s-auto-type"></div>
+        </div>
+
+        <div class="setting-row">
+          <label>Режим отладки</label>
+          <div class="toggle" id="s-debug"></div>
+        </div>
+
+        <div class="setting-row">
+          <label>Запуск в трей</label>
+          <div class="toggle" id="s-start-minimized"></div>
         </div>
       </div>
 
-      <div class="setting-row">
-        <label>Предзагрузка Vosk</label>
-        <div class="toggle" id="s-preload-vosk"></div>
-      </div>
-      <div class="setting-row" style="margin-bottom:0.5rem;">
-        <label>Предзагрузка Whisper</label>
-        <div class="toggle" id="s-preload-whisper"></div>
-      </div>
-
-      <div class="setting-group">
-        <label>Путь к Vosk-модели</label>
-        <input type="text" id="s-model-path" placeholder="models/vosk-model-ru-0.42" />
-      </div>
-
-      <div class="setting-group">
-        <label>Путь к Whisper-модели (ggml)</label>
-        <input type="text" id="s-whisper-path" placeholder="models/ggml-large-v3-turbo.bin" />
-      </div>
-
-      <div class="setting-group">
-        <label>Частота дискретизации (Гц)</label>
-        <div class="custom-select" id="s-sample-rate" data-value="48000">
-          <div class="custom-select-trigger"></div>
-          <div class="custom-select-options">
-            <div class="custom-select-option" data-value="16000">16000</div>
-            <div class="custom-select-option" data-value="24000">24000</div>
-            <div class="custom-select-option" data-value="48000">48000</div>
-          </div>
+      <!-- Таб: Модели -->
+      <div class="settings-tab-content" id="tab-models">
+        <div class="setting-group">
+          <label>Путь к Vosk-модели</label>
+          <input type="text" id="s-model-path" placeholder="models/vosk-model-ru-0.42" />
         </div>
-      </div>
 
-      <div class="setting-group">
-        <label>Таймаут тишины (секунды)</label>
-        <input type="number" id="s-max-record" min="5" max="120" />
-      </div>
+        <div class="setting-group">
+          <label>Путь к Whisper-модели (ggml)</label>
+          <input type="text" id="s-whisper-path" placeholder="models/ggml-large-v3-turbo.bin" />
+        </div>
 
-      <div class="setting-group">
-        <label>Горячая клавиша</label>
-        <input type="text" id="s-hotkey" placeholder="Super+Alt+Control+Space" />
-      </div>
+        <div class="setting-group">
+          <label>Путь к GigaAM-модели (директория)</label>
+          <input type="text" id="s-gigaam-path" placeholder="models/gigaam-v3-e2e-ctc" />
+        </div>
 
-      <div class="setting-row">
-        <label>Авто-вставка текста</label>
-        <div class="toggle" id="s-auto-type"></div>
+        <div class="models-section-title">Доступные модели</div>
+        <div id="model-cards-container"></div>
       </div>
-
-      <div class="setting-row">
-        <label>Режим отладки</label>
-        <div class="toggle" id="s-debug"></div>
-      </div>
-
 
       <div class="save-area">
         <div class="save-buttons">
@@ -1138,11 +1258,14 @@
       function updatePreloadLocks(transcriber) {
         const voskToggle = document.getElementById('s-preload-vosk');
         const whisperToggle = document.getElementById('s-preload-whisper');
+        const gigaamToggle = document.getElementById('s-preload-gigaam');
         voskToggle.classList.toggle('locked', transcriber === 'vosk');
         whisperToggle.classList.toggle('locked', transcriber === 'whisper');
+        gigaamToggle.classList.toggle('locked', transcriber === 'gigaam');
         // Модель по умолчанию всегда ON
         if (transcriber === 'vosk') voskToggle.classList.add('on');
         if (transcriber === 'whisper') whisperToggle.classList.add('on');
+        if (transcriber === 'gigaam') gigaamToggle.classList.add('on');
       }
 
       // Загрузка настроек из бэкенда
@@ -1153,29 +1276,76 @@
           transcriber: cfg.transcriber,
           model_path: cfg.model_path,
           whisper_model_path: cfg.whisper_model_path,
+          gigaam_model_path: cfg.gigaam_model_path,
           sample_rate: cfg.sample_rate,
           max_record_secs: cfg.max_record_secs,
           hotkey: cfg.hotkey,
           auto_type: cfg.auto_type,
           debug: cfg.debug,
+          start_minimized: cfg.start_minimized || false,
           preload_models: normalizePreload(cfg.preload_models || [], cfg.transcriber),
         };
 
         setCustomSelect('s-transcriber', cfg.transcriber);
         document.getElementById('s-model-path').value = cfg.model_path;
         document.getElementById('s-whisper-path').value = cfg.whisper_model_path;
+        document.getElementById('s-gigaam-path').value = cfg.gigaam_model_path;
         setCustomSelect('s-sample-rate', String(cfg.sample_rate));
         document.getElementById('s-max-record').value = cfg.max_record_secs;
         document.getElementById('s-hotkey').value = cfg.hotkey;
         document.getElementById('s-auto-type').classList.toggle('on', cfg.auto_type);
         document.getElementById('s-debug').classList.toggle('on', cfg.debug);
+        document.getElementById('s-start-minimized').classList.toggle('on', cfg.start_minimized || false);
         const preload = cfg.preload_models || [];
         document.getElementById('s-preload-vosk').classList.toggle('on', preload.includes('vosk') || cfg.transcriber === 'vosk');
         document.getElementById('s-preload-whisper').classList.toggle('on', preload.includes('whisper') || cfg.transcriber === 'whisper');
+        document.getElementById('s-preload-gigaam').classList.toggle('on', preload.includes('gigaam') || cfg.transcriber === 'gigaam');
         updatePreloadLocks(cfg.transcriber);
 
         saveBtn.disabled = true;
         saveNotice.classList.remove('visible');
+
+        renderModelCards();
+      }
+
+      // Рендер карточек моделей на табе «Модели»
+      async function renderModelCards() {
+        const container = document.getElementById('model-cards-container');
+        try {
+          const models = await invoke('get_models');
+          container.innerHTML = '';
+          for (const m of models) {
+            const card = document.createElement('div');
+            card.className = 'model-card';
+            card.innerHTML = `
+              <div class="model-card-header">
+                <span class="model-card-name">${m.display_name}</span>
+                <span class="model-card-size">${m.size}</span>
+              </div>
+              <div class="model-card-desc">${m.description}</div>
+              <div class="model-card-footer">
+                <span class="model-card-status ${m.installed ? 'found' : 'missing'}">
+                  ${m.installed ? 'Установлена' : 'Не найдена'}
+                </span>
+                ${!m.installed ? `<button class="model-download-btn" data-url="${m.download_url}">Скачать</button>` : ''}
+              </div>
+            `;
+            container.appendChild(card);
+          }
+          // Обработчики кнопок «Скачать» — открываем URL в браузере
+          container.querySelectorAll('.model-download-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const url = btn.dataset.url;
+              if (window.__TAURI__?.shell?.open) {
+                window.__TAURI__.shell.open(url);
+              } else {
+                window.open(url, '_blank');
+              }
+            });
+          });
+        } catch (e) {
+          container.innerHTML = '<div style="color:#565f89;font-size:0.8rem;">Не удалось загрузить список моделей</div>';
+        }
       }
 
       // Собираем текущие значения из формы
@@ -1184,14 +1354,17 @@
           transcriber: document.getElementById('s-transcriber').dataset.value,
           model_path: document.getElementById('s-model-path').value,
           whisper_model_path: document.getElementById('s-whisper-path').value,
+          gigaam_model_path: document.getElementById('s-gigaam-path').value,
           sample_rate: parseInt(document.getElementById('s-sample-rate').dataset.value),
           max_record_secs: parseInt(document.getElementById('s-max-record').value),
           hotkey: document.getElementById('s-hotkey').value,
           auto_type: document.getElementById('s-auto-type').classList.contains('on'),
           debug: document.getElementById('s-debug').classList.contains('on'),
+          start_minimized: document.getElementById('s-start-minimized').classList.contains('on'),
           preload_models: normalizePreload([
             ...(document.getElementById('s-preload-vosk').classList.contains('on') ? ['vosk'] : []),
             ...(document.getElementById('s-preload-whisper').classList.contains('on') ? ['whisper'] : []),
+            ...(document.getElementById('s-preload-gigaam').classList.contains('on') ? ['gigaam'] : []),
           ], document.getElementById('s-transcriber').dataset.value),
         };
       }
@@ -1201,11 +1374,13 @@
         transcriber:       { el: 's-transcriber',  type: 'group' },
         model_path:        { el: 's-model-path',   type: 'group' },
         whisper_model_path:{ el: 's-whisper-path',  type: 'group' },
+        gigaam_model_path: { el: 's-gigaam-path',   type: 'group' },
         sample_rate:       { el: 's-sample-rate',  type: 'group' },
         max_record_secs:   { el: 's-max-record',   type: 'group' },
         hotkey:            { el: 's-hotkey',        type: 'group' },
         auto_type:         { el: 's-auto-type',     type: 'row' },
         debug:             { el: 's-debug',          type: 'row' },
+        start_minimized:   { el: 's-start-minimized', type: 'row' },
         preload_models:    { el: 's-preload-vosk',   type: 'row' },
       };
 
@@ -1300,7 +1475,7 @@
       initCustomSelects();
 
       // Навешиваем обработчики изменений
-      ['s-model-path', 's-whisper-path', 's-max-record', 's-hotkey']
+      ['s-model-path', 's-whisper-path', 's-gigaam-path', 's-max-record', 's-hotkey']
         .forEach(id => document.getElementById(id).addEventListener('input', checkChanges));
       ['s-transcriber', 's-sample-rate']
         .forEach(id => document.getElementById(id).addEventListener('change', checkChanges));
@@ -1309,8 +1484,19 @@
         updatePreloadLocks(document.getElementById('s-transcriber').dataset.value);
       });
 
+      // Переключение табов настроек
+      document.querySelectorAll('.settings-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+          document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+          document.querySelectorAll('.settings-tab-content').forEach(c => c.classList.remove('active'));
+          tab.classList.add('active');
+          document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+          closeAllDropdowns();
+        });
+      });
+
       // Toggle-переключатели
-      ['s-auto-type', 's-debug', 's-preload-vosk', 's-preload-whisper'].forEach(id => {
+      ['s-auto-type', 's-debug', 's-start-minimized', 's-preload-vosk', 's-preload-whisper', 's-preload-gigaam'].forEach(id => {
         document.getElementById(id).addEventListener('click', () => {
           document.getElementById(id).classList.toggle('on');
           checkChanges();
@@ -1323,14 +1509,17 @@
         setCustomSelect('s-transcriber', originalConfig.transcriber);
         document.getElementById('s-model-path').value = originalConfig.model_path;
         document.getElementById('s-whisper-path').value = originalConfig.whisper_model_path;
+        document.getElementById('s-gigaam-path').value = originalConfig.gigaam_model_path;
         setCustomSelect('s-sample-rate', String(originalConfig.sample_rate));
         document.getElementById('s-max-record').value = originalConfig.max_record_secs;
         document.getElementById('s-hotkey').value = originalConfig.hotkey;
         document.getElementById('s-auto-type').classList.toggle('on', originalConfig.auto_type);
         document.getElementById('s-debug').classList.toggle('on', originalConfig.debug);
+        document.getElementById('s-start-minimized').classList.toggle('on', originalConfig.start_minimized || false);
         const preloadOrig = originalConfig.preload_models || [];
         document.getElementById('s-preload-vosk').classList.toggle('on', preloadOrig.includes('vosk'));
         document.getElementById('s-preload-whisper').classList.toggle('on', preloadOrig.includes('whisper'));
+        document.getElementById('s-preload-gigaam').classList.toggle('on', preloadOrig.includes('gigaam'));
         checkChanges();
       });
 
@@ -1412,13 +1601,14 @@
       const MODEL_TYPES = [
         { type: 'vosk', label: 'Vosk' },
         { type: 'whisper', label: 'Whisper' },
+        { type: 'gigaam', label: 'GigaAM' },
       ];
 
       function renderHistory(entries, total) {
         historyList.innerHTML = '';
         if (entries.length === 0) {
           historyEmpty.style.display = 'block';
-          histPagination.style.display = 'none';
+          histPagination.classList.remove('visible');
           return;
         }
         historyEmpty.style.display = 'none';
@@ -1566,12 +1756,12 @@
         // Пагинация
         const totalPages = Math.ceil(total / HIST_PER_PAGE);
         if (totalPages > 1) {
-          histPagination.style.display = 'block';
+          histPagination.classList.add('visible');
           histPrev.disabled = histPage === 0;
           histNext.disabled = histPage >= totalPages - 1;
           histPageInfo.textContent = `Стр. ${histPage + 1} из ${totalPages}`;
         } else {
-          histPagination.style.display = 'none';
+          histPagination.classList.remove('visible');
         }
       }
 
@@ -1662,8 +1852,8 @@
         }
       }
 
-      histPrev.addEventListener('click', () => { if (histPage > 0) { histPage--; loadHistory(); } });
-      histNext.addEventListener('click', () => { histPage++; loadHistory(); });
+      histPrev.addEventListener('click', () => { if (histPage > 0) { histPage--; loadHistory(); historyPage.scrollTop = 0; } });
+      histNext.addEventListener('click', () => { histPage++; loadHistory(); historyPage.scrollTop = 0; });
 
       // Очистить историю
       // Кастомный модальный диалог
