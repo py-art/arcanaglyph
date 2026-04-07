@@ -577,7 +577,7 @@ fn main() {
             // Устанавливаем UDP-скрипты для Wayland (если ещё не установлены)
             install_wayland_scripts();
 
-            // Автоочистка старых записей при старте
+            // Автоочистка старых записей при старте + периодически
             if let Ok(cfg) = CoreConfig::load()
                 && cfg.retention_hours > 0
                 && let (Some(db_path), Some(cache)) = (CoreConfig::history_db_path(), CoreConfig::audio_cache_dir())
@@ -585,6 +585,28 @@ fn main() {
             {
                 let _ = db.cleanup_old_recordings(cfg.retention_hours);
             }
+
+            // Периодическая очистка: интервал = retention_hours
+            tauri::async_runtime::spawn(async {
+                loop {
+                    let hours = CoreConfig::load()
+                        .map(|c| c.retention_hours)
+                        .unwrap_or(0);
+                    if hours == 0 {
+                        // Хранить вечно — спим час и проверяем снова (вдруг настройку поменяли)
+                        tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                        continue;
+                    }
+                    // Спим retention_hours, потом чистим
+                    tokio::time::sleep(std::time::Duration::from_secs(hours * 3600)).await;
+
+                    if let (Some(db_path), Some(cache)) = (CoreConfig::history_db_path(), CoreConfig::audio_cache_dir())
+                        && let Ok(db) = arcanaglyph_core::history::HistoryDB::new(&db_path, cache)
+                    {
+                        let _ = db.cleanup_old_recordings(hours);
+                    }
+                }
+            });
 
             // Проверяем start_minimized до инициализации движка
             let start_minimized = CoreConfig::load()
