@@ -61,6 +61,45 @@ fn get_loaded_models(engine: tauri::State<'_, EngineState>) -> Result<serde_json
     }))
 }
 
+/// Устанавливает UDP-скрипты ag-trigger и ag-pause в ~/.local/bin/ (для Wayland)
+fn install_wayland_scripts() {
+    let is_wayland = std::env::var("XDG_SESSION_TYPE")
+        .map(|v| v == "wayland")
+        .unwrap_or(false);
+    if !is_wayland {
+        return;
+    }
+
+    let home = match std::env::var("HOME") {
+        Ok(h) => std::path::PathBuf::from(h),
+        Err(_) => return,
+    };
+    let bin_dir = home.join(".local/bin");
+    let _ = std::fs::create_dir_all(&bin_dir);
+
+    let scripts = [
+        ("ag-trigger", "#!/bin/bash\n# ArcanaGlyph: UDP-триггер записи\necho \"trigger\" | /usr/bin/nc -u -w0 127.0.0.1 9002\n"),
+        ("ag-pause", "#!/bin/bash\n# ArcanaGlyph: UDP-триггер паузы\necho \"pause\" | /usr/bin/nc -u -w0 127.0.0.1 9002\n"),
+    ];
+
+    for (name, content) in &scripts {
+        let path = bin_dir.join(name);
+        if !path.exists() {
+            if let Err(e) = std::fs::write(&path, content) {
+                tracing::warn!("Не удалось создать {}: {}", path.display(), e);
+                continue;
+            }
+            // chmod +x
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755));
+            }
+            tracing::info!("Установлен скрипт: {}", path.display());
+        }
+    }
+}
+
 /// Tauri-команда: определить, работает ли Wayland
 #[tauri::command]
 fn is_wayland() -> bool {
@@ -477,6 +516,9 @@ fn main() {
                 .build(),
         )
         .setup(move |app| {
+            // Устанавливаем UDP-скрипты для Wayland (если ещё не установлены)
+            install_wayland_scripts();
+
             // Проверяем start_minimized до инициализации движка
             let start_minimized = CoreConfig::load()
                 .map(|c| c.start_minimized)

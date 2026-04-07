@@ -2,7 +2,7 @@
 
 # ArcanaGlyph: Roadmap
 
-Пошаговый план развития ArcanaGlyph — десктопного приложения для голосового ввода текста на Linux.
+Кросс-платформенное десктопное приложение для голосового ввода текста (Linux/macOS/Windows).
 
 ---
 
@@ -31,19 +31,41 @@
 
 ### Phase 3: System Integration
 
-- [x] Глобальные горячие клавиши (tauri-plugin-global-shortcut)
+- [x] Глобальные горячие клавиши (tauri-plugin-global-shortcut для X11)
+- [x] Автоматическая регистрация хоткеев через gsettings (Wayland/GNOME)
+- [x] UDP-скрипты ag-trigger / ag-pause для Wayland
 - [x] Вставка текста: wl-copy + XDG RemoteDesktop portal (Wayland), enigo (X11)
-- [x] Иконка в системном трее (красная при записи) с меню
+- [x] Иконка в системном трее: белая (idle), красная (запись), оранжевая (пауза)
+- [x] Меню трея: Открыть / Запись / Настройки / Выход (с разделителями)
 
 ### Phase 4: Configuration & Polish
 
 - [x] Настройки в SQLite (rusqlite, миграции БД)
-- [x] UI настроек: выбор движка, модели, горячей клавиши
+- [x] UI настроек с табами: Основное / Модели / Клавиши
 - [x] Кастомные dropdown-компоненты (без нативных `<select>`)
-- [x] Реестр моделей (SpeechModelInfo) с метаданными
+- [x] Реестр моделей (SpeechModelInfo) с метаданными и карточками в UI
 - [x] Пул предзагрузки моделей — мгновенное переключение между движками
-- [x] История транскрипций в SQLite
+- [x] История транскрипций в SQLite с пагинацией
 - [x] Сборка дистрибутивов: .deb, .AppImage
+
+### Phase 5: GigaAM v3 — лучший движок для русского языка
+
+- [x] Интеграция GigaAM v3 E2E CTC через ONNX Runtime (`ort` + `ndarray` + `rustfft`)
+- [x] Mel-спектрограмма: STFT + HTK filterbank + log (16kHz, 64 mel bins)
+- [x] CTC greedy decode + SentencePiece vocab (257 токенов)
+- [x] Реестр моделей, UI, retranscribe, предзагрузка
+- [x] Подавление verbose-логов ONNX Runtime
+
+### Phase 8: UX-улучшения (частично)
+
+- [x] Табы в настройках: Основное / Модели / Клавиши
+- [x] Карточки моделей с описанием, размером, статусом installed/missing
+- [x] Композер горячих клавиш с кнопками модификаторов + рекордер основной клавиши
+- [x] Горячая клавиша паузы (hotkey_pause) + регистрация в GNOME через gsettings
+- [x] Проверка конфликтов хоткеев перед сохранением (сканирование gsettings)
+- [x] Настройка «Запуск в трей» (start_minimized)
+- [x] Удаление слов-паразитов (э, э-э, ээ, эм, мм) — настраиваемый фильтр
+- [x] Новый логотип: кольцо + точка (idle/recording/paused)
 
 ---
 
@@ -59,65 +81,11 @@
 
 ---
 
-## Phase 5: GigaAM v3 — лучший движок для русского языка
-
-**Цель:** Интегрировать GigaAM v3 (Sber) — SOTA модель для русской речи (WER 8.4%), компактную (225 MB INT8)
-и значительно точнее текущих движков.
-
-**Технология:** ONNX Runtime через крейт `ort` (v2.0.0-rc.12).
-
-**Модель:** `v3_e2e_ctc.int8.onnx` (225 MB) — CTC с пунктуацией, 257 SentencePiece-токенов.
-
-### 5.1 Исследование и прототип
-
-- [x] Добавить зависимости: `ort`, `ndarray`, `rustfft` в arcanaglyph-core
-- [x] Скачать ONNX-модель с HuggingFace ([istupakov/gigaam-v3-onnx](https://huggingface.co/istupakov/gigaam-v3-onnx))
-- [x] Реализовать mel-спектрограмму для GigaAM:
-  - Sample rate: 16000 Hz
-  - STFT: n_fft=320, win_length=320 (20ms), hop_length=160 (10ms), center=false
-  - Mel filterbank: 64 бина, HTK scale, без нормализации
-  - Log: `log(clamp(mel, 1e-9, 1e9))`
-- [x] Загрузка ONNX-модели через `ort::Session`
-- [x] Написать standalone тест: WAV-файл → mel → ONNX inference → текст
-
-### 5.2 CTC-декодирование
-
-- [x] Greedy CTC decode: argmax по кадрам, удаление дубликатов и blank-токенов
-- [x] Загрузка словаря SentencePiece (v3_e2e_ctc_vocab.txt, 257 токенов)
-- [x] Декодирование subword-токенов в текст (символ `▁` → пробел)
-- [x] Валидация на тестовых аудиофайлах — сравнение с Python-референсом
-
-### 5.3 Интеграция в архитектуру
-
-- [x] Добавить `TranscriberType::GigaAM` в enum (`config.rs`)
-- [x] Реализовать `GigaAmTranscriber` по трейту `Transcriber` (`transcriber.rs`)
-  - `transcribe()`: i16 → f32 → resample 16kHz → mel → ONNX → CTC decode
-  - `supports_streaming()`: false (CTC-модель — offline)
-- [x] Добавить `gigaam_model_path` в `CoreConfig`
-- [x] Обновить `engine.rs`: `create_transcriber()` для GigaAM
-- [x] Создать `transcription_models/gigaam_v3_speech_model.rs` с метаданными
-- [x] Обновить реестр моделей в `transcription_models/mod.rs`
-- [x] DB-миграция не нужна — serde(default) обрабатывает старые конфиги
-
-### 5.4 GPU-ускорение (опционально)
+## Phase 5.4: GPU-ускорение (опционально)
 
 - [ ] Проверить CUDA ExecutionProvider через `ort`
 - [ ] Fallback на CPU если GPU недоступен
 - [ ] Бенчмарки: CPU INT8 vs GPU FP32
-
-### 5.5 UI и UX
-
-- [x] Добавить GigaAM в dropdown выбора движка в настройках
-- [ ] Скачивание модели: прогресс-бар или инструкция
-- [ ] Обновить описания моделей в UI (размер, WER, особенности)
-
-### Ожидаемый результат
-
-| Движок | WER (рус.) | Размер | RAM | Скорость (CPU) |
-| --- | --- | --- | --- | --- |
-| GigaAM v3 INT8 | ~8.4% | 225 MB | ~500 MB | 5-15x realtime |
-| Whisper Turbo | ~14% | 1.5 GB | ~2 GB | 0.15-0.3x realtime |
-| Vosk | ~11% | 42 MB | ~200 MB | realtime (streaming) |
 
 ---
 
@@ -125,53 +93,31 @@
 
 **Цель:** Оценить sherpa-onnx как единый runtime для всех моделей вместо отдельных интеграций.
 
-**Зачем:** sherpa-onnx имеет официальный Rust API, встроенный VAD, поддержку GigaAM v3
-([Smirnov75/GigaAM-v3-sherpa-onnx](https://huggingface.co/Smirnov75/GigaAM-v3-sherpa-onnx)),
-Whisper, Qwen3-ASR и десятков других моделей через единый интерфейс.
-
 - [ ] Исследовать sherpa-onnx Rust API (примеры в `rust-api-examples/`)
 - [ ] Прототип: запуск GigaAM v3 через sherpa-onnx offline recognizer
-- [ ] Сравнить с прямой `ort`-интеграцией (Phase 5) по:
-  - Качество распознавания (идентично ли?)
-  - Скорость inference
-  - Размер зависимостей (FFI к C++ библиотеке)
-  - Гибкость настройки
+- [ ] Сравнить с прямой `ort`-интеграцией по качеству, скорости, размеру зависимостей
 - [ ] Решение: оставить `ort` или мигрировать на sherpa-onnx
-- [ ] Если sherpa-onnx — рефакторинг `Transcriber` трейта под единый runtime
 
 ---
 
 ## Phase 7: Qwen3-ASR — мультиязычный движок
 
 **Цель:** Добавить Qwen3-ASR-0.6B как мультиязычный движок (52 языка, WER 5.76%).
-Актуально, когда нужна поддержка не только русского.
-
-**Предпосылки:** Появление ONNX/GGML-рантайма для Rust. На апрель 2026:
-
-- ONNX-экспорт: [andrewleech/qwen3-asr-0.6b-onnx](https://huggingface.co/andrewleech/qwen3-asr-0.6b-onnx)
-- C++ реализация на GGML: [predict-woo/qwen3-asr.cpp](https://github.com/predict-woo/qwen3-asr.cpp) (~1.3 GB Q8_0)
-- sherpa-onnx: есть пример `run-qwen3-asr.sh`
 
 - [ ] Мониторить появление Rust-биндингов к qwen3-asr.cpp
-- [ ] Или интегрировать через sherpa-onnx (если Phase 6 подтвердит жизнеспособность)
-- [ ] Или через `ort` с ONNX-моделями (3 файла: encoder + decoder_init + decoder_step)
+- [ ] Интегрировать через sherpa-onnx или `ort`
 - [ ] Реализовать `Qwen3AsrTranscriber` по трейту `Transcriber`
 - [ ] Добавить в реестр моделей и UI
 
 ---
 
-## Phase 8: UX-улучшения
+## Phase 8: UX-улучшения (оставшееся)
 
-- [x] Табы в настройках: «Основное» и «Модели»
-- [x] Карточки моделей с описанием, размером, статусом (installed/missing)
-- [x] Tauri-команда `get_models` — реестр моделей + проверка наличия на диске
-- [x] Кнопка «Скачать» — открывает URL модели в браузере
 - [ ] VAD (Voice Activity Detection) — автоматическая остановка записи при паузе
 - [ ] Streaming-отображение частичных результатов для GigaAM RNNT
 - [ ] Автоскачивание моделей из UI с прогресс-баром (встроенное)
 - [ ] Выбор языка распознавания (для мультиязычных движков)
 - [ ] Настройка параметров inference (количество потоков, GPU/CPU)
-- [ ] Горячее переключение движка без перезапуска
 
 ---
 
@@ -181,8 +127,49 @@ Whisper, Qwen3-ASR и десятков других моделей через е
 - [ ] Замена слов / автокоррекция (пользовательский словарь)
 - [ ] Экспорт истории транскрипций
 - [ ] Статистика использования (время записей, распределение по движкам)
+
+---
+
+## Phase 10: Кросс-платформенность
+
+**Цель:** Запуск на Linux (Wayland + X11), macOS и Windows.
+
+### 10.1 Установка и скрипты
+
+- [ ] Автоматическое создание UDP-скриптов (ag-trigger, ag-pause) при первом запуске на Wayland
+- [ ] Установка скриптов в `~/.local/bin/` с проверкой PATH
+- [ ] Для macOS/Windows: глобальные хоткеи через tauri-plugin-global-shortcut (работают нативно)
+
+### 10.2 macOS
+
+- [ ] Сборка и тестирование на macOS (Apple Silicon + Intel)
+- [ ] Подпись приложения (codesign) и нотаризация
+- [ ] Разрешение на микрофон (Privacy & Security)
+- [ ] Вставка текста через CGEventPost или AppleScript
+- [ ] DMG-пакет для распространения
+
+### 10.3 Windows
+
+- [ ] Сборка и тестирование на Windows 10/11
+- [ ] Вставка текста через Windows API (SendInput)
+- [ ] MSIX / MSI инсталлятор
+- [ ] Автозапуск через реестр (опционально)
+
+### 10.4 Linux — полировка
+
 - [ ] Flatpak / Snap пакеты
 - [ ] Поддержка PipeWire (если cpal не покрывает)
+- [ ] KDE Plasma: хоткеи через kglobalaccel (не только GNOME gsettings)
+- [ ] Автоустановка wl-clipboard если не найден
+
+---
+
+## Ближайшие приоритеты
+
+1. **Автоустановка UDP-скриптов** — Phase 10.1 (быстро, важно для первого запуска)
+2. **VAD** — Phase 8 (автоостановка записи при паузе в речи)
+3. **Автоскачивание моделей** — Phase 8 (встроенное скачивание с прогресс-баром)
+4. **macOS** — Phase 10.2 (Tauri v2 уже поддерживает macOS)
 
 ---
 
@@ -195,8 +182,6 @@ Whisper, Qwen3-ASR и десятков других моделей через е
 | NVIDIA Canary 2.5B | NVIDIA | ~6% (multi) | 2.5B | CC BY 4.0 | NeMo (Python only) |
 | Whisper Large V3 Turbo | OpenAI | ~14% | 1.5 GB | MIT | whisper-rs |
 | Vosk 0.54 | alphacep | ~11% | 42-250 MB | Apache 2.0 | vosk-rs |
-
-**Приоритет для ArcanaGlyph:** GigaAM v3 (Phase 5) → sherpa-onnx evaluation (Phase 6) → Qwen3-ASR (Phase 7).
 
 ---
 
