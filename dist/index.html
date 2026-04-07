@@ -1207,6 +1207,12 @@
         levelFill.style.width = '0%';
       });
 
+      // Открыть настройки по команде из трея
+      listen('tray://open-settings', async () => {
+        showPage('settings');
+        await loadSettings();
+      });
+
       /* ──────── Меню и настройки ──────── */
       const menuBtn     = document.getElementById('menu-btn');
       const menuPage    = document.getElementById('menu-page');
