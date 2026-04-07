@@ -1467,7 +1467,7 @@
           auto_type: cfg.auto_type,
           debug: cfg.debug,
           vad_enabled: cfg.vad_enabled !== false,
-          vad_silence_secs: cfg.vad_silence_secs || 3,
+          vad_silence_secs: cfg.vad_silence_secs || 7,
           remove_fillers: cfg.remove_fillers !== false,
           start_minimized: cfg.start_minimized || false,
           preload_models: normalizePreload(cfg.preload_models || [], cfg.transcriber),
@@ -1911,7 +1911,7 @@
         document.getElementById('s-auto-type').classList.toggle('on', originalConfig.auto_type);
         document.getElementById('s-debug').classList.toggle('on', originalConfig.debug);
         document.getElementById('s-vad-enabled').classList.toggle('on', originalConfig.vad_enabled !== false);
-        document.getElementById('s-vad-silence').value = originalConfig.vad_silence_secs || 3;
+        document.getElementById('s-vad-silence').value = originalConfig.vad_silence_secs || 7;
         document.getElementById('s-remove-fillers').classList.toggle('on', originalConfig.remove_fillers !== false);
         document.getElementById('s-start-minimized').classList.toggle('on', originalConfig.start_minimized || false);
         const preloadOrig = originalConfig.preload_models || [];

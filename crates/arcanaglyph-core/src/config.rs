@@ -79,7 +79,7 @@ fn default_true() -> bool {
 }
 
 fn default_vad_silence_secs() -> u64 {
-    3
+    7
 }
 
 fn default_gigaam_model_path() -> PathBuf {
@@ -115,7 +115,7 @@ impl Default for CoreConfig {
             hotkey_pause: "Super+Shift+W".to_string(),
             debug: true,
             vad_enabled: true,
-            vad_silence_secs: 3,
+            vad_silence_secs: 7,
             remove_fillers: true,
             start_minimized: false,
             preload_models: vec![],
@@ -293,7 +293,7 @@ auto_type = false
             hotkey_pause: String::new(),
             debug: true,
             vad_enabled: true,
-            vad_silence_secs: 3,
+            vad_silence_secs: 7,
             remove_fillers: true,
             start_minimized: false,
             preload_models: vec![],
