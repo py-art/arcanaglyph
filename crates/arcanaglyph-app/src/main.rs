@@ -556,6 +556,7 @@ fn main() {
                                             }
                                             EngineEvent::RecordingPaused => {
                                                 tray::set_tray_text(&app_handle_events, "Продолжить запись");
+                                                tray::set_tray_state(&app_handle_events, tray::TrayState::Paused);
                                             }
                                             EngineEvent::Transcribing => {
                                                 tray::set_tray_text(&app_handle_events, "Транскрибация...");
