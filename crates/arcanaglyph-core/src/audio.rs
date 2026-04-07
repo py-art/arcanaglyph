@@ -91,7 +91,7 @@ pub struct RecordResult {
 
 /// Записывает аудио с микрофона и транскрибирует через выбранный движок.
 /// Блокирующая функция — ждёт команд через `cmd_rx`.
-/// Автоматически останавливается, если нет новых слов `silence_timeout_secs` секунд.
+/// Автоматически останавливается при тишине (VAD) или по таймауту.
 #[allow(clippy::too_many_arguments)]
 pub fn record_and_transcribe(
     cmd_rx: std_mpsc::Receiver<AudioCommand>,
@@ -99,6 +99,8 @@ pub fn record_and_transcribe(
     sample_rate: u32,
     debug: bool,
     silence_timeout_secs: u64,
+    vad_enabled: bool,
+    vad_silence_secs: u64,
     audio_level: Arc<AtomicU32>,
     event_tx: tokio::sync::broadcast::Sender<EngineEvent>,
     audio_cache_dir: &std::path::Path,
@@ -175,6 +177,11 @@ pub fn record_and_transcribe(
     let mut max_partial_len: usize = 0;
     let mut last_growth = Instant::now();
     let silence_timeout = Duration::from_secs(silence_timeout_secs);
+
+    // VAD: авто-стоп при тишине после речи
+    let vad_timeout = Duration::from_secs(vad_silence_secs);
+    let mut speech_detected = false;
+    let mut last_speech = Instant::now();
 
     let mut segment_printed: usize = 0;
     let mut has_output = false;
@@ -253,16 +260,33 @@ pub fn record_and_transcribe(
                 }
             }
         } else {
-            // Для пакетного режима (Whisper): таймаут тишины по audio level
+            // Для пакетного режима (Whisper/GigaAM): таймаут тишины по audio level
             let level = audio_level.load(Ordering::Relaxed);
             if level > 0 {
                 last_growth = Instant::now();
             }
         }
 
+        // Трекинг речи для VAD: audio level > 5 считается речью
+        let current_level = audio_level.load(Ordering::Relaxed);
+        if current_level > 5 {
+            speech_detected = true;
+            last_speech = Instant::now();
+        }
+
+        // VAD: авто-стоп если речь была и тишина длится vad_silence_secs
+        if vad_enabled && speech_detected && last_speech.elapsed() >= vad_timeout {
+            info!(
+                "VAD: авто-стоп (речь обнаружена, тишина {}с).",
+                vad_silence_secs
+            );
+            break;
+        }
+
+        // Общий таймаут безопасности (max_record_secs)
         if last_growth.elapsed() >= silence_timeout {
             info!(
-                "Запись останавливается по тишине ({}с без новых слов).",
+                "Запись останавливается по таймауту ({}с).",
                 silence_timeout_secs
             );
             break;

@@ -1027,8 +1027,18 @@
         </div>
 
         <div class="setting-group">
-          <label>Таймаут тишины (секунды)</label>
+          <label>Таймаут записи (секунды)</label>
           <input type="number" id="s-max-record" min="5" max="120" />
+        </div>
+
+        <div class="setting-row">
+          <label>Авто-стоп при тишине</label>
+          <div class="toggle" id="s-vad-enabled"></div>
+        </div>
+
+        <div class="setting-group">
+          <label>Тишина для авто-стопа (секунды)</label>
+          <input type="number" id="s-vad-silence" min="1" max="30" />
         </div>
 
         <div class="setting-row">
@@ -1429,6 +1439,8 @@
           hotkey_pause: cfg.hotkey_pause || '',
           auto_type: cfg.auto_type,
           debug: cfg.debug,
+          vad_enabled: cfg.vad_enabled !== false,
+          vad_silence_secs: cfg.vad_silence_secs || 3,
           remove_fillers: cfg.remove_fillers !== false,
           start_minimized: cfg.start_minimized || false,
           preload_models: normalizePreload(cfg.preload_models || [], cfg.transcriber),
@@ -1444,6 +1456,8 @@
         setHotkeyValue('hk-pause', cfg.hotkey_pause || '');
         document.getElementById('s-auto-type').classList.toggle('on', cfg.auto_type);
         document.getElementById('s-debug').classList.toggle('on', cfg.debug);
+        document.getElementById('s-vad-enabled').classList.toggle('on', cfg.vad_enabled !== false);
+        document.getElementById('s-vad-silence').value = cfg.vad_silence_secs || 3;
         document.getElementById('s-remove-fillers').classList.toggle('on', cfg.remove_fillers !== false);
         document.getElementById('s-start-minimized').classList.toggle('on', cfg.start_minimized || false);
         const preload = cfg.preload_models || [];
@@ -1511,6 +1525,8 @@
           hotkey_pause: getHotkeyValue('hk-pause'),
           auto_type: document.getElementById('s-auto-type').classList.contains('on'),
           debug: document.getElementById('s-debug').classList.contains('on'),
+          vad_enabled: document.getElementById('s-vad-enabled').classList.contains('on'),
+          vad_silence_secs: parseInt(document.getElementById('s-vad-silence').value) || 3,
           remove_fillers: document.getElementById('s-remove-fillers').classList.contains('on'),
           start_minimized: document.getElementById('s-start-minimized').classList.contains('on'),
           preload_models: normalizePreload([
@@ -1533,6 +1549,8 @@
         hotkey_pause:      { el: 'hk-pause',        type: 'group' },
         auto_type:         { el: 's-auto-type',     type: 'row' },
         debug:             { el: 's-debug',          type: 'row' },
+        vad_enabled:       { el: 's-vad-enabled',    type: 'row' },
+        vad_silence_secs:  { el: 's-vad-silence',    type: 'group' },
         remove_fillers:    { el: 's-remove-fillers',  type: 'row' },
         start_minimized:   { el: 's-start-minimized', type: 'row' },
         preload_models:    { el: 's-preload-vosk',   type: 'row' },
@@ -1629,7 +1647,7 @@
       initCustomSelects();
 
       // Навешиваем обработчики изменений
-      ['s-model-path', 's-whisper-path', 's-gigaam-path', 's-max-record']
+      ['s-model-path', 's-whisper-path', 's-gigaam-path', 's-max-record', 's-vad-silence']
         .forEach(id => document.getElementById(id).addEventListener('input', checkChanges));
       ['s-transcriber', 's-sample-rate']
         .forEach(id => document.getElementById(id).addEventListener('change', checkChanges));
@@ -1792,7 +1810,7 @@
       });
 
       // Toggle-переключатели
-      ['s-auto-type', 's-debug', 's-remove-fillers', 's-start-minimized', 's-preload-vosk', 's-preload-whisper', 's-preload-gigaam'].forEach(id => {
+      ['s-auto-type', 's-debug', 's-vad-enabled', 's-remove-fillers', 's-start-minimized', 's-preload-vosk', 's-preload-whisper', 's-preload-gigaam'].forEach(id => {
         document.getElementById(id).addEventListener('click', () => {
           document.getElementById(id).classList.toggle('on');
           checkChanges();
@@ -1812,6 +1830,8 @@
         setHotkeyValue('hk-pause', originalConfig.hotkey_pause || '');
         document.getElementById('s-auto-type').classList.toggle('on', originalConfig.auto_type);
         document.getElementById('s-debug').classList.toggle('on', originalConfig.debug);
+        document.getElementById('s-vad-enabled').classList.toggle('on', originalConfig.vad_enabled !== false);
+        document.getElementById('s-vad-silence').value = originalConfig.vad_silence_secs || 3;
         document.getElementById('s-remove-fillers').classList.toggle('on', originalConfig.remove_fillers !== false);
         document.getElementById('s-start-minimized').classList.toggle('on', originalConfig.start_minimized || false);
         const preloadOrig = originalConfig.preload_models || [];

@@ -245,6 +245,8 @@ impl ArcanaEngine {
         let sample_rate = config.sample_rate;
         let auto_type = config.auto_type;
         let remove_fillers = config.remove_fillers;
+        let vad_enabled = config.vad_enabled;
+        let vad_silence_secs = config.vad_silence_secs;
         let debug = config.debug;
         let audio_level = Arc::clone(&self.audio_level);
         let handle = self.rt_handle.clone();
@@ -360,6 +362,8 @@ impl ArcanaEngine {
                             sample_rate,
                             debug,
                             silence_timeout_secs,
+                            vad_enabled,
+                            vad_silence_secs,
                             audio_level,
                             event_tx_audio,
                             &audio_cache,

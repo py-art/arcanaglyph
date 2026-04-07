@@ -51,6 +51,12 @@ pub struct CoreConfig {
     /// Директория должна содержать v3_e2e_ctc.int8.onnx и v3_e2e_ctc_vocab.txt
     #[serde(default = "default_gigaam_model_path")]
     pub gigaam_model_path: PathBuf,
+    /// Авто-стоп записи при тишине после речи
+    #[serde(default = "default_true")]
+    pub vad_enabled: bool,
+    /// Секунды тишины после речи для авто-стопа (если vad_enabled)
+    #[serde(default = "default_vad_silence_secs")]
+    pub vad_silence_secs: u64,
     /// Удалять слова-паразиты из транскрибации (э, э-э, ээ, эм, мм)
     #[serde(default = "default_true")]
     pub remove_fillers: bool,
@@ -70,6 +76,10 @@ fn default_whisper_model_path() -> PathBuf {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_vad_silence_secs() -> u64 {
+    3
 }
 
 fn default_gigaam_model_path() -> PathBuf {
@@ -104,6 +114,8 @@ impl Default for CoreConfig {
             hotkey: "Super+W".to_string(),
             hotkey_pause: "Super+Shift+W".to_string(),
             debug: true,
+            vad_enabled: true,
+            vad_silence_secs: 3,
             remove_fillers: true,
             start_minimized: false,
             preload_models: vec![],
@@ -280,6 +292,8 @@ auto_type = false
             hotkey: "Ctrl+Shift+R".to_string(),
             hotkey_pause: String::new(),
             debug: true,
+            vad_enabled: true,
+            vad_silence_secs: 3,
             remove_fillers: true,
             start_minimized: false,
             preload_models: vec![],
