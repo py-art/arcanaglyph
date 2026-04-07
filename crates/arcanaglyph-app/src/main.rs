@@ -69,6 +69,96 @@ fn is_wayland() -> bool {
         .unwrap_or(false)
 }
 
+/// Конвертация формата хоткея из Tauri ("Super+Alt+Control+Space") в gsettings ("<Super><Alt><Control>space")
+fn tauri_hotkey_to_gsettings(hotkey: &str) -> String {
+    if hotkey.is_empty() {
+        return String::new();
+    }
+    let parts: Vec<&str> = hotkey.split('+').collect();
+    let mut mods = String::new();
+    let mut key = String::new();
+    for part in &parts {
+        match *part {
+            "Super" => mods.push_str("<Super>"),
+            "Alt" => mods.push_str("<Alt>"),
+            "Control" => mods.push_str("<Control>"),
+            "Shift" => mods.push_str("<Shift>"),
+            k => key = k.to_lowercase(),
+        }
+    }
+    format!("{}{}", mods, key)
+}
+
+/// Tauri-команда: зарегистрировать глобальные хоткеи через gsettings (Wayland/GNOME)
+#[tauri::command]
+fn register_gnome_hotkeys(hotkey_trigger: String, hotkey_pause: String) -> Result<(), String> {
+    // Получаем текущий список custom keybindings
+    let output = std::process::Command::new("gsettings")
+        .args(["get", "org.gnome.settings-daemon.plugins.media-keys", "custom-keybindings"])
+        .output()
+        .map_err(|e| format!("Не удалось вызвать gsettings: {}", e))?;
+    let current = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    // Определяем слоты для ArcanaGlyph (ищем существующие или берём свободные)
+    let ag_trigger_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/arcanaglyph-trigger/";
+    let ag_pause_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/arcanaglyph-pause/";
+    let base = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding";
+
+    // Вспомогательная функция для выполнения gsettings set
+    let gs_set = |path: &str, key: &str, val: &str| -> Result<(), String> {
+        let schema_path = format!("{}:{}", base, path);
+        std::process::Command::new("gsettings")
+            .args(["set", &schema_path, key, val])
+            .output()
+            .map_err(|e| format!("gsettings set {} {}: {}", key, val, e))?;
+        Ok(())
+    };
+
+    // Регистрируем trigger
+    if !hotkey_trigger.is_empty() {
+        let binding = tauri_hotkey_to_gsettings(&hotkey_trigger);
+        gs_set(ag_trigger_path, "name", "'ArcanaGlyph Trigger'")?;
+        gs_set(ag_trigger_path, "command", "'/home/py-art/.local/bin/ag-trigger'")?;
+        gs_set(ag_trigger_path, "binding", &format!("'{}'", binding))?;
+    }
+
+    // Регистрируем pause (если задана)
+    if !hotkey_pause.is_empty() {
+        let binding = tauri_hotkey_to_gsettings(&hotkey_pause);
+        gs_set(ag_pause_path, "name", "'ArcanaGlyph Pause'")?;
+        gs_set(ag_pause_path, "command", "'/home/py-art/.local/bin/ag-pause'")?;
+        gs_set(ag_pause_path, "binding", &format!("'{}'", binding))?;
+    }
+
+    // Обновляем список custom-keybindings — добавляем наши пути если их нет
+    let mut paths: Vec<String> = if current == "@as []" || current.is_empty() {
+        vec![]
+    } else {
+        // Парсим ['path1', 'path2', ...]
+        current.trim_matches(|c| c == '[' || c == ']')
+            .split(',')
+            .map(|s| s.trim().trim_matches('\'').trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    };
+
+    if !hotkey_trigger.is_empty() && !paths.iter().any(|p| p == ag_trigger_path) {
+        paths.push(ag_trigger_path.to_string());
+    }
+    if !hotkey_pause.is_empty() && !paths.iter().any(|p| p == ag_pause_path) {
+        paths.push(ag_pause_path.to_string());
+    }
+
+    let paths_str = format!("[{}]", paths.iter().map(|p| format!("'{}'", p)).collect::<Vec<_>>().join(", "));
+    std::process::Command::new("gsettings")
+        .args(["set", "org.gnome.settings-daemon.plugins.media-keys", "custom-keybindings", &paths_str])
+        .output()
+        .map_err(|e| format!("Не удалось обновить список keybindings: {}", e))?;
+
+    tracing::info!("GNOME хоткеи зарегистрированы: trigger='{}', pause='{}'", hotkey_trigger, hotkey_pause);
+    Ok(())
+}
+
 /// Tauri-команда: получить реестр моделей с проверкой наличия файлов
 #[tauri::command]
 fn get_models() -> Result<serde_json::Value, String> {
@@ -493,7 +583,7 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_model_loaded, get_loaded_models, get_models, is_wayland, hide_window, load_config, save_config, get_history, delete_history_entry, clear_history, retranscribe, get_audio_data])
+        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_model_loaded, get_loaded_models, get_models, is_wayland, register_gnome_hotkeys, hide_window, load_config, save_config, get_history, delete_history_entry, clear_history, retranscribe, get_audio_data])
         .on_window_event(|window, event| {
             // Перехватываем закрытие окна — скрываем в трей вместо закрытия
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

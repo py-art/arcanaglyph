@@ -942,8 +942,8 @@
 
       <div class="settings-tabs">
         <div class="settings-tab active" data-tab="general">Основное</div>
-        <div class="settings-tab" data-tab="hotkeys">Клавиши</div>
         <div class="settings-tab" data-tab="models">Модели</div>
+        <div class="settings-tab" data-tab="hotkeys">Клавиши</div>
       </div>
 
       <!-- Таб: Основное -->
@@ -1033,8 +1033,8 @@
         </div>
 
         <div class="wayland-warning" id="wayland-warning" style="display:none;">
-          ⚠ Wayland: глобальные горячие клавиши не поддерживаются напрямую.
-          Используйте UDP-триггер (порт 9002) через внешний скрипт.
+          Wayland: горячие клавиши регистрируются через GNOME Settings (gsettings).
+          При сохранении комбинации автоматически применяются в системе.
         </div>
       </div>
 
@@ -1727,6 +1727,20 @@
       saveBtn.addEventListener('click', async () => {
         const cfg = getFormConfig();
         await invoke('save_config', { config: cfg });
+
+        // На Wayland — регистрируем хоткеи через gsettings (GNOME)
+        try {
+          const wayland = await invoke('is_wayland');
+          if (wayland) {
+            await invoke('register_gnome_hotkeys', {
+              hotkeyTrigger: cfg.hotkey,
+              hotkeyPause: cfg.hotkey_pause,
+            });
+          }
+        } catch (e) {
+          console.warn('Не удалось зарегистрировать GNOME хоткеи:', e);
+        }
+
         originalConfig = JSON.parse(JSON.stringify(cfg));
         checkChanges();
         saveNotice.classList.add('visible');
