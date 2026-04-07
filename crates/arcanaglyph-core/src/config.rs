@@ -48,6 +48,9 @@ pub struct CoreConfig {
     /// Директория должна содержать v3_e2e_ctc.int8.onnx и v3_e2e_ctc_vocab.txt
     #[serde(default = "default_gigaam_model_path")]
     pub gigaam_model_path: PathBuf,
+    /// Удалять слова-паразиты из транскрибации (э, э-э, ээ, эм, мм)
+    #[serde(default = "default_true")]
+    pub remove_fillers: bool,
     /// Запускать в свёрнутом виде (сразу в трей)
     #[serde(default)]
     pub start_minimized: bool,
@@ -60,6 +63,10 @@ fn default_whisper_model_path() -> PathBuf {
     std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join("models/ggml-large-v3-turbo.bin")
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_gigaam_model_path() -> PathBuf {
@@ -93,6 +100,7 @@ impl Default for CoreConfig {
             auto_type: true,
             hotkey: "Super+Alt+Control+Space".to_string(),
             debug: true,
+            remove_fillers: true,
             start_minimized: false,
             preload_models: vec![],
         }
@@ -267,6 +275,7 @@ auto_type = false
             auto_type: false,
             hotkey: "Ctrl+Shift+R".to_string(),
             debug: true,
+            remove_fillers: true,
             start_minimized: false,
             preload_models: vec![],
         };

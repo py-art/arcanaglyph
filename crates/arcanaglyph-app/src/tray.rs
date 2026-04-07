@@ -4,8 +4,8 @@ use arcanaglyph_core::ArcanaEngine;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{
-    AppHandle, Manager,
-    menu::{Menu, MenuEvent, MenuItem},
+    AppHandle, Emitter, Manager,
+    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     tray::{TrayIcon, TrayIconBuilder},
 };
 
@@ -33,9 +33,12 @@ pub fn show_window(app: &AppHandle) {
 /// Создаёт иконку в системном трее с меню управления
 pub fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let show_item = MenuItem::with_id(app, "show", "Открыть приложение", true, None::<&str>)?;
+    let settings_item = MenuItem::with_id(app, "settings", "Настройки", true, None::<&str>)?;
     let toggle_item = MenuItem::with_id(app, "toggle", "Начать запись", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_item, &toggle_item, &quit_item])?;
+    let sep1 = PredefinedMenuItem::separator(app)?;
+    let sep2 = PredefinedMenuItem::separator(app)?;
+    let menu = Menu::with_items(app, &[&show_item, &sep1, &toggle_item, &settings_item, &sep2, &quit_item])?;
 
     // Сохраняем toggle_item в state для обновления текста при смене состояния
     app.manage(TrayToggleItem(toggle_item));
@@ -47,6 +50,10 @@ pub fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .on_menu_event(|app: &AppHandle, event: MenuEvent| match event.id().as_ref() {
             "show" => {
                 show_window(app);
+            }
+            "settings" => {
+                show_window(app);
+                let _ = app.emit("tray://open-settings", ());
             }
             "toggle" => {
                 if let Some(engine) = app.try_state::<Arc<ArcanaEngine>>() {
