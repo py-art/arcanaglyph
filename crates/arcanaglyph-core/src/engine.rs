@@ -12,6 +12,7 @@ use crate::audio::{self, AudioCommand};
 use crate::config::{CoreConfig, TranscriberType};
 use crate::error::ArcanaError;
 use crate::history::HistoryDB;
+use crate::gigaam::transcriber::GigaAmTranscriber;
 use crate::transcriber::{Transcriber, VoskTranscriber, WhisperTranscriber};
 
 /// События движка, рассылаемые подписчикам
@@ -61,6 +62,11 @@ impl ArcanaEngine {
     /// Создаёт новый экземпляр движка: загружает модель, инициализирует каналы.
     /// Должен вызываться из контекста Tokio runtime (сохраняет Handle для spawn).
     pub fn new(config: CoreConfig, window_visible: Arc<AtomicBool>) -> Result<Self, ArcanaError> {
+        // Подавляем verbose-логи ONNX Runtime (до создания первой сессии)
+        if let Ok(env) = ort::environment::Environment::current() {
+            env.set_log_level(ort::logging::LogLevel::Warning);
+        }
+
         // Загружаем основную модель
         let (model_name, transcriber) = Self::create_transcriber(&config, &config.transcriber)?;
 
@@ -113,19 +119,46 @@ impl ArcanaEngine {
                     .unwrap_or_else(|| "whisper".to_string());
                 Ok((name, Arc::new(t)))
             }
+            TranscriberType::GigaAm => {
+                let t = GigaAmTranscriber::new(&config.gigaam_model_path)?;
+                let name = config.gigaam_model_path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "gigaam".to_string());
+                Ok((name, Arc::new(t)))
+            }
         }
     }
 
-    /// Предзагрузить модель в пул (вызывать из фонового потока)
+    /// Предзагрузить модель в пул (вызывать из фонового потока).
+    /// Пропускает загрузку если модель уже в пуле.
     pub fn preload_model(&self, t_type: &TranscriberType) -> Result<String, ArcanaError> {
         let config = self.config.read().map_err(|e| ArcanaError::Internal(format!("RwLock: {}", e)))?;
-        let (name, transcriber) = Self::create_transcriber(&config, t_type)?;
 
-        let mut pool = self.transcribers.write().map_err(|e| ArcanaError::Internal(format!("RwLock: {}", e)))?;
-        if !pool.contains_key(&name) {
-            pool.insert(name.clone(), transcriber);
-            info!("Модель '{}' предзагружена в пул", name);
+        // Определяем имя модели без загрузки — чтобы проверить пул
+        let expected_name = match t_type {
+            TranscriberType::Vosk => config.model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "vosk".to_string()),
+            TranscriberType::Whisper => config.whisper_model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "whisper".to_string()),
+            TranscriberType::GigaAm => config.gigaam_model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "gigaam".to_string()),
+        };
+
+        // Если модель уже в пуле — пропускаем загрузку
+        let already_loaded = self.transcribers.read()
+            .map(|pool| pool.contains_key(&expected_name))
+            .unwrap_or(false);
+        if already_loaded {
+            return Ok(expected_name);
         }
+
+        let (name, transcriber) = Self::create_transcriber(&config, t_type)?;
+        let mut pool = self.transcribers.write().map_err(|e| ArcanaError::Internal(format!("RwLock: {}", e)))?;
+        pool.insert(name.clone(), transcriber);
+        info!("Модель '{}' предзагружена в пул", name);
         Ok(name)
     }
 
@@ -149,6 +182,9 @@ impl ArcanaEngine {
             TranscriberType::Whisper => new_config.whisper_model_path.file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "whisper".to_string()),
+            TranscriberType::GigaAm => new_config.gigaam_model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "gigaam".to_string()),
         };
 
         // Если модель уже в пуле — мгновенное переключение

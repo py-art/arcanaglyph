@@ -61,6 +61,32 @@ fn get_loaded_models(engine: tauri::State<'_, EngineState>) -> Result<serde_json
     }))
 }
 
+/// Tauri-команда: получить реестр моделей с проверкой наличия файлов
+#[tauri::command]
+fn get_models() -> Result<serde_json::Value, String> {
+    let config = CoreConfig::load().map_err(|e| e.to_string())?;
+    let models = arcanaglyph_core::transcription_models::all();
+    let result: Vec<_> = models.iter().map(|m| {
+        let path = match m.transcriber_type {
+            "vosk" => &config.model_path,
+            "whisper" => &config.whisper_model_path,
+            "gigaam" => &config.gigaam_model_path,
+            _ => &config.model_path,
+        };
+        serde_json::json!({
+            "id": m.id,
+            "display_name": m.display_name,
+            "transcriber_type": m.transcriber_type,
+            "default_filename": m.default_filename,
+            "description": m.description,
+            "size": m.size,
+            "download_url": m.download_url,
+            "installed": path.exists(),
+        })
+    }).collect();
+    Ok(serde_json::json!(result))
+}
+
 /// Tauri-команда: загрузить текущую конфигурацию
 #[tauri::command]
 fn load_config() -> Result<serde_json::Value, String> {
@@ -115,6 +141,7 @@ async fn retranscribe(
     transcriber_type: String,
     db: tauri::State<'_, Arc<HistoryDB>>,
 ) -> Result<serde_json::Value, String> {
+    use arcanaglyph_core::gigaam::transcriber::GigaAmTranscriber;
     use arcanaglyph_core::transcriber::{VoskTranscriber, WhisperTranscriber, Transcriber};
 
     // Получаем запись из БД
@@ -149,6 +176,12 @@ async fn retranscribe(
                 .unwrap_or_else(|| "whisper".to_string());
             (name, "whisper".to_string())
         }
+        "gigaam" => {
+            let name = config.gigaam_model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "gigaam".to_string());
+            (name, "gigaam".to_string())
+        }
         _ => return Err("Неизвестный тип транскрайбера".to_string()),
     };
 
@@ -166,6 +199,10 @@ async fn retranscribe(
         }
         "whisper" => {
             let t = WhisperTranscriber::new(&config.whisper_model_path).map_err(|e| e.to_string())?;
+            (Box::new(t), config.sample_rate)
+        }
+        "gigaam" => {
+            let t = GigaAmTranscriber::new(&config.gigaam_model_path).map_err(|e| e.to_string())?;
             (Box::new(t), config.sample_rate)
         }
         _ => unreachable!(),
@@ -254,11 +291,22 @@ fn main() {
                 .build(),
         )
         .setup(move |app| {
-            // Флаг видимости окна: true при старте (окно видимо)
-            let window_visible = Arc::new(AtomicBool::new(true));
+            // Проверяем start_minimized до инициализации движка
+            let start_minimized = CoreConfig::load()
+                .map(|c| c.start_minimized)
+                .unwrap_or(false);
+
+            let window_visible = Arc::new(AtomicBool::new(!start_minimized));
             app.manage(window_visible.clone());
 
-            // Engine создаётся в фоне — окно показывается сразу
+            // Если запуск в свёрнутом виде — скрываем окно сразу
+            if start_minimized
+                && let Some(window) = app.get_webview_window("main")
+            {
+                let _ = window.hide();
+            }
+
+            // Engine создаётся в фоне — окно показывается сразу (если не minimized)
             let engine_state: EngineState = Arc::new(OnceLock::new());
             app.manage(engine_state.clone());
 
@@ -407,7 +455,7 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_model_loaded, get_loaded_models, hide_window, load_config, save_config, get_history, delete_history_entry, clear_history, retranscribe, get_audio_data])
+        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_model_loaded, get_loaded_models, get_models, hide_window, load_config, save_config, get_history, delete_history_entry, clear_history, retranscribe, get_audio_data])
         .on_window_event(|window, event| {
             // Перехватываем закрытие окна — скрываем в трей вместо закрытия
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

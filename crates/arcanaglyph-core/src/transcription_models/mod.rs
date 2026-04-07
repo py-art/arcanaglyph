@@ -4,6 +4,7 @@
 // Каждый файл описывает одну модель: тип, имя, путь, размер, URL скачивания.
 // Добавление новой модели: создать файл *_speech_model.rs и добавить в all().
 
+pub mod gigaam_v3_speech_model;
 pub mod vosk_russian_speech_model;
 pub mod whisper_large_v3_turbo_speech_model;
 
@@ -33,6 +34,7 @@ pub fn all() -> Vec<&'static SpeechModelInfo> {
     vec![
         &vosk_russian_speech_model::MODEL,
         &whisper_large_v3_turbo_speech_model::MODEL,
+        &gigaam_v3_speech_model::MODEL,
     ]
 }
 

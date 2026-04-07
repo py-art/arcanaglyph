@@ -31,9 +31,12 @@ Cargo workspace из двух крейтов:
   - `lib.rs` — публичный API: `ArcanaEngine`, `CoreConfig`, `EngineEvent`, `ArcanaError`
   - `engine.rs` — основной движок: управление записью (start/stop), broadcast событий
   - `transcriber.rs` — трейт `Transcriber` + реализации `VoskTranscriber`, `WhisperTranscriber`
+  - `gigaam/` — модуль GigaAM v3 (SberDevices, ONNX Runtime):
+    - `mel.rs` — mel-спектрограмма (STFT, HTK mel filterbank, log)
+    - `transcriber.rs` — `GigaAmTranscriber` (ONNX inference + CTC decode)
   - `audio.rs` — захват аудио через `cpal`, передача в transcriber
   - `input.rs` — вставка текста: `wl-copy` + XDG RemoteDesktop (Shift+Insert) на Wayland, `enigo` на X11
-  - `config.rs` — конфигурация с load/save из `~/.config/arcanaglyph/config.toml`
+  - `config.rs` — конфигурация с load/save из SQLite (`TranscriberType`: Vosk, Whisper, GigaAm)
   - `error.rs` — типизированные ошибки через `thiserror`
   - `main.rs` — legacy standalone-сервер (UDP + WebSocket, для отладки)
 
@@ -69,3 +72,5 @@ sudo apt install wl-clipboard
 
 - Vosk: `models/vosk-model-ru-0.42/`
 - Whisper: `models/ggml-large-v3-turbo.bin` (скачать с HuggingFace ggerganov/whisper.cpp)
+- GigaAM v3: `models/gigaam-v3-e2e-ctc/` (содержит `v3_e2e_ctc.int8.onnx` + `v3_e2e_ctc_vocab.txt`,
+  скачать с HuggingFace istupakov/gigaam-v3-onnx)
