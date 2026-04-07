@@ -101,8 +101,8 @@ impl Default for CoreConfig {
             sample_rate: 48000,
             max_record_secs: 20,
             auto_type: true,
-            hotkey: "Super+Alt+Control+Space".to_string(),
-            hotkey_pause: String::new(),
+            hotkey: "Super+G".to_string(),
+            hotkey_pause: "Super+Shift+G".to_string(),
             debug: true,
             remove_fillers: true,
             start_minimized: false,
@@ -233,7 +233,7 @@ mod tests {
         assert_eq!(config.max_record_secs, 20);
         assert!(config.auto_type);
         assert!(config.debug);
-        assert_eq!(config.hotkey, "Super+Alt+Control+Space");
+        assert_eq!(config.hotkey, "Super+G");
         assert!(config.model_path.ends_with("models/vosk-model-ru-0.42"));
         assert!(config.whisper_model_path.ends_with("models/ggml-large-v3-turbo.bin"));
         assert!(config.gigaam_model_path.ends_with("models/gigaam-v3-e2e-ctc"));
