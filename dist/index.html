@@ -704,6 +704,33 @@
         transition: background 0.15s;
       }
       .model-download-btn:hover { background: rgba(122, 162, 247, 0.15); }
+      .model-download-btn:disabled { color: #565f89; border-color: #292e42; cursor: default; }
+      .model-progress {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-top: 0.5rem;
+      }
+      .model-progress-bar {
+        flex: 1;
+        height: 4px;
+        background: #292e42;
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .model-progress-fill {
+        height: 100%;
+        width: 0%;
+        background: #7aa2f7;
+        border-radius: 2px;
+        transition: width 0.3s;
+      }
+      .model-progress-text {
+        font-size: 0.7rem;
+        color: #565f89;
+        min-width: 2.5rem;
+        text-align: right;
+      }
 
       /* === Модальный диалог === */
       .modal-overlay {
@@ -1481,6 +1508,7 @@
           for (const m of models) {
             const card = document.createElement('div');
             card.className = 'model-card';
+            card.dataset.modelId = m.id;
             card.innerHTML = `
               <div class="model-card-header">
                 <span class="model-card-name">${m.display_name}</span>
@@ -1491,19 +1519,45 @@
                 <span class="model-card-status ${m.installed ? 'found' : 'missing'}">
                   ${m.installed ? 'Установлена' : 'Не найдена'}
                 </span>
-                ${!m.installed ? `<button class="model-download-btn" data-url="${m.download_url}">Скачать</button>` : ''}
+                ${!m.installed ? `<button class="model-download-btn" data-id="${m.id}" data-url="${m.download_url}" data-filename="${m.default_filename}" data-type="${m.transcriber_type}">Скачать</button>` : ''}
+              </div>
+              <div class="model-progress" style="display:none;">
+                <div class="model-progress-bar"><div class="model-progress-fill"></div></div>
+                <span class="model-progress-text">0%</span>
               </div>
             `;
             container.appendChild(card);
           }
-          // Обработчики кнопок «Скачать» — открываем URL в браузере
+          // Обработчики кнопок «Скачать»
           container.querySelectorAll('.model-download-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
+            btn.addEventListener('click', async () => {
+              const modelId = btn.dataset.id;
               const url = btn.dataset.url;
-              if (window.__TAURI__?.shell?.open) {
-                window.__TAURI__.shell.open(url);
-              } else {
-                window.open(url, '_blank');
+              const filename = btn.dataset.filename;
+              const ttype = btn.dataset.type;
+
+              // Определяем директорию скачивания из текущих путей в настройках
+              let destDir;
+              if (ttype === 'vosk') destDir = document.getElementById('s-model-path').value || 'models/' + filename;
+              else if (ttype === 'whisper') {
+                const p = document.getElementById('s-whisper-path').value || 'models/' + filename;
+                destDir = p.substring(0, p.lastIndexOf('/') + 1) || 'models/';
+              } else if (ttype === 'gigaam') destDir = document.getElementById('s-gigaam-path').value || 'models/' + filename;
+              else destDir = 'models/' + filename;
+
+              btn.disabled = true;
+              btn.textContent = 'Скачивание...';
+              const card = btn.closest('.model-card');
+              const progress = card.querySelector('.model-progress');
+              progress.style.display = 'flex';
+
+              try {
+                await invoke('download_model', { modelId, url, destDir });
+              } catch (e) {
+                btn.disabled = false;
+                btn.textContent = 'Скачать';
+                progress.style.display = 'none';
+                alert('Ошибка скачивания: ' + e);
               }
             });
           });
@@ -1511,6 +1565,32 @@
           container.innerHTML = '<div style="color:#565f89;font-size:0.8rem;">Не удалось загрузить список моделей</div>';
         }
       }
+
+      // Прогресс скачивания модели
+      listen('download://progress', (ev) => {
+        const { model_id, percent } = ev.payload;
+        const card = document.querySelector(`.model-card[data-model-id="${model_id}"]`);
+        if (card) {
+          const fill = card.querySelector('.model-progress-fill');
+          const text = card.querySelector('.model-progress-text');
+          if (fill) fill.style.width = percent + '%';
+          if (text) text.textContent = percent + '%';
+        }
+      });
+
+      // Завершение скачивания
+      listen('download://complete', (ev) => {
+        const { model_id } = ev.payload;
+        const card = document.querySelector(`.model-card[data-model-id="${model_id}"]`);
+        if (card) {
+          const status = card.querySelector('.model-card-status');
+          if (status) { status.className = 'model-card-status found'; status.textContent = 'Установлена'; }
+          const btn = card.querySelector('.model-download-btn');
+          if (btn) btn.remove();
+          const progress = card.querySelector('.model-progress');
+          if (progress) progress.style.display = 'none';
+        }
+      });
 
       // Собираем текущие значения из формы
       function getFormConfig() {

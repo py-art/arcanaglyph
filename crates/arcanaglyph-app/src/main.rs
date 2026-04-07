@@ -100,6 +100,64 @@ fn install_wayland_scripts() {
     }
 }
 
+/// Tauri-команда: скачать модель по URL с прогрессом
+#[tauri::command]
+async fn download_model(
+    model_id: String,
+    url: String,
+    dest_dir: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    use futures_util::StreamExt;
+    use tauri::Emitter;
+
+    let dest_path = std::path::PathBuf::from(&dest_dir);
+    let _ = std::fs::create_dir_all(&dest_path);
+
+    // Определяем имя файла из URL
+    let filename = url.rsplit('/').next().unwrap_or("model");
+    let file_path = dest_path.join(filename);
+
+    tracing::info!("Скачивание модели '{}': {} → {}", model_id, url, file_path.display());
+
+    let response = reqwest::get(&url).await.map_err(|e| format!("Ошибка запроса: {}", e))?;
+    let total_size = response.content_length().unwrap_or(0);
+
+    let mut stream = response.bytes_stream();
+    let mut file = tokio::fs::File::create(&file_path).await
+        .map_err(|e| format!("Не удалось создать файл: {}", e))?;
+
+    let mut downloaded: u64 = 0;
+    let mut last_progress: u64 = 0;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Ошибка скачивания: {}", e))?;
+        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk).await
+            .map_err(|e| format!("Ошибка записи: {}", e))?;
+
+        downloaded += chunk.len() as u64;
+
+        // Отправляем прогресс каждые 1% или 100KB
+        let progress_pct = if total_size > 0 { downloaded * 100 / total_size } else { 0 };
+        if progress_pct != last_progress {
+            last_progress = progress_pct;
+            let _ = app.emit("download://progress", serde_json::json!({
+                "model_id": model_id,
+                "downloaded": downloaded,
+                "total": total_size,
+                "percent": progress_pct,
+            }));
+        }
+    }
+
+    let _ = app.emit("download://complete", serde_json::json!({
+        "model_id": model_id,
+    }));
+
+    tracing::info!("Модель '{}' скачана: {}", model_id, file_path.display());
+    Ok(())
+}
+
 /// Tauri-команда: определить, работает ли Wayland
 #[tauri::command]
 fn is_wayland() -> bool {
@@ -700,7 +758,7 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_model_loaded, get_loaded_models, get_models, is_wayland, check_hotkey_conflict, register_gnome_hotkeys, hide_window, load_config, save_config, get_history, delete_history_entry, clear_history, retranscribe, get_audio_data])
+        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_model_loaded, get_loaded_models, get_models, download_model, is_wayland, check_hotkey_conflict, register_gnome_hotkeys, hide_window, load_config, save_config, get_history, delete_history_entry, clear_history, retranscribe, get_audio_data])
         .on_window_event(|window, event| {
             // Перехватываем закрытие окна — скрываем в трей вместо закрытия
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
