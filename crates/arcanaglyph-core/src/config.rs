@@ -42,6 +42,9 @@ pub struct CoreConfig {
     pub auto_type: bool,
     /// Горячая клавиша для триггера (формат Tauri: "Super+Alt+Control+Space")
     pub hotkey: String,
+    /// Горячая клавиша для паузы (формат Tauri, пустая строка = не задана)
+    #[serde(default)]
+    pub hotkey_pause: String,
     /// Режим отладки: выводить промежуточные результаты распознавания в терминал
     pub debug: bool,
     /// Путь к директории GigaAM-модели (для transcriber = "gigaam")
@@ -99,6 +102,7 @@ impl Default for CoreConfig {
             max_record_secs: 20,
             auto_type: true,
             hotkey: "Super+Alt+Control+Space".to_string(),
+            hotkey_pause: String::new(),
             debug: true,
             remove_fillers: true,
             start_minimized: false,
@@ -274,6 +278,7 @@ auto_type = false
             max_record_secs: 30,
             auto_type: false,
             hotkey: "Ctrl+Shift+R".to_string(),
+            hotkey_pause: String::new(),
             debug: true,
             remove_fillers: true,
             start_minimized: false,

@@ -61,6 +61,14 @@ fn get_loaded_models(engine: tauri::State<'_, EngineState>) -> Result<serde_json
     }))
 }
 
+/// Tauri-команда: определить, работает ли Wayland
+#[tauri::command]
+fn is_wayland() -> bool {
+    std::env::var("XDG_SESSION_TYPE")
+        .map(|v| v == "wayland")
+        .unwrap_or(false)
+}
+
 /// Tauri-команда: получить реестр моделей с проверкой наличия файлов
 #[tauri::command]
 fn get_models() -> Result<serde_json::Value, String> {
@@ -274,17 +282,31 @@ fn main() {
         CoreConfig::default()
     });
     let hotkey = config.hotkey.clone();
+    let hotkey_pause = config.hotkey_pause.clone();
+
+    // Строки хоткеев для сравнения в handler
+    let trigger_hk = Arc::new(hotkey.clone());
+    let pause_hk = Arc::new(hotkey_pause.clone());
 
     tauri::Builder::default()
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(move |app, shortcut, event| {
-                    if event.state() == ShortcutState::Pressed {
-                        tracing::info!("Нажата горячая клавиша: {:?}", shortcut);
-                        if let Some(engine_state) = app.try_state::<EngineState>()
+                .with_handler({
+                    let trigger_hk = Arc::clone(&trigger_hk);
+                    let pause_hk = Arc::clone(&pause_hk);
+                    move |app, shortcut, event| {
+                        if event.state() == ShortcutState::Pressed
+                            && let Some(engine_state) = app.try_state::<EngineState>()
                             && let Some(engine) = engine_state.get()
                         {
-                            engine.trigger();
+                            let sc_str = format!("{shortcut}");
+                            if !pause_hk.is_empty() && sc_str == *pause_hk.as_ref() {
+                                tracing::info!("Горячая клавиша паузы: {}", sc_str);
+                                engine.pause();
+                            } else if sc_str == *trigger_hk.as_ref() {
+                                tracing::info!("Горячая клавиша триггера: {}", sc_str);
+                                engine.trigger();
+                            }
                         }
                     }
                 })
@@ -417,7 +439,7 @@ fn main() {
                 tracing::error!("Не удалось создать иконку в трее: {}", e);
             }
 
-            // Регистрируем глобальную горячую клавишу
+            // Регистрируем глобальные горячие клавиши
             match hotkey.parse::<tauri_plugin_global_shortcut::Shortcut>() {
                 Ok(shortcut) => {
                     if let Err(e) = app.global_shortcut().register(shortcut) {
@@ -428,6 +450,22 @@ fn main() {
                 }
                 Err(e) => {
                     tracing::error!("Невалидная горячая клавиша '{}': {}", hotkey, e);
+                }
+            }
+
+            // Регистрируем горячую клавишу паузы (если задана)
+            if !hotkey_pause.is_empty() {
+                match hotkey_pause.parse::<tauri_plugin_global_shortcut::Shortcut>() {
+                    Ok(shortcut) => {
+                        if let Err(e) = app.global_shortcut().register(shortcut) {
+                            tracing::error!("Не удалось зарегистрировать клавишу паузы '{}': {}", hotkey_pause, e);
+                        } else {
+                            tracing::info!("Горячая клавиша паузы '{}' зарегистрирована", hotkey_pause);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Невалидная клавиша паузы '{}': {}", hotkey_pause, e);
+                    }
                 }
             }
 
@@ -455,7 +493,7 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_model_loaded, get_loaded_models, get_models, hide_window, load_config, save_config, get_history, delete_history_entry, clear_history, retranscribe, get_audio_data])
+        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_model_loaded, get_loaded_models, get_models, is_wayland, hide_window, load_config, save_config, get_history, delete_history_entry, clear_history, retranscribe, get_audio_data])
         .on_window_event(|window, event| {
             // Перехватываем закрытие окна — скрываем в трей вместо закрытия
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
