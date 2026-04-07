@@ -201,8 +201,8 @@ impl Transcriber for WhisperTranscriber {
 }
 
 /// Обрезает тишину с обеих сторон аудио.
-/// Whisper галлюцинирует на тихих участках, а короткое аудио = быстрее транскрибация.
-fn trim_silence(samples: &[i16], sample_rate: u32) -> &[i16] {
+/// Whisper/GigaAM галлюцинируют на тихих участках, а короткое аудио = быстрее транскрибация.
+pub(crate) fn trim_silence(samples: &[i16], sample_rate: u32) -> &[i16] {
     let block_size = sample_rate as usize / 10; // 100 мс блоки
     let threshold: f64 = 50.0; // RMS порог (тишина < 50)
     let padding = sample_rate as usize / 5; // 200 мс отступ для естественного затухания
@@ -261,8 +261,29 @@ fn trim_silence(samples: &[i16], sample_rate: u32) -> &[i16] {
     &samples[start..end]
 }
 
+/// Слова-паразиты для удаления (сравнение в нижнем регистре, по целым словам)
+const FILLER_WORDS: &[&str] = &["э", "э-э", "ээ", "эм", "мм"];
+
+/// Удаляет слова-паразиты из транскрибации.
+/// Сравнивает по целым словам в нижнем регистре, чтобы не повредить нормальные слова.
+pub(crate) fn remove_filler_words(text: &str) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let filtered: Vec<&str> = words
+        .into_iter()
+        .filter(|word| {
+            // Убираем пунктуацию с краёв для сравнения (чтобы "э," тоже удалялось)
+            let clean = word.trim_matches(|c: char| c.is_ascii_punctuation() || c == '—' || c == '–');
+            let lower = clean.to_lowercase();
+            !FILLER_WORDS.contains(&lower.as_str())
+        })
+        .collect();
+    let result = filtered.join(" ");
+    // Убираем двойные пробелы и лишние запятые/точки в начале
+    result.trim().to_string()
+}
+
 /// Простой ресемплинг через линейную интерполяцию
-fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+pub(crate) fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
     if from_rate == to_rate || input.is_empty() {
         return input.to_vec();
     }
@@ -286,4 +307,36 @@ fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
     }
 
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_remove_fillers_basic() {
+        assert_eq!(remove_filler_words("э привет э-э как дела"), "привет как дела");
+    }
+
+    #[test]
+    fn test_remove_fillers_case_insensitive() {
+        assert_eq!(remove_filler_words("Э привет Ээ мир"), "привет мир");
+    }
+
+    #[test]
+    fn test_remove_fillers_preserves_normal_words() {
+        // "это", "эхо", "нужно" не должны быть затронуты
+        assert_eq!(remove_filler_words("это эхо нужно"), "это эхо нужно");
+    }
+
+    #[test]
+    fn test_remove_fillers_with_punctuation() {
+        // "э," — филлер с запятой, должен быть удалён
+        assert_eq!(remove_filler_words("э, привет мм, мир"), "привет мир");
+    }
+
+    #[test]
+    fn test_remove_fillers_empty_result() {
+        assert_eq!(remove_filler_words("э э-э мм"), "");
+    }
 }

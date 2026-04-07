@@ -1,5 +1,6 @@
 // crates/arcanaglyph-core/src/engine.rs
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
@@ -11,6 +12,7 @@ use crate::audio::{self, AudioCommand};
 use crate::config::{CoreConfig, TranscriberType};
 use crate::error::ArcanaError;
 use crate::history::HistoryDB;
+use crate::gigaam::transcriber::GigaAmTranscriber;
 use crate::transcriber::{Transcriber, VoskTranscriber, WhisperTranscriber};
 
 /// События движка, рассылаемые подписчикам
@@ -39,7 +41,10 @@ pub enum EngineEvent {
 /// Основной движок ArcanaGlyph: управляет записью, распознаванием и рассылкой событий
 pub struct ArcanaEngine {
     config: std::sync::RwLock<CoreConfig>,
-    transcriber: std::sync::RwLock<Arc<dyn Transcriber>>,
+    /// Пул загруженных транскрайберов (ключ — имя модели)
+    transcribers: Arc<std::sync::RwLock<HashMap<String, Arc<dyn Transcriber>>>>,
+    /// Имя активной модели (ключ в transcribers)
+    active_model: Arc<std::sync::RwLock<String>>,
     config_changed: AtomicBool,
     is_busy: Arc<tokio::sync::Mutex<bool>>,
     is_paused: Arc<tokio::sync::Mutex<bool>>,
@@ -57,14 +62,16 @@ impl ArcanaEngine {
     /// Создаёт новый экземпляр движка: загружает модель, инициализирует каналы.
     /// Должен вызываться из контекста Tokio runtime (сохраняет Handle для spawn).
     pub fn new(config: CoreConfig, window_visible: Arc<AtomicBool>) -> Result<Self, ArcanaError> {
-        let transcriber: Arc<dyn Transcriber> = match config.transcriber {
-            TranscriberType::Vosk => {
-                Arc::new(VoskTranscriber::new(&config.model_path, config.sample_rate as f32)?)
-            }
-            TranscriberType::Whisper => {
-                Arc::new(WhisperTranscriber::new(&config.whisper_model_path)?)
-            }
-        };
+        // Подавляем verbose-логи ONNX Runtime (до создания первой сессии)
+        if let Ok(env) = ort::environment::Environment::current() {
+            env.set_log_level(ort::logging::LogLevel::Warning);
+        }
+
+        // Загружаем основную модель
+        let (model_name, transcriber) = Self::create_transcriber(&config, &config.transcriber)?;
+
+        let mut transcribers = HashMap::new();
+        transcribers.insert(model_name.clone(), transcriber);
 
         // Инициализация БД истории
         let db_path = CoreConfig::history_db_path()
@@ -81,7 +88,8 @@ impl ArcanaEngine {
 
         Ok(Self {
             config: std::sync::RwLock::new(config),
-            transcriber: std::sync::RwLock::new(transcriber),
+            transcribers: Arc::new(std::sync::RwLock::new(transcribers)),
+            active_model: Arc::new(std::sync::RwLock::new(model_name)),
             config_changed: AtomicBool::new(false),
             is_busy: Arc::new(tokio::sync::Mutex::new(false)),
             is_paused: Arc::new(tokio::sync::Mutex::new(false)),
@@ -94,12 +102,108 @@ impl ArcanaEngine {
         })
     }
 
-    /// Обновить конфигурацию — транскрайбер пересоздастся при следующей записи
+    /// Создаёт транскрайбер по типу, возвращает (model_name, Arc<dyn Transcriber>)
+    fn create_transcriber(config: &CoreConfig, t_type: &TranscriberType) -> Result<(String, Arc<dyn Transcriber>), ArcanaError> {
+        match t_type {
+            TranscriberType::Vosk => {
+                let t = VoskTranscriber::new(&config.model_path, config.sample_rate as f32)?;
+                let name = config.model_path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "vosk".to_string());
+                Ok((name, Arc::new(t)))
+            }
+            TranscriberType::Whisper => {
+                let t = WhisperTranscriber::new(&config.whisper_model_path)?;
+                let name = config.whisper_model_path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "whisper".to_string());
+                Ok((name, Arc::new(t)))
+            }
+            TranscriberType::GigaAm => {
+                let t = GigaAmTranscriber::new(&config.gigaam_model_path)?;
+                let name = config.gigaam_model_path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "gigaam".to_string());
+                Ok((name, Arc::new(t)))
+            }
+        }
+    }
+
+    /// Предзагрузить модель в пул (вызывать из фонового потока).
+    /// Пропускает загрузку если модель уже в пуле.
+    pub fn preload_model(&self, t_type: &TranscriberType) -> Result<String, ArcanaError> {
+        let config = self.config.read().map_err(|e| ArcanaError::Internal(format!("RwLock: {}", e)))?;
+
+        // Определяем имя модели без загрузки — чтобы проверить пул
+        let expected_name = match t_type {
+            TranscriberType::Vosk => config.model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "vosk".to_string()),
+            TranscriberType::Whisper => config.whisper_model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "whisper".to_string()),
+            TranscriberType::GigaAm => config.gigaam_model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "gigaam".to_string()),
+        };
+
+        // Если модель уже в пуле — пропускаем загрузку
+        let already_loaded = self.transcribers.read()
+            .map(|pool| pool.contains_key(&expected_name))
+            .unwrap_or(false);
+        if already_loaded {
+            return Ok(expected_name);
+        }
+
+        let (name, transcriber) = Self::create_transcriber(&config, t_type)?;
+        let mut pool = self.transcribers.write().map_err(|e| ArcanaError::Internal(format!("RwLock: {}", e)))?;
+        pool.insert(name.clone(), transcriber);
+        info!("Модель '{}' предзагружена в пул", name);
+        Ok(name)
+    }
+
+    /// Список загруженных моделей
+    pub fn loaded_models(&self) -> Vec<String> {
+        self.transcribers.read().map(|pool| pool.keys().cloned().collect()).unwrap_or_default()
+    }
+
+    /// Имя активной модели
+    pub fn active_model_name(&self) -> String {
+        self.active_model.read().map(|m| m.clone()).unwrap_or_default()
+    }
+
+    /// Обновить конфигурацию — если модель уже в пуле, мгновенное переключение
     pub fn update_config(&self, new_config: CoreConfig) {
+        // Определяем имя модели для нового конфига
+        let new_model_name = match new_config.transcriber {
+            TranscriberType::Vosk => new_config.model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "vosk".to_string()),
+            TranscriberType::Whisper => new_config.whisper_model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "whisper".to_string()),
+            TranscriberType::GigaAm => new_config.gigaam_model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "gigaam".to_string()),
+        };
+
+        // Если модель уже в пуле — мгновенное переключение
+        let already_loaded = self.transcribers.read()
+            .map(|pool| pool.contains_key(&new_model_name))
+            .unwrap_or(false);
+
+        if already_loaded {
+            if let Ok(mut active) = self.active_model.write() {
+                *active = new_model_name.clone();
+            }
+            info!("Модель '{}' уже загружена — мгновенное переключение", new_model_name);
+        } else {
+            self.config_changed.store(true, Ordering::Relaxed);
+            info!("Модель '{}' не в пуле — загрузится при следующей записи", new_model_name);
+        }
+
         if let Ok(mut cfg) = self.config.write() {
             *cfg = new_config;
-            self.config_changed.store(true, Ordering::Relaxed);
-            info!("Конфигурация обновлена, применится при следующей записи");
         }
     }
 
@@ -129,12 +233,18 @@ impl ArcanaEngine {
         let is_paused = Arc::clone(&self.is_paused);
         let current_cmd_tx = Arc::clone(&self.current_cmd_tx);
         let event_tx = self.event_tx.clone();
-        let mut transcriber = self.transcriber.read().unwrap().clone();
+        let active_name = self.active_model.read().unwrap().clone();
+        let mut transcriber = self.transcribers.read().unwrap()
+            .get(&active_name).cloned()
+            .unwrap_or_else(|| self.transcribers.read().unwrap().values().next().unwrap().clone());
         let need_reload = self.config_changed.swap(false, Ordering::Relaxed);
         let config = self.config.read().unwrap().clone();
+        let transcribers_rw = Arc::clone(&self.transcribers);
+        let active_model_rw = Arc::clone(&self.active_model);
         let silence_timeout_secs = config.max_record_secs;
         let sample_rate = config.sample_rate;
         let auto_type = config.auto_type;
+        let remove_fillers = config.remove_fillers;
         let debug = config.debug;
         let audio_level = Arc::clone(&self.audio_level);
         let handle = self.rt_handle.clone();
@@ -157,27 +267,37 @@ impl ArcanaEngine {
 
                 // Если конфиг изменился — пересоздаём транскрайбер (в фоне)
                 if need_reload {
+                    // Проверяем, может модель уже в пуле (предзагружена)
+                    let target_name = config.transcriber_model_name();
+                    let already_in_pool = transcribers_rw.read()
+                        .map(|pool| pool.get(&target_name).cloned())
+                        .unwrap_or(None);
+
+                    if let Some(t) = already_in_pool {
+                        transcriber = t;
+                        if let Ok(mut active) = active_model_rw.write() {
+                            *active = target_name.clone();
+                        }
+                        info!("Модель '{}' взята из пула (была предзагружена)", target_name);
+                    } else {
                     let _ = event_tx.send(EngineEvent::Error("Загрузка модели...".to_string()));
                     let cfg = config.clone();
+                    let transcribers_pool = Arc::clone(&transcribers_rw);
                     let reload_result = tokio::task::spawn_blocking(move || {
-                        let new_t: Result<Arc<dyn Transcriber>, _> = match cfg.transcriber {
-                            TranscriberType::Vosk => {
-                                VoskTranscriber::new(&cfg.model_path, cfg.sample_rate as f32)
-                                    .map(|t| Arc::new(t) as _)
-                            }
-                            TranscriberType::Whisper => {
-                                WhisperTranscriber::new(&cfg.whisper_model_path)
-                                    .map(|t| Arc::new(t) as _)
-                            }
-                        };
-                        new_t
+                        ArcanaEngine::create_transcriber(&cfg, &cfg.transcriber)
                     })
                     .await;
 
                     match reload_result {
-                        Ok(Ok(t)) => {
-                            transcriber = t;
-                            info!("Транскрайбер пересоздан по новому конфигу");
+                        Ok(Ok((name, t))) => {
+                            transcriber = t.clone();
+                            if let Ok(mut pool) = transcribers_pool.write() {
+                                pool.insert(name.clone(), t);
+                            }
+                            if let Ok(mut active) = active_model_rw.write() {
+                                *active = name.clone();
+                            }
+                            info!("Модель '{}' загружена и добавлена в пул", name);
                         }
                         Ok(Err(e)) => {
                             tracing::error!("Не удалось пересоздать транскрайбер: {}", e);
@@ -189,6 +309,7 @@ impl ArcanaEngine {
                             return;
                         }
                     }
+                    } // else — модель не в пуле
                 }
 
                 // Проверяем микрофон перед записью (fail fast)
@@ -248,7 +369,14 @@ impl ArcanaEngine {
 
                     match result {
                         Ok(Ok(rec)) => {
-                            if rec.text.is_empty() {
+                            // Пост-процессинг: удаление слов-паразитов
+                            let text = if remove_fillers {
+                                crate::transcriber::remove_filler_words(&rec.text)
+                            } else {
+                                rec.text.clone()
+                            };
+
+                            if text.is_empty() {
                                 tracing::warn!("Распознавание вернуло пустой результат. Проверьте микрофон.");
                                 let _ = event_tx_clone.send(EngineEvent::Error(
                                     "Микрофон не захватил речь. Проверьте, что микрофон подключён и выбран как устройство по умолчанию.".to_string(),
@@ -259,7 +387,7 @@ impl ArcanaEngine {
                                 let transcriber_type_str = config.transcriber_type_str();
                                 if let Err(e) = (|| -> Result<(), crate::error::ArcanaError> {
                                     let rec_id = history_db.add_recording(&rec.audio_path, rec.duration_secs)?;
-                                    history_db.add_transcription(rec_id, &rec.text, &model_name, &transcriber_type_str)?;
+                                    history_db.add_transcription(rec_id, &text, &model_name, &transcriber_type_str)?;
                                     Ok(())
                                 })() {
                                     tracing::warn!("Не удалось сохранить в историю: {}", e);
@@ -269,11 +397,11 @@ impl ArcanaEngine {
                                 // Вставляем текст только когда окно скрыто (в трее)
                                 if auto_type && !is_visible {
                                     eprintln!("[Вставка] в активное окно...");
-                                    if let Err(e) = crate::input::type_text(&rec.text).await {
+                                    if let Err(e) = crate::input::type_text(&text).await {
                                         tracing::error!("Не удалось вставить текст: {}", e);
                                     }
                                 }
-                                let _ = event_tx_clone.send(EngineEvent::TranscriptionResult(rec.text));
+                                let _ = event_tx_clone.send(EngineEvent::TranscriptionResult(text));
                                 // Если окно видимо — запрашиваем фокус для вывода на передний план
                                 if is_visible {
                                     let _ = event_tx_clone.send(EngineEvent::RequestFocus);

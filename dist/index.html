@@ -139,6 +139,13 @@
         margin-bottom: 1.2rem;
       }
       #status.recording { color: #f7768e; }
+      .model-badge {
+        font-size: 0.7rem !important;
+        color: #565f89 !important;
+        font-weight: 400 !important;
+        margin-top: -0.6rem;
+        margin-bottom: 0.8rem;
+      }
 
       /* === Уровень === */
       .level-bar {
@@ -337,8 +344,8 @@
       }
       .setting-group label {
         display: block;
-        font-size: 0.78rem;
-        color: #565f89;
+        font-size: 0.85rem;
+        color: #c0caf5;
         margin-bottom: 0.3rem;
       }
       .setting-group input[type="text"],
@@ -460,6 +467,7 @@
         transition: transform 0.2s;
       }
       .toggle.on::after { transform: translateX(16px); }
+      .toggle.locked { cursor: default; pointer-events: none; }
 
       /* Подсветка изменённых полей */
       .setting-group.changed input,
@@ -524,6 +532,178 @@
         display: none;
       }
       .save-notice.visible { display: block; }
+
+      /* === Табы настроек === */
+      .settings-tabs {
+        display: flex;
+        gap: 0;
+        margin-bottom: 1rem;
+        border-bottom: 1px solid #292e42;
+      }
+      .settings-tab {
+        padding: 0.5rem 1rem;
+        font-size: 0.85rem;
+        color: #565f89;
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        transition: color 0.15s, border-color 0.15s;
+        user-select: none;
+      }
+      .settings-tab:hover { color: #c0caf5; }
+      .settings-tab.active {
+        color: #7aa2f7;
+        border-bottom-color: #7aa2f7;
+      }
+      .settings-tab-content { display: none; }
+      .settings-tab-content.active { display: block; }
+
+      /* === Композер горячих клавиш === */
+      .hotkey-composer {
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 6px;
+        padding: 0.6rem;
+        transition: border-color 0.15s;
+      }
+      .setting-group.changed .hotkey-composer { border-color: #ff9e64; }
+      .hotkey-mods {
+        display: flex;
+        gap: 0.3rem;
+        margin-bottom: 0.4rem;
+      }
+      .hotkey-mod {
+        padding: 0.25rem 0.5rem;
+        background: #292e42;
+        border: 1px solid #292e42;
+        border-radius: 4px;
+        color: #565f89;
+        font-size: 0.75rem;
+        cursor: pointer;
+        transition: all 0.15s;
+        user-select: none;
+      }
+      .hotkey-mod:hover { border-color: #7aa2f7; color: #c0caf5; }
+      .hotkey-mod.active {
+        background: rgba(122, 162, 247, 0.15);
+        border-color: #7aa2f7;
+        color: #7aa2f7;
+      }
+      .hotkey-key-row {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+      }
+      .hotkey-plus {
+        color: #565f89;
+        font-size: 0.85rem;
+      }
+      .hotkey-key-input {
+        flex: 1;
+        height: 32px;
+        padding: 0 0.5rem;
+        background: #292e42;
+        border: 1px solid #292e42;
+        border-radius: 4px;
+        color: #c0caf5;
+        font-size: 0.85rem;
+        outline: none;
+        transition: border-color 0.15s;
+      }
+      .hotkey-key-input:focus { border-color: #7aa2f7; }
+      .hotkey-key-input.recording {
+        border-color: #ff9e64;
+        animation: hotkey-pulse 1s ease-in-out infinite;
+      }
+      @keyframes hotkey-pulse {
+        0%, 100% { border-color: #ff9e64; }
+        50% { border-color: #292e42; }
+      }
+      .hotkey-key-input::placeholder { color: #565f89; }
+      .hotkey-record-btn, .hotkey-clear-btn {
+        background: none;
+        border: 1px solid #292e42;
+        border-radius: 4px;
+        color: #565f89;
+        font-size: 0.85rem;
+        padding: 0.15rem 0.4rem;
+        cursor: pointer;
+        transition: color 0.15s, border-color 0.15s;
+      }
+      .hotkey-record-btn:hover { color: #7aa2f7; border-color: #7aa2f7; }
+      .hotkey-clear-btn:hover { color: #f7768e; border-color: #f7768e; }
+      .hotkey-preview {
+        margin-top: 0.4rem;
+        font-size: 0.75rem;
+        color: #565f89;
+        min-height: 1em;
+      }
+      .hotkey-preview:not([data-value=""]) { color: #9ece6a; }
+      .wayland-warning {
+        margin-top: 1rem;
+        padding: 0.6rem 0.8rem;
+        background: rgba(255, 158, 100, 0.08);
+        border: 1px solid rgba(255, 158, 100, 0.25);
+        border-radius: 6px;
+        font-size: 0.8rem;
+        color: #ff9e64;
+        line-height: 1.4;
+      }
+
+      /* === Карточки моделей === */
+      .models-section-title {
+        font-size: 0.85rem;
+        color: #bb9af7;
+        margin: 1rem 0 0.6rem;
+      }
+      .model-card {
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 8px;
+        padding: 0.8rem;
+        margin-bottom: 0.6rem;
+      }
+      .model-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .model-card-name {
+        font-size: 0.9rem;
+        color: #c0caf5;
+        font-weight: 500;
+      }
+      .model-card-size {
+        font-size: 0.75rem;
+        color: #565f89;
+      }
+      .model-card-desc {
+        font-size: 0.8rem;
+        color: #565f89;
+        margin: 0.4rem 0;
+        line-height: 1.3;
+      }
+      .model-card-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 0.4rem;
+      }
+      .model-card-status {
+        font-size: 0.75rem;
+      }
+      .model-card-status.found { color: #9ece6a; }
+      .model-card-status.missing { color: #f7768e; }
+      .model-download-btn {
+        padding: 0.3rem 0.7rem;
+        background: #292e42;
+        border: 1px solid #7aa2f7;
+        border-radius: 6px;
+        color: #7aa2f7;
+        font-size: 0.75rem;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .model-download-btn:hover { background: rgba(122, 162, 247, 0.15); }
 
       /* === Модальный диалог === */
       .modal-overlay {
@@ -654,6 +834,18 @@
       .hist-retranscribe-btn:hover { background: rgba(122, 162, 247, 0.1); }
       .hist-retranscribe-btn:disabled { color: #565f89; border-color: #292e42; cursor: default; }
 
+      .hist-pagination {
+        display: none;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.8rem 0;
+      }
+      .hist-pagination.visible { display: flex; }
+      .hist-page-info {
+        color: #565f89;
+        font-size: 0.8rem;
+      }
+
       .hist-page-btn {
         background: #1f2335;
         border: 1px solid #292e42;
@@ -701,6 +893,7 @@
     </div>
 
     <p id="status">Загрузка модели...</p>
+    <p id="model-badge" class="model-badge"></p>
 
     <!-- Результат (сразу под статусом) -->
     <div class="result-wrap" id="result-wrap">
@@ -771,9 +964,9 @@
       <div id="history-list"></div>
       <div id="history-empty" style="display:none;text-align:center;color:#565f89;padding:2rem 0;">Записей нет</div>
 
-      <div id="history-pagination" style="display:none;padding:0.8rem 0;text-align:center;">
+      <div id="history-pagination" class="hist-pagination">
         <button class="hist-page-btn" id="h-prev" disabled>← Пред</button>
-        <span id="h-page-info" style="color:#565f89;font-size:0.8rem;margin:0 0.8rem;"></span>
+        <span id="h-page-info" class="hist-page-info"></span>
         <button class="hist-page-btn" id="h-next" disabled>След →</button>
       </div>
 
@@ -788,57 +981,143 @@
     <div class="settings-page" id="settings-page">
       <h2>Настройки</h2>
 
-      <div class="setting-group">
-        <label>Движок транскрибации</label>
-        <div class="custom-select" id="s-transcriber" data-value="vosk">
-          <div class="custom-select-trigger"></div>
-          <div class="custom-select-options">
-            <div class="custom-select-option" data-value="vosk">Vosk — быстрый, менее точный</div>
-            <div class="custom-select-option" data-value="whisper">Whisper — точный, медленнее</div>
+      <div class="settings-tabs">
+        <div class="settings-tab active" data-tab="general">Основное</div>
+        <div class="settings-tab" data-tab="models">Модели</div>
+        <div class="settings-tab" data-tab="hotkeys">Клавиши</div>
+      </div>
+
+      <!-- Таб: Основное -->
+      <div class="settings-tab-content active" id="tab-general">
+        <div class="setting-group">
+          <label>Движок транскрибации</label>
+          <div class="custom-select" id="s-transcriber" data-value="vosk">
+            <div class="custom-select-trigger"></div>
+            <div class="custom-select-options">
+              <div class="custom-select-option" data-value="vosk">Vosk — быстрый, менее точный</div>
+              <div class="custom-select-option" data-value="whisper">Whisper — точный, медленнее</div>
+              <div class="custom-select-option" data-value="gigaam">GigaAM v3 — лучший для русского</div>
+            </div>
           </div>
+        </div>
+
+        <div class="setting-row">
+          <label>Предзагрузка Vosk</label>
+          <div class="toggle" id="s-preload-vosk"></div>
+        </div>
+        <div class="setting-row">
+          <label>Предзагрузка Whisper</label>
+          <div class="toggle" id="s-preload-whisper"></div>
+        </div>
+        <div class="setting-row" style="margin-bottom:0.5rem;">
+          <label>Предзагрузка GigaAM</label>
+          <div class="toggle" id="s-preload-gigaam"></div>
+        </div>
+
+        <div class="setting-group">
+          <label>Частота дискретизации (Гц)</label>
+          <div class="custom-select" id="s-sample-rate" data-value="48000">
+            <div class="custom-select-trigger"></div>
+            <div class="custom-select-options">
+              <div class="custom-select-option" data-value="16000">16000</div>
+              <div class="custom-select-option" data-value="24000">24000</div>
+              <div class="custom-select-option" data-value="48000">48000</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <label>Таймаут тишины (секунды)</label>
+          <input type="number" id="s-max-record" min="5" max="120" />
+        </div>
+
+        <div class="setting-row">
+          <label>Авто-вставка текста</label>
+          <div class="toggle" id="s-auto-type"></div>
+        </div>
+
+        <div class="setting-row">
+          <label>Режим отладки</label>
+          <div class="toggle" id="s-debug"></div>
+        </div>
+
+        <div class="setting-row">
+          <label>Удалять слова-паразиты</label>
+          <div class="toggle" id="s-remove-fillers"></div>
+        </div>
+
+        <div class="setting-row">
+          <label>Запуск в трей</label>
+          <div class="toggle" id="s-start-minimized"></div>
         </div>
       </div>
 
-      <div class="setting-group">
-        <label>Путь к Vosk-модели</label>
-        <input type="text" id="s-model-path" placeholder="models/vosk-model-ru-0.42" />
-      </div>
-
-      <div class="setting-group">
-        <label>Путь к Whisper-модели (ggml)</label>
-        <input type="text" id="s-whisper-path" placeholder="models/ggml-large-v3-turbo.bin" />
-      </div>
-
-      <div class="setting-group">
-        <label>Частота дискретизации (Гц)</label>
-        <div class="custom-select" id="s-sample-rate" data-value="48000">
-          <div class="custom-select-trigger"></div>
-          <div class="custom-select-options">
-            <div class="custom-select-option" data-value="16000">16000</div>
-            <div class="custom-select-option" data-value="24000">24000</div>
-            <div class="custom-select-option" data-value="48000">48000</div>
+      <!-- Таб: Модели -->
+      <!-- Таб: Горячие клавиши -->
+      <div class="settings-tab-content" id="tab-hotkeys">
+        <div class="setting-group">
+          <label>Запись (старт/стоп)</label>
+          <div class="hotkey-composer" id="hk-trigger">
+            <div class="hotkey-mods">
+              <button class="hotkey-mod" data-mod="Super">Super</button>
+              <button class="hotkey-mod" data-mod="Control">Ctrl</button>
+              <button class="hotkey-mod" data-mod="Alt">Alt</button>
+              <button class="hotkey-mod" data-mod="Shift">Shift</button>
+            </div>
+            <div class="hotkey-key-row">
+              <span class="hotkey-plus">+</span>
+              <input type="text" class="hotkey-key-input" placeholder="клавиша" readonly />
+              <button class="hotkey-record-btn" title="Записать клавишу">✎</button>
+              <button class="hotkey-clear-btn" title="Очистить">✕</button>
+            </div>
+            <div class="hotkey-preview" data-value=""></div>
           </div>
+        </div>
+
+        <div class="setting-group">
+          <label>Пауза</label>
+          <div class="hotkey-composer" id="hk-pause">
+            <div class="hotkey-mods">
+              <button class="hotkey-mod" data-mod="Super">Super</button>
+              <button class="hotkey-mod" data-mod="Control">Ctrl</button>
+              <button class="hotkey-mod" data-mod="Alt">Alt</button>
+              <button class="hotkey-mod" data-mod="Shift">Shift</button>
+            </div>
+            <div class="hotkey-key-row">
+              <span class="hotkey-plus">+</span>
+              <input type="text" class="hotkey-key-input" placeholder="клавиша" readonly />
+              <button class="hotkey-record-btn" title="Записать клавишу">✎</button>
+              <button class="hotkey-clear-btn" title="Очистить">✕</button>
+            </div>
+            <div class="hotkey-preview" data-value=""></div>
+          </div>
+        </div>
+
+        <div class="wayland-warning" id="wayland-warning" style="display:none;">
+          Wayland: горячие клавиши регистрируются через GNOME Settings (gsettings).
+          При сохранении комбинации автоматически применяются в системе.
         </div>
       </div>
 
-      <div class="setting-group">
-        <label>Таймаут тишины (секунды)</label>
-        <input type="number" id="s-max-record" min="5" max="120" />
-      </div>
+      <!-- Таб: Модели -->
+      <div class="settings-tab-content" id="tab-models">
+        <div class="setting-group">
+          <label>Путь к Vosk-модели</label>
+          <input type="text" id="s-model-path" placeholder="models/vosk-model-ru-0.42" />
+        </div>
 
-      <div class="setting-group">
-        <label>Горячая клавиша</label>
-        <input type="text" id="s-hotkey" placeholder="Super+Alt+Control+Space" />
-      </div>
+        <div class="setting-group">
+          <label>Путь к Whisper-модели (ggml)</label>
+          <input type="text" id="s-whisper-path" placeholder="models/ggml-large-v3-turbo.bin" />
+        </div>
 
-      <div class="setting-row">
-        <label>Авто-вставка текста</label>
-        <div class="toggle" id="s-auto-type"></div>
-      </div>
+        <div class="setting-group">
+          <label>Путь к GigaAM-модели (директория)</label>
+          <input type="text" id="s-gigaam-path" placeholder="models/gigaam-v3-e2e-ctc" />
+        </div>
 
-      <div class="setting-row">
-        <label>Режим отладки</label>
-        <div class="toggle" id="s-debug"></div>
+        <div class="models-section-title">Доступные модели</div>
+        <div id="model-cards-container"></div>
       </div>
 
       <div class="save-area">
@@ -947,6 +1226,25 @@
         }
       })();
 
+      const modelBadge = document.getElementById('model-badge');
+
+      // Короткие имена моделей для главного экрана
+      const MODEL_SHORT_NAMES = {
+        'vosk-model-ru-0.42': 'Vosk',
+        'ggml-large-v3-turbo.bin': 'Whisper Turbo',
+        'ggml-large-v3.bin': 'Whisper V3',
+        'ggml-medium.bin': 'Whisper Medium',
+        'ggml-small.bin': 'Whisper Small',
+      };
+
+      async function updateModelBadge() {
+        try {
+          const result = await invoke('get_loaded_models');
+          const active = result.active || '';
+          modelBadge.textContent = MODEL_SHORT_NAMES[active] || active;
+        } catch(_) {}
+      }
+
       function onModelReady() {
         if (modelReady) return;
         modelReady = true;
@@ -954,6 +1252,7 @@
         statusEl.className = '';
         micBtn.style.opacity = '';
         micBtn.style.cursor = 'pointer';
+        updateModelBadge();
       }
 
       listen('engine://recording-started', () => {
@@ -1032,6 +1331,7 @@
 
       listen('engine://finished-processing', () => {
         recording = false;
+        updateModelBadge();
 
         micBtn.classList.remove('recording');
         micGlow.classList.remove('recording');
@@ -1045,6 +1345,12 @@
         clearInterval(timerId);
         clearInterval(levelId);
         levelFill.style.width = '0%';
+      });
+
+      // Открыть настройки по команде из трея
+      listen('tray://open-settings', async () => {
+        showPage('settings');
+        await loadSettings();
       });
 
       /* ──────── Меню и настройки ──────── */
@@ -1087,6 +1393,27 @@
         }
       }
 
+      // Нормализовать preload_models — модель по умолчанию всегда включена
+      function normalizePreload(preload, transcriber) {
+        const set = new Set(preload);
+        set.add(transcriber);
+        return [...set].sort();
+      }
+
+      // Блокировка toggle предзагрузки для модели по умолчанию
+      function updatePreloadLocks(transcriber) {
+        const voskToggle = document.getElementById('s-preload-vosk');
+        const whisperToggle = document.getElementById('s-preload-whisper');
+        const gigaamToggle = document.getElementById('s-preload-gigaam');
+        voskToggle.classList.toggle('locked', transcriber === 'vosk');
+        whisperToggle.classList.toggle('locked', transcriber === 'whisper');
+        gigaamToggle.classList.toggle('locked', transcriber === 'gigaam');
+        // Модель по умолчанию всегда ON
+        if (transcriber === 'vosk') voskToggle.classList.add('on');
+        if (transcriber === 'whisper') whisperToggle.classList.add('on');
+        if (transcriber === 'gigaam') gigaamToggle.classList.add('on');
+      }
+
       // Загрузка настроек из бэкенда
       async function loadSettings() {
         const cfg = await invoke('load_config');
@@ -1095,24 +1422,80 @@
           transcriber: cfg.transcriber,
           model_path: cfg.model_path,
           whisper_model_path: cfg.whisper_model_path,
+          gigaam_model_path: cfg.gigaam_model_path,
           sample_rate: cfg.sample_rate,
           max_record_secs: cfg.max_record_secs,
           hotkey: cfg.hotkey,
+          hotkey_pause: cfg.hotkey_pause || '',
           auto_type: cfg.auto_type,
           debug: cfg.debug,
+          remove_fillers: cfg.remove_fillers !== false,
+          start_minimized: cfg.start_minimized || false,
+          preload_models: normalizePreload(cfg.preload_models || [], cfg.transcriber),
         };
 
         setCustomSelect('s-transcriber', cfg.transcriber);
         document.getElementById('s-model-path').value = cfg.model_path;
         document.getElementById('s-whisper-path').value = cfg.whisper_model_path;
+        document.getElementById('s-gigaam-path').value = cfg.gigaam_model_path;
         setCustomSelect('s-sample-rate', String(cfg.sample_rate));
         document.getElementById('s-max-record').value = cfg.max_record_secs;
-        document.getElementById('s-hotkey').value = cfg.hotkey;
+        setHotkeyValue('hk-trigger', cfg.hotkey);
+        setHotkeyValue('hk-pause', cfg.hotkey_pause || '');
         document.getElementById('s-auto-type').classList.toggle('on', cfg.auto_type);
         document.getElementById('s-debug').classList.toggle('on', cfg.debug);
+        document.getElementById('s-remove-fillers').classList.toggle('on', cfg.remove_fillers !== false);
+        document.getElementById('s-start-minimized').classList.toggle('on', cfg.start_minimized || false);
+        const preload = cfg.preload_models || [];
+        document.getElementById('s-preload-vosk').classList.toggle('on', preload.includes('vosk') || cfg.transcriber === 'vosk');
+        document.getElementById('s-preload-whisper').classList.toggle('on', preload.includes('whisper') || cfg.transcriber === 'whisper');
+        document.getElementById('s-preload-gigaam').classList.toggle('on', preload.includes('gigaam') || cfg.transcriber === 'gigaam');
+        updatePreloadLocks(cfg.transcriber);
 
         saveBtn.disabled = true;
         saveNotice.classList.remove('visible');
+
+        renderModelCards();
+      }
+
+      // Рендер карточек моделей на табе «Модели»
+      async function renderModelCards() {
+        const container = document.getElementById('model-cards-container');
+        try {
+          const models = await invoke('get_models');
+          container.innerHTML = '';
+          for (const m of models) {
+            const card = document.createElement('div');
+            card.className = 'model-card';
+            card.innerHTML = `
+              <div class="model-card-header">
+                <span class="model-card-name">${m.display_name}</span>
+                <span class="model-card-size">${m.size}</span>
+              </div>
+              <div class="model-card-desc">${m.description}</div>
+              <div class="model-card-footer">
+                <span class="model-card-status ${m.installed ? 'found' : 'missing'}">
+                  ${m.installed ? 'Установлена' : 'Не найдена'}
+                </span>
+                ${!m.installed ? `<button class="model-download-btn" data-url="${m.download_url}">Скачать</button>` : ''}
+              </div>
+            `;
+            container.appendChild(card);
+          }
+          // Обработчики кнопок «Скачать» — открываем URL в браузере
+          container.querySelectorAll('.model-download-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const url = btn.dataset.url;
+              if (window.__TAURI__?.shell?.open) {
+                window.__TAURI__.shell.open(url);
+              } else {
+                window.open(url, '_blank');
+              }
+            });
+          });
+        } catch (e) {
+          container.innerHTML = '<div style="color:#565f89;font-size:0.8rem;">Не удалось загрузить список моделей</div>';
+        }
       }
 
       // Собираем текущие значения из формы
@@ -1121,11 +1504,20 @@
           transcriber: document.getElementById('s-transcriber').dataset.value,
           model_path: document.getElementById('s-model-path').value,
           whisper_model_path: document.getElementById('s-whisper-path').value,
+          gigaam_model_path: document.getElementById('s-gigaam-path').value,
           sample_rate: parseInt(document.getElementById('s-sample-rate').dataset.value),
           max_record_secs: parseInt(document.getElementById('s-max-record').value),
-          hotkey: document.getElementById('s-hotkey').value,
+          hotkey: getHotkeyValue('hk-trigger'),
+          hotkey_pause: getHotkeyValue('hk-pause'),
           auto_type: document.getElementById('s-auto-type').classList.contains('on'),
           debug: document.getElementById('s-debug').classList.contains('on'),
+          remove_fillers: document.getElementById('s-remove-fillers').classList.contains('on'),
+          start_minimized: document.getElementById('s-start-minimized').classList.contains('on'),
+          preload_models: normalizePreload([
+            ...(document.getElementById('s-preload-vosk').classList.contains('on') ? ['vosk'] : []),
+            ...(document.getElementById('s-preload-whisper').classList.contains('on') ? ['whisper'] : []),
+            ...(document.getElementById('s-preload-gigaam').classList.contains('on') ? ['gigaam'] : []),
+          ], document.getElementById('s-transcriber').dataset.value),
         };
       }
 
@@ -1134,11 +1526,16 @@
         transcriber:       { el: 's-transcriber',  type: 'group' },
         model_path:        { el: 's-model-path',   type: 'group' },
         whisper_model_path:{ el: 's-whisper-path',  type: 'group' },
+        gigaam_model_path: { el: 's-gigaam-path',   type: 'group' },
         sample_rate:       { el: 's-sample-rate',  type: 'group' },
         max_record_secs:   { el: 's-max-record',   type: 'group' },
-        hotkey:            { el: 's-hotkey',        type: 'group' },
+        hotkey:            { el: 'hk-trigger',      type: 'group' },
+        hotkey_pause:      { el: 'hk-pause',        type: 'group' },
         auto_type:         { el: 's-auto-type',     type: 'row' },
         debug:             { el: 's-debug',          type: 'row' },
+        remove_fillers:    { el: 's-remove-fillers',  type: 'row' },
+        start_minimized:   { el: 's-start-minimized', type: 'row' },
+        preload_models:    { el: 's-preload-vosk',   type: 'row' },
       };
 
       // Проверка изменений + подсветка изменённых полей
@@ -1232,13 +1629,170 @@
       initCustomSelects();
 
       // Навешиваем обработчики изменений
-      ['s-model-path', 's-whisper-path', 's-max-record', 's-hotkey']
+      ['s-model-path', 's-whisper-path', 's-gigaam-path', 's-max-record']
         .forEach(id => document.getElementById(id).addEventListener('input', checkChanges));
       ['s-transcriber', 's-sample-rate']
         .forEach(id => document.getElementById(id).addEventListener('change', checkChanges));
+      // При смене модели по умолчанию — обновить блокировки предзагрузки
+      document.getElementById('s-transcriber').addEventListener('change', () => {
+        updatePreloadLocks(document.getElementById('s-transcriber').dataset.value);
+      });
+
+      // === Композер горячих клавиш ===
+      // Модификаторы выбираются кнопками, основная клавиша — через рекордер.
+      // Super на Wayland не доходит до WebView, поэтому кнопка вместо keydown.
+
+      // Маппинг JS event.code → Tauri формат
+      function mapKeyCode(event) {
+        const code = event.code;
+        if (code.startsWith('Key')) return code.slice(3);
+        if (code.startsWith('Digit')) return code.slice(5);
+        if (/^F\d+$/.test(code)) return code;
+        const map = {
+          Space: 'Space', Enter: 'Return', Tab: 'Tab',
+          Backspace: 'Backspace', Delete: 'Delete', Insert: 'Insert',
+          ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
+          Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',
+          Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']',
+          Semicolon: ';', Quote: "'", Backquote: '`', Backslash: '\\',
+          Comma: ',', Period: '.', Slash: '/',
+        };
+        return map[code] || event.key;
+      }
+
+      // Собрать комбинацию из состояния композера
+      function composeHotkey(composer) {
+        const mods = [];
+        composer.querySelectorAll('.hotkey-mod.active').forEach(btn => {
+          mods.push(btn.dataset.mod);
+        });
+        const keyInput = composer.querySelector('.hotkey-key-input');
+        const key = keyInput.dataset.key || '';
+        if (!key) return '';
+        return [...mods, key].join('+');
+      }
+
+      // Обновить превью
+      function updateHotkeyPreview(composer) {
+        const combo = composeHotkey(composer);
+        const preview = composer.querySelector('.hotkey-preview');
+        preview.dataset.value = combo;
+        preview.textContent = combo || '';
+      }
+
+      // Получить/установить значение
+      function getHotkeyValue(id) {
+        return composeHotkey(document.getElementById(id));
+      }
+
+      function setHotkeyValue(id, value) {
+        const composer = document.getElementById(id);
+        // Сбрасываем всё
+        composer.querySelectorAll('.hotkey-mod').forEach(btn => btn.classList.remove('active'));
+        const keyInput = composer.querySelector('.hotkey-key-input');
+        keyInput.value = '';
+        keyInput.dataset.key = '';
+
+        if (!value) {
+          updateHotkeyPreview(composer);
+          return;
+        }
+
+        // Парсим "Super+Shift+G" → mods + key
+        const parts = value.split('+');
+        const modNames = ['Super', 'Control', 'Alt', 'Shift'];
+        for (const part of parts) {
+          if (modNames.includes(part)) {
+            const btn = composer.querySelector(`.hotkey-mod[data-mod="${part}"]`);
+            if (btn) btn.classList.add('active');
+          } else {
+            keyInput.value = part;
+            keyInput.dataset.key = part;
+          }
+        }
+        updateHotkeyPreview(composer);
+      }
+
+      // Инициализация композера
+      function initHotkeyComposer(composerId) {
+        const composer = document.getElementById(composerId);
+
+        // Toggle модификаторов
+        composer.querySelectorAll('.hotkey-mod').forEach(btn => {
+          btn.addEventListener('click', () => {
+            btn.classList.toggle('active');
+            updateHotkeyPreview(composer);
+            checkChanges();
+          });
+        });
+
+        // Рекордер основной клавиши
+        const keyInput = composer.querySelector('.hotkey-key-input');
+        const recordBtn = composer.querySelector('.hotkey-record-btn');
+        const clearBtn = composer.querySelector('.hotkey-clear-btn');
+
+        recordBtn.addEventListener('click', () => {
+          keyInput.classList.add('recording');
+          keyInput.value = 'Нажмите клавишу...';
+          keyInput.focus();
+
+          const handler = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Пропускаем модификаторы — они управляются кнопками
+            if (['Control', 'Alt', 'Shift', 'Meta', 'Super', 'OS'].includes(e.key)) return;
+
+            // Escape — отмена
+            if (e.key === 'Escape') {
+              keyInput.classList.remove('recording');
+              keyInput.value = keyInput.dataset.key || '';
+              document.removeEventListener('keydown', handler, true);
+              return;
+            }
+
+            const mapped = mapKeyCode(e);
+            keyInput.dataset.key = mapped;
+            keyInput.value = mapped;
+            keyInput.classList.remove('recording');
+            document.removeEventListener('keydown', handler, true);
+            updateHotkeyPreview(composer);
+            checkChanges();
+          };
+
+          document.addEventListener('keydown', handler, true);
+        });
+
+        // Очистка
+        clearBtn.addEventListener('click', () => {
+          setHotkeyValue(composerId, '');
+          checkChanges();
+        });
+      }
+
+      initHotkeyComposer('hk-trigger');
+      initHotkeyComposer('hk-pause');
+
+      // Проверяем Wayland и показываем предупреждение
+      invoke('is_wayland').then(wayland => {
+        if (wayland) {
+          document.getElementById('wayland-warning').style.display = 'block';
+        }
+      });
+
+      // Переключение табов настроек
+      document.querySelectorAll('.settings-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+          document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+          document.querySelectorAll('.settings-tab-content').forEach(c => c.classList.remove('active'));
+          tab.classList.add('active');
+          document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+          closeAllDropdowns();
+        });
+      });
 
       // Toggle-переключатели
-      ['s-auto-type', 's-debug'].forEach(id => {
+      ['s-auto-type', 's-debug', 's-remove-fillers', 's-start-minimized', 's-preload-vosk', 's-preload-whisper', 's-preload-gigaam'].forEach(id => {
         document.getElementById(id).addEventListener('click', () => {
           document.getElementById(id).classList.toggle('on');
           checkChanges();
@@ -1251,11 +1805,19 @@
         setCustomSelect('s-transcriber', originalConfig.transcriber);
         document.getElementById('s-model-path').value = originalConfig.model_path;
         document.getElementById('s-whisper-path').value = originalConfig.whisper_model_path;
+        document.getElementById('s-gigaam-path').value = originalConfig.gigaam_model_path;
         setCustomSelect('s-sample-rate', String(originalConfig.sample_rate));
         document.getElementById('s-max-record').value = originalConfig.max_record_secs;
-        document.getElementById('s-hotkey').value = originalConfig.hotkey;
+        setHotkeyValue('hk-trigger', originalConfig.hotkey);
+        setHotkeyValue('hk-pause', originalConfig.hotkey_pause || '');
         document.getElementById('s-auto-type').classList.toggle('on', originalConfig.auto_type);
         document.getElementById('s-debug').classList.toggle('on', originalConfig.debug);
+        document.getElementById('s-remove-fillers').classList.toggle('on', originalConfig.remove_fillers !== false);
+        document.getElementById('s-start-minimized').classList.toggle('on', originalConfig.start_minimized || false);
+        const preloadOrig = originalConfig.preload_models || [];
+        document.getElementById('s-preload-vosk').classList.toggle('on', preloadOrig.includes('vosk'));
+        document.getElementById('s-preload-whisper').classList.toggle('on', preloadOrig.includes('whisper'));
+        document.getElementById('s-preload-gigaam').classList.toggle('on', preloadOrig.includes('gigaam'));
         checkChanges();
       });
 
@@ -1263,9 +1825,39 @@
       saveBtn.addEventListener('click', async () => {
         const cfg = getFormConfig();
         await invoke('save_config', { config: cfg });
+
+        // На Wayland — проверяем конфликты и регистрируем хоткеи через gsettings
+        try {
+          const wayland = await invoke('is_wayland');
+          if (wayland) {
+            // Проверяем конфликты
+            const conflicts = [];
+            if (cfg.hotkey) {
+              const c = await invoke('check_hotkey_conflict', { hotkey: cfg.hotkey });
+              if (c) conflicts.push(`Trigger (${cfg.hotkey}): занята — ${c}`);
+            }
+            if (cfg.hotkey_pause) {
+              const c = await invoke('check_hotkey_conflict', { hotkey: cfg.hotkey_pause });
+              if (c) conflicts.push(`Pause (${cfg.hotkey_pause}): занята — ${c}`);
+            }
+            if (conflicts.length > 0) {
+              const msg = 'Обнаружены конфликты клавиш:\n\n' + conflicts.join('\n') + '\n\nВсё равно сохранить?';
+              if (!confirm(msg)) return;
+            }
+
+            await invoke('register_gnome_hotkeys', {
+              hotkeyTrigger: cfg.hotkey,
+              hotkeyPause: cfg.hotkey_pause,
+            });
+          }
+        } catch (e) {
+          console.warn('Не удалось зарегистрировать GNOME хоткеи:', e);
+        }
+
         originalConfig = JSON.parse(JSON.stringify(cfg));
-        saveBtn.disabled = true;
+        checkChanges();
         saveNotice.classList.add('visible');
+        updateModelBadge();
       });
 
       /* ──────── История ──────── */
@@ -1336,13 +1928,14 @@
       const MODEL_TYPES = [
         { type: 'vosk', label: 'Vosk' },
         { type: 'whisper', label: 'Whisper' },
+        { type: 'gigaam', label: 'GigaAM' },
       ];
 
       function renderHistory(entries, total) {
         historyList.innerHTML = '';
         if (entries.length === 0) {
           historyEmpty.style.display = 'block';
-          histPagination.style.display = 'none';
+          histPagination.classList.remove('visible');
           return;
         }
         historyEmpty.style.display = 'none';
@@ -1490,12 +2083,12 @@
         // Пагинация
         const totalPages = Math.ceil(total / HIST_PER_PAGE);
         if (totalPages > 1) {
-          histPagination.style.display = 'block';
+          histPagination.classList.add('visible');
           histPrev.disabled = histPage === 0;
           histNext.disabled = histPage >= totalPages - 1;
           histPageInfo.textContent = `Стр. ${histPage + 1} из ${totalPages}`;
         } else {
-          histPagination.style.display = 'none';
+          histPagination.classList.remove('visible');
         }
       }
 
@@ -1586,8 +2179,8 @@
         }
       }
 
-      histPrev.addEventListener('click', () => { if (histPage > 0) { histPage--; loadHistory(); } });
-      histNext.addEventListener('click', () => { histPage++; loadHistory(); });
+      histPrev.addEventListener('click', () => { if (histPage > 0) { histPage--; loadHistory(); historyPage.scrollTop = 0; } });
+      histNext.addEventListener('click', () => { histPage++; loadHistory(); historyPage.scrollTop = 0; });
 
       // Очистить историю
       // Кастомный модальный диалог

@@ -14,6 +14,8 @@ pub enum TranscriberType {
     Vosk,
     /// Whisper — медленнее, значительно точнее
     Whisper,
+    /// GigaAM v3 — лучший для русского (ONNX, SberDevices)
+    GigaAm,
 }
 
 /// Конфигурация ядра ArcanaGlyph
@@ -40,14 +42,40 @@ pub struct CoreConfig {
     pub auto_type: bool,
     /// Горячая клавиша для триггера (формат Tauri: "Super+Alt+Control+Space")
     pub hotkey: String,
+    /// Горячая клавиша для паузы (формат Tauri, пустая строка = не задана)
+    #[serde(default)]
+    pub hotkey_pause: String,
     /// Режим отладки: выводить промежуточные результаты распознавания в терминал
     pub debug: bool,
+    /// Путь к директории GigaAM-модели (для transcriber = "gigaam")
+    /// Директория должна содержать v3_e2e_ctc.int8.onnx и v3_e2e_ctc_vocab.txt
+    #[serde(default = "default_gigaam_model_path")]
+    pub gigaam_model_path: PathBuf,
+    /// Удалять слова-паразиты из транскрибации (э, э-э, ээ, эм, мм)
+    #[serde(default = "default_true")]
+    pub remove_fillers: bool,
+    /// Запускать в свёрнутом виде (сразу в трей)
+    #[serde(default)]
+    pub start_minimized: bool,
+    /// Модели для предзагрузки при старте (помимо основной)
+    #[serde(default)]
+    pub preload_models: Vec<TranscriberType>,
 }
 
 fn default_whisper_model_path() -> PathBuf {
     std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join("models/ggml-large-v3-turbo.bin")
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_gigaam_model_path() -> PathBuf {
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("models/gigaam-v3-e2e-ctc")
 }
 
 impl Default for CoreConfig {
@@ -61,21 +89,38 @@ impl Default for CoreConfig {
             .unwrap_or_else(|_| PathBuf::from("."))
             .join("models/ggml-large-v3-turbo.bin");
 
+        let gigaam_model_path = std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("models/gigaam-v3-e2e-ctc");
+
         Self {
             transcriber: TranscriberType::Vosk,
             model_path,
             whisper_model_path,
+            gigaam_model_path,
             sample_rate: 48000,
             max_record_secs: 20,
             auto_type: true,
-            hotkey: "Super+Alt+Control+Space".to_string(),
+            hotkey: "Super+W".to_string(),
+            hotkey_pause: "Super+Shift+W".to_string(),
             debug: true,
+            remove_fillers: true,
+            start_minimized: false,
+            preload_models: vec![],
         }
     }
 }
 
 impl CoreConfig {
-    /// Путь к конфигурационному файлу: ~/.config/arcanaglyph/config.toml
+    /// Дефолтный конфиг с Whisper по умолчанию (для новых пользователей)
+    pub fn default_whisper() -> Self {
+        Self {
+            transcriber: TranscriberType::Whisper,
+            ..Self::default()
+        }
+    }
+
+    /// Путь к конфигурационному файлу (legacy): ~/.config/arcanaglyph/config.toml
     pub fn config_path() -> Option<PathBuf> {
         ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph").map(|dirs| dirs.config_dir().join("config.toml"))
     }
@@ -99,6 +144,9 @@ impl CoreConfig {
             TranscriberType::Whisper => self.whisper_model_path.file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "whisper".to_string()),
+            TranscriberType::GigaAm => self.gigaam_model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "gigaam".to_string()),
         }
     }
 
@@ -107,54 +155,66 @@ impl CoreConfig {
         match self.transcriber {
             TranscriberType::Vosk => "vosk".to_string(),
             TranscriberType::Whisper => "whisper".to_string(),
+            TranscriberType::GigaAm => "gigaam".to_string(),
         }
     }
 
-    /// Загружает конфигурацию из файла. Если файл не существует — создаёт с дефолтными значениями.
+    /// Загружает конфигурацию из SQLite БД. При первом запуске импортирует из config.toml если есть.
     pub fn load() -> Result<Self, ArcanaError> {
-        let config_path = Self::config_path()
-            .ok_or_else(|| ArcanaError::Config("Не удалось определить директорию конфигурации".into()))?;
+        let db_path = Self::history_db_path()
+            .ok_or_else(|| ArcanaError::Config("Не удалось определить путь к БД".into()))?;
+        let audio_cache = Self::audio_cache_dir()
+            .ok_or_else(|| ArcanaError::Config("Не удалось определить путь к кэшу".into()))?;
 
-        if config_path.exists() {
-            let content = std::fs::read_to_string(&config_path)
-                .map_err(|e| ArcanaError::Config(format!("Не удалось прочитать {}: {}", config_path.display(), e)))?;
+        // Открываем БД (применяет миграции, создаёт таблицу settings)
+        let db = crate::history::HistoryDB::new(&db_path, audio_cache)?;
 
-            let config: CoreConfig =
-                toml::from_str(&content).map_err(|e| ArcanaError::Config(format!("Ошибка парсинга конфига: {}", e)))?;
-
-            tracing::info!("Конфигурация загружена из {}", config_path.display());
-            // Пересохраняем — добавляет новые поля со значениями по умолчанию
-            if let Err(e) = config.save() {
-                tracing::warn!("Не удалось обновить конфиг: {}", e);
-            }
-            Ok(config)
-        } else {
-            let config = Self::default();
-            // Создаём файл с дефолтными значениями
-            if let Err(e) = config.save() {
-                tracing::warn!("Не удалось сохранить дефолтный конфиг: {}", e);
-            }
-            tracing::info!("Создан дефолтный конфиг: {}", config_path.display());
-            Ok(config)
+        // Пробуем загрузить из SQLite
+        if let Some(json_str) = db.get_setting("core_config") {
+            let config: CoreConfig = serde_json::from_str(&json_str)
+                .map_err(|e| ArcanaError::Config(format!("Ошибка парсинга конфига из БД: {}", e)))?;
+            tracing::info!("Конфигурация загружена из БД");
+            return Ok(config);
         }
+
+        // Нет настроек в БД — пробуем импортировать из config.toml
+        let config = if let Some(config_path) = Self::config_path() {
+            if config_path.exists() {
+                let content = std::fs::read_to_string(&config_path)
+                    .map_err(|e| ArcanaError::Config(format!("Не удалось прочитать {}: {}", config_path.display(), e)))?;
+                let config: CoreConfig = toml::from_str(&content)
+                    .map_err(|e| ArcanaError::Config(format!("Ошибка парсинга config.toml: {}", e)))?;
+
+                tracing::info!("Импорт настроек из config.toml");
+                let _ = std::fs::remove_file(&config_path);
+                tracing::info!("config.toml удалён после импорта в БД");
+
+                config
+            } else {
+                Self::default_whisper()
+            }
+        } else {
+            Self::default_whisper()
+        };
+
+        // Сохраняем в БД
+        config.save()?;
+        tracing::info!("Конфигурация сохранена в БД");
+
+        Ok(config)
     }
 
-    /// Сохраняет конфигурацию в файл
+    /// Сохраняет конфигурацию в SQLite БД
     pub fn save(&self) -> Result<(), ArcanaError> {
-        let config_path = Self::config_path()
-            .ok_or_else(|| ArcanaError::Config("Не удалось определить директорию конфигурации".into()))?;
+        let db_path = Self::history_db_path()
+            .ok_or_else(|| ArcanaError::Config("Не удалось определить путь к БД".into()))?;
+        let audio_cache = Self::audio_cache_dir()
+            .ok_or_else(|| ArcanaError::Config("Не удалось определить путь к кэшу".into()))?;
 
-        // Создаём директорию, если не существует
-        if let Some(parent) = config_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| ArcanaError::Config(format!("Не удалось создать директорию конфигурации: {}", e)))?;
-        }
-
-        let content = toml::to_string_pretty(self)
+        let db = crate::history::HistoryDB::new(&db_path, audio_cache)?;
+        let json_str = serde_json::to_string(self)
             .map_err(|e| ArcanaError::Config(format!("Ошибка сериализации конфига: {}", e)))?;
-
-        std::fs::write(&config_path, content)
-            .map_err(|e| ArcanaError::Config(format!("Не удалось записать {}: {}", config_path.display(), e)))?;
+        db.set_setting("core_config", &json_str)?;
 
         Ok(())
     }
@@ -173,9 +233,10 @@ mod tests {
         assert_eq!(config.max_record_secs, 20);
         assert!(config.auto_type);
         assert!(config.debug);
-        assert_eq!(config.hotkey, "Super+Alt+Control+Space");
+        assert_eq!(config.hotkey, "Super+W");
         assert!(config.model_path.ends_with("models/vosk-model-ru-0.42"));
         assert!(config.whisper_model_path.ends_with("models/ggml-large-v3-turbo.bin"));
+        assert!(config.gigaam_model_path.ends_with("models/gigaam-v3-e2e-ctc"));
     }
 
     #[test]
@@ -212,11 +273,16 @@ auto_type = false
             transcriber: TranscriberType::Vosk,
             model_path: PathBuf::from("/tmp/test-model"),
             whisper_model_path: PathBuf::from("/tmp/test-whisper-model"),
+            gigaam_model_path: PathBuf::from("/tmp/test-gigaam-model"),
             sample_rate: 16000,
             max_record_secs: 30,
             auto_type: false,
             hotkey: "Ctrl+Shift+R".to_string(),
+            hotkey_pause: String::new(),
             debug: true,
+            remove_fillers: true,
+            start_minimized: false,
+            preload_models: vec![],
         };
 
         let content = toml::to_string_pretty(&config).unwrap();

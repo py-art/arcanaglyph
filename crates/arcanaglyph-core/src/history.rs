@@ -41,7 +41,7 @@ pub struct HistoryDB {
 }
 
 impl HistoryDB {
-    /// Создаёт или открывает БД, инициализирует таблицы
+    /// Создаёт или открывает БД, применяет миграции
     pub fn new(db_path: &Path, audio_cache_dir: PathBuf) -> Result<Self, ArcanaError> {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)
@@ -53,29 +53,11 @@ impl HistoryDB {
         let conn = Connection::open(db_path)
             .map_err(|e| ArcanaError::Database(format!("Не удалось открыть БД: {}", e)))?;
 
-        // Включаем каскадное удаление
         conn.execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(|e| ArcanaError::Database(format!("Не удалось включить foreign keys: {}", e)))?;
 
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS recordings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                audio_path TEXT NOT NULL,
-                timestamp INTEGER NOT NULL,
-                duration_secs INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS transcriptions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                recording_id INTEGER NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
-                text TEXT NOT NULL,
-                model_name TEXT NOT NULL,
-                transcriber_type TEXT NOT NULL,
-                created_at INTEGER NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_rec_timestamp ON recordings(timestamp DESC);
-            CREATE INDEX IF NOT EXISTS idx_trans_recording ON transcriptions(recording_id);",
-        )
-        .map_err(|e| ArcanaError::Database(format!("Не удалось создать таблицы: {}", e)))?;
+        // Применяем миграции
+        crate::db::run_migrations(&conn)?;
 
         tracing::info!("БД истории открыта: {:?}", db_path);
         Ok(Self {
@@ -85,6 +67,37 @@ impl HistoryDB {
     }
 
     /// Добавляет запись аудио
+    /// Получить настройку по ключу
+    pub fn get_setting(&self, key: &str) -> Option<String> {
+        let conn = self.conn.lock().ok()?;
+        conn.query_row("SELECT value FROM settings WHERE key = ?1", rusqlite::params![key], |row| row.get(0)).ok()
+    }
+
+    /// Установить настройку
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<(), ArcanaError> {
+        let conn = self.conn.lock().map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+            rusqlite::params![key, value],
+        )
+        .map_err(|e| ArcanaError::Database(format!("Ошибка записи настройки: {}", e)))?;
+        Ok(())
+    }
+
+    /// Получить все настройки
+    pub fn get_all_settings(&self) -> Result<std::collections::HashMap<String, String>, ArcanaError> {
+        let conn = self.conn.lock().map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        let mut stmt = conn.prepare("SELECT key, value FROM settings")
+            .map_err(|e| ArcanaError::Database(format!("Ошибка запроса настроек: {}", e)))?;
+        let result = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| ArcanaError::Database(format!("Ошибка маппинга: {}", e)))?
+        .collect::<Result<std::collections::HashMap<_, _>, _>>()
+        .map_err(|e| ArcanaError::Database(format!("Ошибка сбора: {}", e)))?;
+        Ok(result)
+    }
+
     pub fn add_recording(&self, audio_path: &str, duration_secs: u32) -> Result<i64, ArcanaError> {
         let conn = self.conn.lock().map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
         let timestamp = chrono::Utc::now().timestamp();

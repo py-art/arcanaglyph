@@ -4,8 +4,8 @@ use arcanaglyph_core::ArcanaEngine;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{
-    AppHandle, Manager,
-    menu::{Menu, MenuEvent, MenuItem},
+    AppHandle, Emitter, Manager,
+    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     tray::{TrayIcon, TrayIconBuilder},
 };
 
@@ -17,6 +17,8 @@ pub struct TrayIconHandle(pub TrayIcon);
 
 /// Красная иконка для режима записи (встроена при компиляции)
 const RECORDING_ICON: &[u8] = include_bytes!("../icons/32x32-recording.png");
+/// Оранжевая иконка для режима паузы
+const PAUSED_ICON: &[u8] = include_bytes!("../icons/32x32-paused.png");
 
 /// Показать окно и поставить в фокус
 pub fn show_window(app: &AppHandle) {
@@ -33,9 +35,12 @@ pub fn show_window(app: &AppHandle) {
 /// Создаёт иконку в системном трее с меню управления
 pub fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let show_item = MenuItem::with_id(app, "show", "Открыть приложение", true, None::<&str>)?;
+    let settings_item = MenuItem::with_id(app, "settings", "Настройки", true, None::<&str>)?;
     let toggle_item = MenuItem::with_id(app, "toggle", "Начать запись", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_item, &toggle_item, &quit_item])?;
+    let sep1 = PredefinedMenuItem::separator(app)?;
+    let sep2 = PredefinedMenuItem::separator(app)?;
+    let menu = Menu::with_items(app, &[&show_item, &sep1, &toggle_item, &settings_item, &sep2, &quit_item])?;
 
     // Сохраняем toggle_item в state для обновления текста при смене состояния
     app.manage(TrayToggleItem(toggle_item));
@@ -47,6 +52,10 @@ pub fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .on_menu_event(|app: &AppHandle, event: MenuEvent| match event.id().as_ref() {
             "show" => {
                 show_window(app);
+            }
+            "settings" => {
+                show_window(app);
+                let _ = app.emit("tray://open-settings", ());
             }
             "toggle" => {
                 if let Some(engine) = app.try_state::<Arc<ArcanaEngine>>() {
@@ -73,16 +82,31 @@ pub fn set_tray_text(app: &AppHandle, text: &str) {
     }
 }
 
-/// Переключает иконку трея: красная при записи, белая по умолчанию
-pub fn set_tray_recording(app: &AppHandle, recording: bool) {
+/// Состояние иконки трея
+pub enum TrayState {
+    /// Обычное состояние (белая иконка)
+    Idle,
+    /// Запись (красная иконка)
+    Recording,
+    /// Пауза (оранжевая иконка)
+    Paused,
+}
+
+/// Переключает иконку трея в зависимости от состояния
+pub fn set_tray_state(app: &AppHandle, state: TrayState) {
     if let Some(tray) = app.try_state::<TrayIconHandle>() {
-        let icon = if recording {
-            tauri::image::Image::from_bytes(RECORDING_ICON).ok()
-        } else {
-            app.default_window_icon().cloned()
+        let icon = match state {
+            TrayState::Recording => tauri::image::Image::from_bytes(RECORDING_ICON).ok(),
+            TrayState::Paused => tauri::image::Image::from_bytes(PAUSED_ICON).ok(),
+            TrayState::Idle => app.default_window_icon().cloned(),
         };
         if let Some(icon) = icon {
             let _ = tray.0.set_icon(Some(icon));
         }
     }
+}
+
+/// Обратная совместимость: переключает запись/нет
+pub fn set_tray_recording(app: &AppHandle, recording: bool) {
+    set_tray_state(app, if recording { TrayState::Recording } else { TrayState::Idle });
 }
