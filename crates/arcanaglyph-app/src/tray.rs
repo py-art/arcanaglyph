@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{
     AppHandle, Emitter, Manager,
-    menu::{Menu, MenuEvent, MenuItem},
+    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     tray::{TrayIcon, TrayIconBuilder},
 };
 
@@ -36,7 +36,9 @@ pub fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let settings_item = MenuItem::with_id(app, "settings", "Настройки", true, None::<&str>)?;
     let toggle_item = MenuItem::with_id(app, "toggle", "Начать запись", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_item, &toggle_item, &settings_item, &quit_item])?;
+    let sep1 = PredefinedMenuItem::separator(app)?;
+    let sep2 = PredefinedMenuItem::separator(app)?;
+    let menu = Menu::with_items(app, &[&show_item, &sep1, &toggle_item, &settings_item, &sep2, &quit_item])?;
 
     // Сохраняем toggle_item в state для обновления текста при смене состояния
     app.manage(TrayToggleItem(toggle_item));
