@@ -577,6 +577,15 @@ fn main() {
             // Устанавливаем UDP-скрипты для Wayland (если ещё не установлены)
             install_wayland_scripts();
 
+            // Автоочистка старых записей при старте
+            if let Ok(cfg) = CoreConfig::load()
+                && cfg.retention_hours > 0
+                && let (Some(db_path), Some(cache)) = (CoreConfig::history_db_path(), CoreConfig::audio_cache_dir())
+                && let Ok(db) = arcanaglyph_core::history::HistoryDB::new(&db_path, cache)
+            {
+                let _ = db.cleanup_old_recordings(cfg.retention_hours);
+            }
+
             // Проверяем start_minimized до инициализации движка
             let start_minimized = CoreConfig::load()
                 .map(|c| c.start_minimized)

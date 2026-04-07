@@ -1068,6 +1068,22 @@
           <input type="number" id="s-vad-silence" min="1" max="30" />
         </div>
 
+        <div class="setting-group">
+          <label>Автоочистка записей</label>
+          <div class="custom-select" id="s-retention" data-value="0">
+            <div class="custom-select-trigger"></div>
+            <div class="custom-select-options">
+              <div class="custom-select-option" data-value="0">Хранить вечно</div>
+              <div class="custom-select-option" data-value="12">12 часов</div>
+              <div class="custom-select-option" data-value="24">1 день</div>
+              <div class="custom-select-option" data-value="168">1 неделя</div>
+              <div class="custom-select-option" data-value="720">30 дней</div>
+              <div class="custom-select-option" data-value="4380">Полгода</div>
+              <div class="custom-select-option" data-value="8760">1 год</div>
+            </div>
+          </div>
+        </div>
+
         <div class="setting-row">
           <label>Авто-вставка текста</label>
           <div class="toggle" id="s-auto-type"></div>
@@ -1469,6 +1485,7 @@
           vad_enabled: cfg.vad_enabled !== false,
           vad_silence_secs: cfg.vad_silence_secs || 7,
           remove_fillers: cfg.remove_fillers !== false,
+          retention_hours: cfg.retention_hours || 0,
           start_minimized: cfg.start_minimized || false,
           preload_models: normalizePreload(cfg.preload_models || [], cfg.transcriber),
         };
@@ -1486,6 +1503,7 @@
         document.getElementById('s-vad-enabled').classList.toggle('on', cfg.vad_enabled !== false);
         document.getElementById('s-vad-silence').value = cfg.vad_silence_secs || 3;
         document.getElementById('s-remove-fillers').classList.toggle('on', cfg.remove_fillers !== false);
+        setCustomSelect('s-retention', String(cfg.retention_hours || 0));
         document.getElementById('s-start-minimized').classList.toggle('on', cfg.start_minimized || false);
         const preload = cfg.preload_models || [];
         document.getElementById('s-preload-vosk').classList.toggle('on', preload.includes('vosk') || cfg.transcriber === 'vosk');
@@ -1608,6 +1626,7 @@
           vad_enabled: document.getElementById('s-vad-enabled').classList.contains('on'),
           vad_silence_secs: parseInt(document.getElementById('s-vad-silence').value) || 3,
           remove_fillers: document.getElementById('s-remove-fillers').classList.contains('on'),
+          retention_hours: parseInt(document.getElementById('s-retention').dataset.value) || 0,
           start_minimized: document.getElementById('s-start-minimized').classList.contains('on'),
           preload_models: normalizePreload([
             ...(document.getElementById('s-preload-vosk').classList.contains('on') ? ['vosk'] : []),
@@ -1632,6 +1651,7 @@
         vad_enabled:       { el: 's-vad-enabled',    type: 'row' },
         vad_silence_secs:  { el: 's-vad-silence',    type: 'group' },
         remove_fillers:    { el: 's-remove-fillers',  type: 'row' },
+        retention_hours:   { el: 's-retention',       type: 'group' },
         start_minimized:   { el: 's-start-minimized', type: 'row' },
         preload_models:    { el: 's-preload-vosk',   type: 'row' },
       };
@@ -1729,7 +1749,7 @@
       // Навешиваем обработчики изменений
       ['s-model-path', 's-whisper-path', 's-gigaam-path', 's-max-record', 's-vad-silence']
         .forEach(id => document.getElementById(id).addEventListener('input', checkChanges));
-      ['s-transcriber', 's-sample-rate']
+      ['s-transcriber', 's-sample-rate', 's-retention']
         .forEach(id => document.getElementById(id).addEventListener('change', checkChanges));
       // При смене модели по умолчанию — обновить блокировки предзагрузки
       document.getElementById('s-transcriber').addEventListener('change', () => {
@@ -1913,6 +1933,7 @@
         document.getElementById('s-vad-enabled').classList.toggle('on', originalConfig.vad_enabled !== false);
         document.getElementById('s-vad-silence').value = originalConfig.vad_silence_secs || 7;
         document.getElementById('s-remove-fillers').classList.toggle('on', originalConfig.remove_fillers !== false);
+        setCustomSelect('s-retention', String(originalConfig.retention_hours || 0));
         document.getElementById('s-start-minimized').classList.toggle('on', originalConfig.start_minimized || false);
         const preloadOrig = originalConfig.preload_models || [];
         document.getElementById('s-preload-vosk').classList.toggle('on', preloadOrig.includes('vosk'));

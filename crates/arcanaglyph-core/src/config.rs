@@ -60,6 +60,9 @@ pub struct CoreConfig {
     /// Удалять слова-паразиты из транскрибации (э, э-э, ээ, эм, мм)
     #[serde(default = "default_true")]
     pub remove_fillers: bool,
+    /// Срок хранения записей в часах (0 = хранить вечно)
+    #[serde(default)]
+    pub retention_hours: u64,
     /// Запускать в свёрнутом виде (сразу в трей)
     #[serde(default)]
     pub start_minimized: bool,
@@ -117,6 +120,7 @@ impl Default for CoreConfig {
             vad_enabled: true,
             vad_silence_secs: 7,
             remove_fillers: true,
+            retention_hours: 0,
             start_minimized: false,
             preload_models: vec![],
         }
@@ -295,6 +299,7 @@ auto_type = false
             vad_enabled: true,
             vad_silence_secs: 7,
             remove_fillers: true,
+            retention_hours: 0,
             start_minimized: false,
             preload_models: vec![],
         };
