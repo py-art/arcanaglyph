@@ -732,6 +732,79 @@
         text-align: right;
       }
 
+      /* === О приложении === */
+      .about-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 1.5rem 1rem 2rem;
+        text-align: center;
+      }
+      .about-logo {
+        margin-bottom: 1rem;
+        filter: drop-shadow(0 0 12px rgba(122, 162, 247, 0.3));
+      }
+      .about-title {
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: #c0caf5;
+        letter-spacing: 0.5px;
+      }
+      .about-version {
+        font-size: 0.8rem;
+        color: #565f89;
+        margin-top: 0.2rem;
+        font-family: monospace;
+      }
+      .about-divider {
+        width: 60px;
+        height: 1px;
+        background: #292e42;
+        margin: 1rem 0;
+      }
+      .about-desc {
+        font-size: 0.9rem;
+        color: #7aa2f7;
+        font-weight: 500;
+      }
+      .about-sub {
+        font-size: 0.8rem;
+        color: #565f89;
+        margin-top: 0.5rem;
+        line-height: 1.5;
+      }
+      .about-engines {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 0.4rem;
+        margin-top: 1.2rem;
+      }
+      .about-engine-badge {
+        padding: 0.25rem 0.6rem;
+        background: rgba(122, 162, 247, 0.1);
+        border: 1px solid rgba(122, 162, 247, 0.2);
+        border-radius: 12px;
+        font-size: 0.7rem;
+        color: #7aa2f7;
+      }
+      .about-privacy {
+        font-size: 0.75rem;
+        color: #9ece6a;
+        margin-top: 1rem;
+      }
+      .about-tech {
+        font-size: 0.7rem;
+        color: #565f89;
+        font-family: monospace;
+      }
+      .about-link {
+        font-size: 0.7rem;
+        color: #7aa2f7;
+        margin-top: 0.3rem;
+        opacity: 0.7;
+      }
+
       /* === Модальный диалог === */
       .modal-overlay {
         display: none;
@@ -961,6 +1034,41 @@
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         История
       </div>
+      <div class="menu-item" id="menu-about">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        О приложении
+      </div>
+    </div>
+
+    <!-- Страница «О приложении» -->
+    <div class="settings-page" id="about-page">
+      <div class="about-container">
+        <div class="about-logo">
+          <svg width="80" height="80" viewBox="0 0 80 80">
+            <circle cx="40" cy="40" r="34" fill="none" stroke="#7aa2f7" stroke-width="5.5" opacity="0.9"/>
+            <circle cx="40" cy="40" r="14" fill="#7aa2f7" opacity="0.9"/>
+          </svg>
+        </div>
+        <div class="about-title">ArcanaGlyph</div>
+        <div class="about-version">v1.0.0</div>
+        <div class="about-divider"></div>
+        <div class="about-desc">
+          Голосовой ввод текста
+        </div>
+        <div class="about-sub">
+          Нажмите горячую клавишу — говорите —<br>
+          нажмите ещё раз — текст вставится в активное окно
+        </div>
+        <div class="about-engines">
+          <div class="about-engine-badge">GigaAM v3</div>
+          <div class="about-engine-badge">Whisper</div>
+          <div class="about-engine-badge">Vosk</div>
+          <div class="about-engine-badge">Qwen3-ASR</div>
+        </div>
+        <div class="about-privacy">
+          Вся транскрибация — локально, без облака
+        </div>
+      </div>
     </div>
 
     <!-- Страница истории -->
@@ -1103,6 +1211,11 @@
         <div class="setting-row">
           <label>Удалять слова-паразиты</label>
           <div class="toggle" id="s-remove-fillers"></div>
+        </div>
+
+        <div class="setting-row">
+          <label>Автозапуск при входе</label>
+          <div class="toggle" id="s-autostart"></div>
         </div>
 
         <div class="setting-row">
@@ -1508,6 +1621,7 @@
           vad_silence_secs: cfg.vad_silence_secs || 7,
           remove_fillers: cfg.remove_fillers !== false,
           retention_hours: cfg.retention_hours || 0,
+          autostart: cfg.autostart || false,
           start_minimized: cfg.start_minimized || false,
           preload_models: normalizePreload(cfg.preload_models || [], cfg.transcriber),
         };
@@ -1527,6 +1641,7 @@
         document.getElementById('s-vad-silence').value = cfg.vad_silence_secs || 3;
         document.getElementById('s-remove-fillers').classList.toggle('on', cfg.remove_fillers !== false);
         setCustomSelect('s-retention', String(cfg.retention_hours || 0));
+        document.getElementById('s-autostart').classList.toggle('on', cfg.autostart || false);
         document.getElementById('s-start-minimized').classList.toggle('on', cfg.start_minimized || false);
         const preload = cfg.preload_models || [];
         document.getElementById('s-preload-vosk').classList.toggle('on', preload.includes('vosk') || cfg.transcriber === 'vosk');
@@ -1659,6 +1774,7 @@
           vad_silence_secs: parseInt(document.getElementById('s-vad-silence').value) || 3,
           remove_fillers: document.getElementById('s-remove-fillers').classList.contains('on'),
           retention_hours: parseInt(document.getElementById('s-retention').dataset.value) || 0,
+          autostart: document.getElementById('s-autostart').classList.contains('on'),
           start_minimized: document.getElementById('s-start-minimized').classList.contains('on'),
           preload_models: normalizePreload([
             ...(document.getElementById('s-preload-vosk').classList.contains('on') ? ['vosk'] : []),
@@ -1686,6 +1802,7 @@
         vad_silence_secs:  { el: 's-vad-silence',    type: 'group' },
         remove_fillers:    { el: 's-remove-fillers',  type: 'row' },
         retention_hours:   { el: 's-retention',       type: 'group' },
+        autostart:         { el: 's-autostart',        type: 'row' },
         start_minimized:   { el: 's-start-minimized', type: 'row' },
         preload_models:    { el: 's-preload-vosk',   type: 'row' },
       };
@@ -1944,7 +2061,7 @@
       });
 
       // Toggle-переключатели
-      ['s-auto-type', 's-debug', 's-vad-enabled', 's-remove-fillers', 's-start-minimized', 's-preload-vosk', 's-preload-whisper', 's-preload-gigaam', 's-preload-qwen3asr'].forEach(id => {
+      ['s-auto-type', 's-debug', 's-vad-enabled', 's-remove-fillers', 's-autostart', 's-start-minimized', 's-preload-vosk', 's-preload-whisper', 's-preload-gigaam', 's-preload-qwen3asr'].forEach(id => {
         document.getElementById(id).addEventListener('click', () => {
           document.getElementById(id).classList.toggle('on');
           checkChanges();
@@ -1969,6 +2086,7 @@
         document.getElementById('s-vad-silence').value = originalConfig.vad_silence_secs || 7;
         document.getElementById('s-remove-fillers').classList.toggle('on', originalConfig.remove_fillers !== false);
         setCustomSelect('s-retention', String(originalConfig.retention_hours || 0));
+        document.getElementById('s-autostart').classList.toggle('on', originalConfig.autostart || false);
         document.getElementById('s-start-minimized').classList.toggle('on', originalConfig.start_minimized || false);
         const preloadOrig = originalConfig.preload_models || [];
         document.getElementById('s-preload-vosk').classList.toggle('on', preloadOrig.includes('vosk'));
@@ -2035,6 +2153,10 @@
         loadHistory();
       });
 
+      document.getElementById('menu-about').addEventListener('click', () => {
+        showPage('about');
+      });
+
       // Обновить showPage для history
       const origShowPage = showPage;
       showPage = function(page) {
@@ -2042,10 +2164,10 @@
         menuPage.classList.toggle('visible', page === 'menu');
         settingsPage.classList.toggle('visible', page === 'settings');
         historyPage.classList.toggle('visible', page === 'history');
+        document.getElementById('about-page').classList.toggle('visible', page === 'about');
         closeAllDropdowns();
         menuBtn.classList.toggle('back', page !== 'main');
         currentPage = page;
-        // Обновляем бейдж модели при возврате на главный экран
         if (page === 'main') updateModelBadge();
       };
 
@@ -2054,7 +2176,7 @@
       menuBtn.removeEventListener('click', menuBtn._handler);
       menuBtn._handler = () => {
         if (currentPage === 'main') showPage('menu');
-        else if (currentPage === 'settings' || currentPage === 'history') {
+        else if (currentPage === 'settings' || currentPage === 'history' || currentPage === 'about') {
           showPage('menu');
           saveNotice.classList.remove('visible');
         } else showPage('main');

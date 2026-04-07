@@ -1,171 +1,141 @@
 # ArcanaGlyph
 
-Десктопное приложение для голосового ввода текста на Linux. Нажимаете горячую клавишу — говорите —
-нажимаете ещё раз — распознанный текст автоматически вставляется в активное окно.
-Вся транскрибация происходит локально, без передачи данных в облако.
+Десктопное приложение для голосового ввода текста на Linux (Wayland + X11).
+Нажимаете горячую клавишу — говорите — нажимаете ещё раз — распознанный текст
+автоматически вставляется в активное окно. Вся транскрибация происходит локально,
+без передачи данных в облако.
 
-Поддерживаются два движка распознавания:
+## STT-движки
 
-- **Vosk** — быстрый, потоковый, менее точный (~42 МБ модель)
-- **Whisper** (whisper.cpp) — значительно точнее, медленнее на CPU (~1.5 ГБ модель)
+| Движок | Модель | WER (рус.) | Размер | Скорость |
+| --- | --- | --- | --- | --- |
+| **GigaAM v3** (по умолчанию) | v3_e2e_ctc.int8.onnx | **~8.4%** | 225 МБ | ~0.8 сек / 5 сек аудио |
+| Whisper | ggml-large-v3-turbo.bin | ~14% | 1.5 ГБ | 30-70 сек / 10 сек аудио |
+| Vosk | vosk-model-ru-0.42 | ~11% | 42 МБ | Реальное время (streaming) |
+| Qwen3-ASR | 0.6B ONNX | ~6% (мульти) | 2.5 ГБ | ~5 сек / 5 сек аудио |
 
-## Системные зависимости
-
-```bash
-sudo apt-get update && sudo apt-get install \
-  build-essential \
-  libasound2-dev \
-  libgtk-3-dev \
-  libwebkit2gtk-4.1-dev \
-  libxdo-dev
-```
-
-Для вставки текста на **Wayland** (clipboard):
-
-```bash
-sudo apt install wl-clipboard
-```
-
-Также необходима библиотека `libvosk`. Если она не установлена, можно собрать из исходников
-скриптом `scripts/legacy/install_libvosk.bash`.
-
-## Установка моделей
-
-### Vosk (по умолчанию)
-
-```bash
-mkdir -p models && cd models
-wget https://alphacephei.com/vosk/models/vosk-model-ru-0.42.zip
-unzip vosk-model-ru-0.42.zip && cd ..
-```
-
-### Whisper (рекомендуется для точности)
-
-```bash
-mkdir -p models && cd models
-wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
-cd ..
-```
-
-Доступные модели Whisper (скачать из [ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp)):
-
-| Модель | Размер | Качество | Скорость |
-| --- | --- | --- | --- |
-| ggml-large-v3-turbo.bin | ~1.5 ГБ | Лучший баланс | Средняя |
-| ggml-large-v3.bin | ~3 ГБ | Максимальное | Медленная |
-| ggml-medium.bin | ~1.5 ГБ | Среднее | Быстрее |
-| ggml-small.bin | ~500 МБ | Базовое | Быстрая |
-
-Для переключения между движками измените `transcriber` в конфигурационном файле.
-
-## Запуск
-
-```bash
-# Одна команда — запускает приложение с иконкой в трее
-make run
-```
-
-При первом запуске приложение создаст конфигурационный файл с настройками по умолчанию
-в `~/.config/ArcanaGlyph/config.toml`.
+При первом запуске автоматически скачивается GigaAM v3 (~225 МБ).
+Остальные модели можно скачать из настроек приложения (вкладка «Модели»).
 
 ## Горячие клавиши
 
-По умолчанию: **Super+Alt+Control+Space**
+| Действие | Комбинация |
+| --- | --- |
+| Запись (старт/стоп) | **Ctrl+Ё** (`Ctrl+grave`) |
+| Пауза/возобновление | **Ctrl+Shift+Ё** |
 
-- Первое нажатие — начинает запись с микрофона
-- Второе нажатие — останавливает запись, транскрибирует и вставляет текст в активное окно
-- Если не нажать повторно, запись автоматически остановится через 20 секунд
+Работают в обеих раскладках (русской и английской).
+Настраиваются в приложении: Настройки → вкладка «Клавиши».
 
-Горячую клавишу можно изменить в конфигурационном файле.
-
-## Конфигурация
-
-Файл: `~/.config/ArcanaGlyph/config.toml`
-
-```toml
-# Движок транскрибации: vosk, whisper
-transcriber = "vosk"
-
-# Путь к Vosk-модели (для transcriber = "vosk")
-model_path = "models/vosk-model-ru-0.42"
-
-# Путь к Whisper-модели в формате ggml (для transcriber = "whisper")
-whisper_model_path = "models/ggml-large-v3-turbo.bin"
-
-# Частота дискретизации аудио (Гц)
-sample_rate = 48000
-
-# Максимальное время записи (секунды)
-max_record_secs = 20
-
-# Автоматически вставлять текст в активное окно после транскрибации
-auto_type = true
-
-# Горячая клавиша (формат: модификаторы через + и клавиша)
-hotkey = "Super+Alt+Control+Space"
-
-# Режим отладки: выводить промежуточные результаты в терминал
-debug = true
-```
-
-### Параметры
-
-| Параметр | Тип | По умолчанию | Описание |
-| --- | --- | --- | --- |
-| transcriber | string | vosk | Движок: "vosk" или "whisper" |
-| model_path | string | models/vosk-model-ru-0.42 | Путь к Vosk-модели |
-| whisper_model_path | string | models/ggml-large-v3-turbo.bin | Путь к Whisper-модели (ggml) |
-| sample_rate | число | 48000 | Частота дискретизации микрофона |
-| max_record_secs | число | 20 | Таймаут автоостановки записи |
-| auto_type | bool | true | Вставлять текст в активное окно |
-| hotkey | string | Super+Alt+Control+Space | Глобальная горячая клавиша |
-| debug | bool | true | Выводить отладочную информацию в терминал |
-
-## Сборка дистрибутива
+## Быстрый старт (из исходников)
 
 ```bash
-# Создаёт .deb и .AppImage в target/release/bundle/
-make dist
+# 1. Системные зависимости
+sudo apt-get install build-essential libasound2-dev libgtk-3-dev \
+  libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev \
+  wl-clipboard netcat-openbsd
+
+# 2. libvosk (если не установлена)
+# Скачать libvosk.so → /usr/local/lib/
+# Или: scripts/legacy/install_libvosk.bash
+
+# 3. Запуск
+make run
 ```
 
-Требуется установленный Tauri CLI:
+При первом запуске GigaAM v3 скачается автоматически в `~/.local/share/arcanaglyph/models/`.
+
+## Сборка и установка .deb пакета
 
 ```bash
+# Требуется Tauri CLI
 cargo install tauri-cli
+
+# Сборка (несколько минут)
+make dist
+
+# Результат
+ls target/release/bundle/deb/ArcanaGlyph_*.deb
+
+# Установка
+sudo dpkg -i target/release/bundle/deb/ArcanaGlyph_1.0.0_amd64.deb
+sudo apt-get install -f   # если не хватает зависимостей
+
+# Запуск
+arcanaglyph
+
+# Удаление
+sudo dpkg -r arcanaglyph
 ```
+
+## Настройки
+
+Всё настраивается через UI приложения (три вкладки):
+
+**Основное:**
+движок, предзагрузка, частота, таймаут, авто-стоп при тишине (VAD),
+удаление слов-паразитов, автоочистка записей, автозапуск, запуск в трей
+
+**Модели:**
+пути к моделям, карточки с описанием/размером/статусом, кнопка «Скачать»
+
+**Клавиши:**
+композер горячих клавиш с кнопками модификаторов + рекордер основной клавиши
+
+Настройки хранятся в SQLite: `~/.config/arcanaglyph/history.db`
+
+## XDG-пути
+
+| Что | Путь |
+| --- | --- |
+| Модели | `~/.local/share/arcanaglyph/models/` |
+| БД и конфиг | `~/.config/arcanaglyph/` |
+| Скрипты (Wayland) | `~/.config/arcanaglyph/scripts/` |
+| Аудио-кэш | `~/.cache/arcanaglyph/audio/` |
+
+## Меню трея
+
+- Открыть приложение
+- Начать запись
+- Настройки
+- Выход
+
+Иконка трея: белая (готов), красная (запись), оранжевая (пауза).
 
 ## Разработка
 
 ```bash
-make help     # Показать все доступные команды
+make help     # Показать все команды
 make run      # Запустить приложение
-make all      # Форматирование + линтинг + проверка + тесты
+make all      # fmt + clippy + check + test
 make fmt      # cargo fmt
-make lint     # cargo clippy
+make lint     # cargo clippy -- -D warnings
 make test     # cargo test
-make check    # cargo check
 make build    # Release-сборка
-make clean    # Очистка кэша
+make dist     # Сборка .deb и .AppImage
+make clean    # Очистка кэша сборки
 ```
 
 ## Структура проекта
 
 ```text
 crates/
-  arcanaglyph-core/    # Библиотека: движок (Vosk/Whisper + cpal + clipboard/RemoteDesktop)
-  arcanaglyph-app/     # Tauri v2 приложение (GUI + tray + горячие клавиши)
+  arcanaglyph-core/       # Библиотека: STT-движки, аудио, конфиг, история
+    src/gigaam/            # GigaAM v3 (mel + ONNX + CTC decode)
+    src/qwen3asr/          # Qwen3-ASR (mel + ONNX + autoregressive decoder)
+  arcanaglyph-app/         # Tauri v2 приложение (GUI + tray + hotkeys)
 dist/
-  index.html           # Фронтенд (vanilla HTML/JS)
-models/
-  vosk-model-ru-0.42/  # Vosk-модель (не в git)
-  ggml-large-v3-turbo.bin  # Whisper-модель (не в git)
+  index.html               # Фронтенд (vanilla HTML/JS)
+scripts/
+  ag-trigger               # UDP-скрипт для Wayland (запись)
+  ag-pause                 # UDP-скрипт для Wayland (пауза)
+assets/
+  arcanaglyph.desktop      # Шаблон .desktop файла
 ```
 
 ## Troubleshooting
 
 ### Ошибка "unable to find library -lvosk"
-
-Библиотека `libvosk.so` не найдена линкером. Добавьте путь:
 
 ```bash
 export LIBRARY_PATH=/usr/local/lib
@@ -173,31 +143,29 @@ export LIBRARY_PATH=/usr/local/lib
 
 Или установите libvosk через `scripts/legacy/install_libvosk.bash`.
 
-### Горячая клавиша не работает
+### Горячая клавиша не работает в русской раскладке
 
-На Wayland глобальные горячие клавиши могут не работать из-за ограничений протокола.
-Попробуйте запустить в сессии X11 или используйте кнопку в окне приложения.
+На Wayland используйте `Ctrl+Ё` — клавиша `grave` не зависит от раскладки.
+Буквенные комбинации (`Super+W`) в русской раскладке не работают — это ограничение GNOME.
 
-### Модель не найдена
+### Wayland: текст не вставляется
 
-Убедитесь, что путь к модели корректен в `~/.config/ArcanaGlyph/config.toml`.
-Путь должен указывать на директорию, содержащую файлы `am/`, `graph/`, `conf/` и другие.
-
-### Wayland: текст не вставляется в активное окно
-
-На Wayland приложения не могут напрямую эмулировать ввод в другие окна.
-ArcanaGlyph использует `wl-copy` (clipboard) + XDG RemoteDesktop portal (симуляция Ctrl+V).
-При первом использовании GNOME покажет диалог подтверждения.
-Установите `wl-clipboard`:
+Установите `wl-clipboard` и разрешите XDG RemoteDesktop portal:
 
 ```bash
 sudo apt install wl-clipboard
 ```
 
-### X11: Ошибка "Не удалось создать Enigo"
+При первом использовании GNOME покажет диалог подтверждения доступа.
 
-Установите `libxdo-dev`:
+### X11: Ошибка "Не удалось создать Enigo"
 
 ```bash
 sudo apt-get install libxdo-dev
+```
+
+### Папка target/ занимает много места
+
+```bash
+make clean   # Удаляет кэш сборки (~10-15 ГБ в debug-режиме)
 ```
