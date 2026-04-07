@@ -36,7 +36,7 @@ pub fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let settings_item = MenuItem::with_id(app, "settings", "Настройки", true, None::<&str>)?;
     let toggle_item = MenuItem::with_id(app, "toggle", "Начать запись", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_item, &settings_item, &toggle_item, &quit_item])?;
+    let menu = Menu::with_items(app, &[&show_item, &toggle_item, &settings_item, &quit_item])?;
 
     // Сохраняем toggle_item в state для обновления текста при смене состояния
     app.manage(TrayToggleItem(toggle_item));
