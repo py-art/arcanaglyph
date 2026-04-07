@@ -5,6 +5,7 @@
 // Добавление новой модели: создать файл *_speech_model.rs и добавить в all().
 
 pub mod gigaam_v3_speech_model;
+pub mod qwen3_asr_speech_model;
 pub mod vosk_russian_speech_model;
 pub mod whisper_large_v3_turbo_speech_model;
 
@@ -25,8 +26,11 @@ pub struct SpeechModelInfo {
     pub description: &'static str,
     /// Примерный размер модели
     pub size: &'static str,
-    /// URL для скачивания
+    /// URL для скачивания (основной или первый файл)
     pub download_url: &'static str,
+    /// Дополнительные файлы для скачивания (URL → относительный путь внутри директории модели)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_files: Option<&'static [(&'static str, &'static str)]>,
 }
 
 /// Все доступные модели распознавания речи
@@ -35,6 +39,7 @@ pub fn all() -> Vec<&'static SpeechModelInfo> {
         &vosk_russian_speech_model::MODEL,
         &whisper_large_v3_turbo_speech_model::MODEL,
         &gigaam_v3_speech_model::MODEL,
+        &qwen3_asr_speech_model::MODEL,
     ]
 }
 

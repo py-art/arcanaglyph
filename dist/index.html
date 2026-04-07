@@ -1024,6 +1024,7 @@
               <div class="custom-select-option" data-value="vosk">Vosk — быстрый, менее точный</div>
               <div class="custom-select-option" data-value="whisper">Whisper — точный, медленнее</div>
               <div class="custom-select-option" data-value="gigaam">GigaAM v3 — лучший для русского</div>
+              <div class="custom-select-option" data-value="qwen3asr">Qwen3-ASR — мультиязычный</div>
             </div>
           </div>
         </div>
@@ -1036,9 +1037,13 @@
           <label>Предзагрузка Whisper</label>
           <div class="toggle" id="s-preload-whisper"></div>
         </div>
-        <div class="setting-row" style="margin-bottom:0.5rem;">
+        <div class="setting-row">
           <label>Предзагрузка GigaAM</label>
           <div class="toggle" id="s-preload-gigaam"></div>
+        </div>
+        <div class="setting-row" style="margin-bottom:0.5rem;">
+          <label>Предзагрузка Qwen3-ASR</label>
+          <div class="toggle" id="s-preload-qwen3asr"></div>
         </div>
 
         <div class="setting-group">
@@ -1170,6 +1175,11 @@
           <input type="text" id="s-gigaam-path" placeholder="models/gigaam-v3-e2e-ctc" />
         </div>
 
+        <div class="setting-group">
+          <label>Путь к Qwen3-ASR (директория)</label>
+          <input type="text" id="s-qwen3asr-path" placeholder="models/qwen3-asr-0.6b" />
+        </div>
+
         <div class="models-section-title">Доступные модели</div>
         <div id="model-cards-container"></div>
       </div>
@@ -1289,13 +1299,20 @@
         'ggml-large-v3.bin': 'Whisper V3',
         'ggml-medium.bin': 'Whisper Medium',
         'ggml-small.bin': 'Whisper Small',
+        'gigaam-v3-e2e-ctc': 'GigaAM v3',
+        'qwen3-asr-0.6b': 'Qwen3-ASR',
       };
 
       async function updateModelBadge() {
         try {
-          const result = await invoke('get_loaded_models');
-          const active = result.active || '';
-          modelBadge.textContent = MODEL_SHORT_NAMES[active] || active;
+          // Читаем из конфига — он всегда актуален после сохранения
+          const cfg = await invoke('load_config');
+          const modelName = cfg.transcriber === 'vosk' ? cfg.model_path.split('/').pop()
+            : cfg.transcriber === 'whisper' ? cfg.whisper_model_path.split('/').pop()
+            : cfg.transcriber === 'gigaam' ? cfg.gigaam_model_path.split('/').pop()
+            : cfg.transcriber === 'qwen3asr' ? cfg.qwen3asr_model_path.split('/').pop()
+            : cfg.transcriber;
+          modelBadge.textContent = MODEL_SHORT_NAMES[modelName] || modelName;
         } catch(_) {}
       }
 
@@ -1459,13 +1476,16 @@
         const voskToggle = document.getElementById('s-preload-vosk');
         const whisperToggle = document.getElementById('s-preload-whisper');
         const gigaamToggle = document.getElementById('s-preload-gigaam');
+        const qwen3asrToggle = document.getElementById('s-preload-qwen3asr');
         voskToggle.classList.toggle('locked', transcriber === 'vosk');
         whisperToggle.classList.toggle('locked', transcriber === 'whisper');
         gigaamToggle.classList.toggle('locked', transcriber === 'gigaam');
+        qwen3asrToggle.classList.toggle('locked', transcriber === 'qwen3asr');
         // Модель по умолчанию всегда ON
         if (transcriber === 'vosk') voskToggle.classList.add('on');
         if (transcriber === 'whisper') whisperToggle.classList.add('on');
         if (transcriber === 'gigaam') gigaamToggle.classList.add('on');
+        if (transcriber === 'qwen3asr') qwen3asrToggle.classList.add('on');
       }
 
       // Загрузка настроек из бэкенда
@@ -1477,6 +1497,7 @@
           model_path: cfg.model_path,
           whisper_model_path: cfg.whisper_model_path,
           gigaam_model_path: cfg.gigaam_model_path,
+          qwen3asr_model_path: cfg.qwen3asr_model_path,
           sample_rate: cfg.sample_rate,
           max_record_secs: cfg.max_record_secs,
           hotkey: cfg.hotkey,
@@ -1495,6 +1516,7 @@
         document.getElementById('s-model-path').value = cfg.model_path;
         document.getElementById('s-whisper-path').value = cfg.whisper_model_path;
         document.getElementById('s-gigaam-path').value = cfg.gigaam_model_path;
+        document.getElementById('s-qwen3asr-path').value = cfg.qwen3asr_model_path;
         setCustomSelect('s-sample-rate', String(cfg.sample_rate));
         document.getElementById('s-max-record').value = cfg.max_record_secs;
         setHotkeyValue('hk-trigger', cfg.hotkey);
@@ -1510,6 +1532,7 @@
         document.getElementById('s-preload-vosk').classList.toggle('on', preload.includes('vosk') || cfg.transcriber === 'vosk');
         document.getElementById('s-preload-whisper').classList.toggle('on', preload.includes('whisper') || cfg.transcriber === 'whisper');
         document.getElementById('s-preload-gigaam').classList.toggle('on', preload.includes('gigaam') || cfg.transcriber === 'gigaam');
+        document.getElementById('s-preload-qwen3asr').classList.toggle('on', preload.includes('qwen3asr') || cfg.transcriber === 'qwen3asr');
         updatePreloadLocks(cfg.transcriber);
 
         saveBtn.disabled = true;
@@ -1562,6 +1585,7 @@
                 const p = document.getElementById('s-whisper-path').value || 'models/' + filename;
                 destDir = p.substring(0, p.lastIndexOf('/') + 1) || 'models/';
               } else if (ttype === 'gigaam') destDir = document.getElementById('s-gigaam-path').value || 'models/' + filename;
+              else if (ttype === 'qwen3asr') destDir = document.getElementById('s-qwen3asr-path').value || 'models/' + filename;
               else destDir = 'models/' + filename;
 
               btn.disabled = true;
@@ -1587,13 +1611,19 @@
 
       // Прогресс скачивания модели
       listen('download://progress', (ev) => {
-        const { model_id, percent } = ev.payload;
+        const { model_id, percent, file_idx, total_files, file } = ev.payload;
         const card = document.querySelector(`.model-card[data-model-id="${model_id}"]`);
         if (card) {
           const fill = card.querySelector('.model-progress-fill');
           const text = card.querySelector('.model-progress-text');
           if (fill) fill.style.width = percent + '%';
-          if (text) text.textContent = percent + '%';
+          if (text) {
+            if (total_files > 1) {
+              text.textContent = `[${file_idx + 1}/${total_files}] ${percent}%`;
+            } else {
+              text.textContent = percent + '%';
+            }
+          }
         }
       });
 
@@ -1618,6 +1648,7 @@
           model_path: document.getElementById('s-model-path').value,
           whisper_model_path: document.getElementById('s-whisper-path').value,
           gigaam_model_path: document.getElementById('s-gigaam-path').value,
+          qwen3asr_model_path: document.getElementById('s-qwen3asr-path').value,
           sample_rate: parseInt(document.getElementById('s-sample-rate').dataset.value),
           max_record_secs: parseInt(document.getElementById('s-max-record').value),
           hotkey: getHotkeyValue('hk-trigger'),
@@ -1633,6 +1664,7 @@
             ...(document.getElementById('s-preload-vosk').classList.contains('on') ? ['vosk'] : []),
             ...(document.getElementById('s-preload-whisper').classList.contains('on') ? ['whisper'] : []),
             ...(document.getElementById('s-preload-gigaam').classList.contains('on') ? ['gigaam'] : []),
+            ...(document.getElementById('s-preload-qwen3asr').classList.contains('on') ? ['qwen3asr'] : []),
           ], document.getElementById('s-transcriber').dataset.value),
         };
       }
@@ -1643,6 +1675,7 @@
         model_path:        { el: 's-model-path',   type: 'group' },
         whisper_model_path:{ el: 's-whisper-path',  type: 'group' },
         gigaam_model_path: { el: 's-gigaam-path',   type: 'group' },
+        qwen3asr_model_path: { el: 's-qwen3asr-path', type: 'group' },
         sample_rate:       { el: 's-sample-rate',  type: 'group' },
         max_record_secs:   { el: 's-max-record',   type: 'group' },
         hotkey:            { el: 'hk-trigger',      type: 'group' },
@@ -1748,7 +1781,7 @@
       initCustomSelects();
 
       // Навешиваем обработчики изменений
-      ['s-model-path', 's-whisper-path', 's-gigaam-path', 's-max-record', 's-vad-silence']
+      ['s-model-path', 's-whisper-path', 's-gigaam-path', 's-qwen3asr-path', 's-max-record', 's-vad-silence']
         .forEach(id => document.getElementById(id).addEventListener('input', checkChanges));
       ['s-transcriber', 's-sample-rate', 's-retention']
         .forEach(id => document.getElementById(id).addEventListener('change', checkChanges));
@@ -1911,7 +1944,7 @@
       });
 
       // Toggle-переключатели
-      ['s-auto-type', 's-debug', 's-vad-enabled', 's-remove-fillers', 's-start-minimized', 's-preload-vosk', 's-preload-whisper', 's-preload-gigaam'].forEach(id => {
+      ['s-auto-type', 's-debug', 's-vad-enabled', 's-remove-fillers', 's-start-minimized', 's-preload-vosk', 's-preload-whisper', 's-preload-gigaam', 's-preload-qwen3asr'].forEach(id => {
         document.getElementById(id).addEventListener('click', () => {
           document.getElementById(id).classList.toggle('on');
           checkChanges();
@@ -1925,6 +1958,7 @@
         document.getElementById('s-model-path').value = originalConfig.model_path;
         document.getElementById('s-whisper-path').value = originalConfig.whisper_model_path;
         document.getElementById('s-gigaam-path').value = originalConfig.gigaam_model_path;
+        document.getElementById('s-qwen3asr-path').value = originalConfig.qwen3asr_model_path;
         setCustomSelect('s-sample-rate', String(originalConfig.sample_rate));
         document.getElementById('s-max-record').value = originalConfig.max_record_secs;
         setHotkeyValue('hk-trigger', originalConfig.hotkey);
@@ -1940,6 +1974,7 @@
         document.getElementById('s-preload-vosk').classList.toggle('on', preloadOrig.includes('vosk'));
         document.getElementById('s-preload-whisper').classList.toggle('on', preloadOrig.includes('whisper'));
         document.getElementById('s-preload-gigaam').classList.toggle('on', preloadOrig.includes('gigaam'));
+        document.getElementById('s-preload-qwen3asr').classList.toggle('on', preloadOrig.includes('qwen3asr'));
         checkChanges();
       });
 
@@ -2010,6 +2045,8 @@
         closeAllDropdowns();
         menuBtn.classList.toggle('back', page !== 'main');
         currentPage = page;
+        // Обновляем бейдж модели при возврате на главный экран
+        if (page === 'main') updateModelBadge();
       };
 
       // Обновить кнопку "Назад" для истории
@@ -2051,6 +2088,7 @@
         { type: 'vosk', label: 'Vosk' },
         { type: 'whisper', label: 'Whisper' },
         { type: 'gigaam', label: 'GigaAM' },
+        { type: 'qwen3asr', label: 'Qwen3-ASR' },
       ];
 
       function renderHistory(entries, total) {
