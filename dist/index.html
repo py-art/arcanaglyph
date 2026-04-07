@@ -1629,27 +1629,39 @@
           field.classList.add('recording');
           field.querySelector('.hotkey-value').textContent = 'Нажмите комбинацию...';
 
+          // Трекинг Super/Meta вручную (event.metaKey не работает в Wayland/Tauri)
+          let superPressed = false;
+          const onKeyUp = (e) => {
+            if (e.key === 'Meta' || e.key === 'Super') superPressed = false;
+          };
+
           handler = (e) => {
             e.preventDefault();
             e.stopPropagation();
 
+            // Запоминаем Super при нажатии
+            if (e.key === 'Meta' || e.key === 'Super') {
+              superPressed = true;
+              return;
+            }
+
             // Пропускаем чисто модификаторные нажатия
-            if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return;
+            if (['Control', 'Alt', 'Shift'].includes(e.key)) return;
 
             // Escape — отмена
-            if (e.key === 'Escape') {
+            if (e.key === 'Escape' && !superPressed && !e.altKey && !e.ctrlKey && !e.shiftKey) {
               recording = false;
               field.classList.remove('recording');
-              // Восстанавливаем текущее значение
               const val = field.querySelector('.hotkey-value').dataset.value;
               field.querySelector('.hotkey-value').textContent = val || 'Не задана';
               document.removeEventListener('keydown', handler, true);
+              document.removeEventListener('keyup', onKeyUp, true);
               return;
             }
 
             // Собираем модификаторы
             const parts = [];
-            if (e.metaKey) parts.push('Super');
+            if (superPressed || e.metaKey) parts.push('Super');
             if (e.altKey) parts.push('Alt');
             if (e.ctrlKey) parts.push('Control');
             if (e.shiftKey) parts.push('Shift');
@@ -1658,12 +1670,15 @@
             const combo = parts.join('+');
             setHotkeyValue(fieldId, combo);
             recording = false;
+            superPressed = false;
             field.classList.remove('recording');
             document.removeEventListener('keydown', handler, true);
+            document.removeEventListener('keyup', onKeyUp, true);
             checkChanges();
           };
 
           document.addEventListener('keydown', handler, true);
+          document.addEventListener('keyup', onKeyUp, true);
         });
 
         clearBtn.addEventListener('click', () => {
