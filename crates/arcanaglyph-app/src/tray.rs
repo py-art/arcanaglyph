@@ -17,6 +17,8 @@ pub struct TrayIconHandle(pub TrayIcon);
 
 /// Красная иконка для режима записи (встроена при компиляции)
 const RECORDING_ICON: &[u8] = include_bytes!("../icons/32x32-recording.png");
+/// Оранжевая иконка для режима паузы
+const PAUSED_ICON: &[u8] = include_bytes!("../icons/32x32-paused.png");
 
 /// Показать окно и поставить в фокус
 pub fn show_window(app: &AppHandle) {
@@ -80,16 +82,31 @@ pub fn set_tray_text(app: &AppHandle, text: &str) {
     }
 }
 
-/// Переключает иконку трея: красная при записи, белая по умолчанию
-pub fn set_tray_recording(app: &AppHandle, recording: bool) {
+/// Состояние иконки трея
+pub enum TrayState {
+    /// Обычное состояние (белая иконка)
+    Idle,
+    /// Запись (красная иконка)
+    Recording,
+    /// Пауза (оранжевая иконка)
+    Paused,
+}
+
+/// Переключает иконку трея в зависимости от состояния
+pub fn set_tray_state(app: &AppHandle, state: TrayState) {
     if let Some(tray) = app.try_state::<TrayIconHandle>() {
-        let icon = if recording {
-            tauri::image::Image::from_bytes(RECORDING_ICON).ok()
-        } else {
-            app.default_window_icon().cloned()
+        let icon = match state {
+            TrayState::Recording => tauri::image::Image::from_bytes(RECORDING_ICON).ok(),
+            TrayState::Paused => tauri::image::Image::from_bytes(PAUSED_ICON).ok(),
+            TrayState::Idle => app.default_window_icon().cloned(),
         };
         if let Some(icon) = icon {
             let _ = tray.0.set_icon(Some(icon));
         }
     }
+}
+
+/// Обратная совместимость: переключает запись/нет
+pub fn set_tray_recording(app: &AppHandle, recording: bool) {
+    set_tray_state(app, if recording { TrayState::Recording } else { TrayState::Idle });
 }

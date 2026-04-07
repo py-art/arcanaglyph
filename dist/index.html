@@ -557,6 +557,98 @@
       .settings-tab-content { display: none; }
       .settings-tab-content.active { display: block; }
 
+      /* === Композер горячих клавиш === */
+      .hotkey-composer {
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 6px;
+        padding: 0.6rem;
+        transition: border-color 0.15s;
+      }
+      .setting-group.changed .hotkey-composer { border-color: #ff9e64; }
+      .hotkey-mods {
+        display: flex;
+        gap: 0.3rem;
+        margin-bottom: 0.4rem;
+      }
+      .hotkey-mod {
+        padding: 0.25rem 0.5rem;
+        background: #292e42;
+        border: 1px solid #292e42;
+        border-radius: 4px;
+        color: #565f89;
+        font-size: 0.75rem;
+        cursor: pointer;
+        transition: all 0.15s;
+        user-select: none;
+      }
+      .hotkey-mod:hover { border-color: #7aa2f7; color: #c0caf5; }
+      .hotkey-mod.active {
+        background: rgba(122, 162, 247, 0.15);
+        border-color: #7aa2f7;
+        color: #7aa2f7;
+      }
+      .hotkey-key-row {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+      }
+      .hotkey-plus {
+        color: #565f89;
+        font-size: 0.85rem;
+      }
+      .hotkey-key-input {
+        flex: 1;
+        height: 32px;
+        padding: 0 0.5rem;
+        background: #292e42;
+        border: 1px solid #292e42;
+        border-radius: 4px;
+        color: #c0caf5;
+        font-size: 0.85rem;
+        outline: none;
+        transition: border-color 0.15s;
+      }
+      .hotkey-key-input:focus { border-color: #7aa2f7; }
+      .hotkey-key-input.recording {
+        border-color: #ff9e64;
+        animation: hotkey-pulse 1s ease-in-out infinite;
+      }
+      @keyframes hotkey-pulse {
+        0%, 100% { border-color: #ff9e64; }
+        50% { border-color: #292e42; }
+      }
+      .hotkey-key-input::placeholder { color: #565f89; }
+      .hotkey-record-btn, .hotkey-clear-btn {
+        background: none;
+        border: 1px solid #292e42;
+        border-radius: 4px;
+        color: #565f89;
+        font-size: 0.85rem;
+        padding: 0.15rem 0.4rem;
+        cursor: pointer;
+        transition: color 0.15s, border-color 0.15s;
+      }
+      .hotkey-record-btn:hover { color: #7aa2f7; border-color: #7aa2f7; }
+      .hotkey-clear-btn:hover { color: #f7768e; border-color: #f7768e; }
+      .hotkey-preview {
+        margin-top: 0.4rem;
+        font-size: 0.75rem;
+        color: #565f89;
+        min-height: 1em;
+      }
+      .hotkey-preview:not([data-value=""]) { color: #9ece6a; }
+      .wayland-warning {
+        margin-top: 1rem;
+        padding: 0.6rem 0.8rem;
+        background: rgba(255, 158, 100, 0.08);
+        border: 1px solid rgba(255, 158, 100, 0.25);
+        border-radius: 6px;
+        font-size: 0.8rem;
+        color: #ff9e64;
+        line-height: 1.4;
+      }
+
       /* === Карточки моделей === */
       .models-section-title {
         font-size: 0.85rem;
@@ -892,6 +984,7 @@
       <div class="settings-tabs">
         <div class="settings-tab active" data-tab="general">Основное</div>
         <div class="settings-tab" data-tab="models">Модели</div>
+        <div class="settings-tab" data-tab="hotkeys">Клавиши</div>
       </div>
 
       <!-- Таб: Основное -->
@@ -938,11 +1031,6 @@
           <input type="number" id="s-max-record" min="5" max="120" />
         </div>
 
-        <div class="setting-group">
-          <label>Горячая клавиша</label>
-          <input type="text" id="s-hotkey" placeholder="Super+Alt+Control+Space" />
-        </div>
-
         <div class="setting-row">
           <label>Авто-вставка текста</label>
           <div class="toggle" id="s-auto-type"></div>
@@ -961,6 +1049,53 @@
         <div class="setting-row">
           <label>Запуск в трей</label>
           <div class="toggle" id="s-start-minimized"></div>
+        </div>
+      </div>
+
+      <!-- Таб: Модели -->
+      <!-- Таб: Горячие клавиши -->
+      <div class="settings-tab-content" id="tab-hotkeys">
+        <div class="setting-group">
+          <label>Запись (старт/стоп)</label>
+          <div class="hotkey-composer" id="hk-trigger">
+            <div class="hotkey-mods">
+              <button class="hotkey-mod" data-mod="Super">Super</button>
+              <button class="hotkey-mod" data-mod="Control">Ctrl</button>
+              <button class="hotkey-mod" data-mod="Alt">Alt</button>
+              <button class="hotkey-mod" data-mod="Shift">Shift</button>
+            </div>
+            <div class="hotkey-key-row">
+              <span class="hotkey-plus">+</span>
+              <input type="text" class="hotkey-key-input" placeholder="клавиша" readonly />
+              <button class="hotkey-record-btn" title="Записать клавишу">✎</button>
+              <button class="hotkey-clear-btn" title="Очистить">✕</button>
+            </div>
+            <div class="hotkey-preview" data-value=""></div>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <label>Пауза</label>
+          <div class="hotkey-composer" id="hk-pause">
+            <div class="hotkey-mods">
+              <button class="hotkey-mod" data-mod="Super">Super</button>
+              <button class="hotkey-mod" data-mod="Control">Ctrl</button>
+              <button class="hotkey-mod" data-mod="Alt">Alt</button>
+              <button class="hotkey-mod" data-mod="Shift">Shift</button>
+            </div>
+            <div class="hotkey-key-row">
+              <span class="hotkey-plus">+</span>
+              <input type="text" class="hotkey-key-input" placeholder="клавиша" readonly />
+              <button class="hotkey-record-btn" title="Записать клавишу">✎</button>
+              <button class="hotkey-clear-btn" title="Очистить">✕</button>
+            </div>
+            <div class="hotkey-preview" data-value=""></div>
+          </div>
+        </div>
+
+        <div class="wayland-warning" id="wayland-warning" style="display:none;">
+          Wayland: горячие клавиши регистрируются через GNOME Settings (gsettings).
+          При сохранении комбинации автоматически применяются в системе.
         </div>
       </div>
 
@@ -1291,6 +1426,7 @@
           sample_rate: cfg.sample_rate,
           max_record_secs: cfg.max_record_secs,
           hotkey: cfg.hotkey,
+          hotkey_pause: cfg.hotkey_pause || '',
           auto_type: cfg.auto_type,
           debug: cfg.debug,
           remove_fillers: cfg.remove_fillers !== false,
@@ -1304,7 +1440,8 @@
         document.getElementById('s-gigaam-path').value = cfg.gigaam_model_path;
         setCustomSelect('s-sample-rate', String(cfg.sample_rate));
         document.getElementById('s-max-record').value = cfg.max_record_secs;
-        document.getElementById('s-hotkey').value = cfg.hotkey;
+        setHotkeyValue('hk-trigger', cfg.hotkey);
+        setHotkeyValue('hk-pause', cfg.hotkey_pause || '');
         document.getElementById('s-auto-type').classList.toggle('on', cfg.auto_type);
         document.getElementById('s-debug').classList.toggle('on', cfg.debug);
         document.getElementById('s-remove-fillers').classList.toggle('on', cfg.remove_fillers !== false);
@@ -1370,7 +1507,8 @@
           gigaam_model_path: document.getElementById('s-gigaam-path').value,
           sample_rate: parseInt(document.getElementById('s-sample-rate').dataset.value),
           max_record_secs: parseInt(document.getElementById('s-max-record').value),
-          hotkey: document.getElementById('s-hotkey').value,
+          hotkey: getHotkeyValue('hk-trigger'),
+          hotkey_pause: getHotkeyValue('hk-pause'),
           auto_type: document.getElementById('s-auto-type').classList.contains('on'),
           debug: document.getElementById('s-debug').classList.contains('on'),
           remove_fillers: document.getElementById('s-remove-fillers').classList.contains('on'),
@@ -1391,7 +1529,8 @@
         gigaam_model_path: { el: 's-gigaam-path',   type: 'group' },
         sample_rate:       { el: 's-sample-rate',  type: 'group' },
         max_record_secs:   { el: 's-max-record',   type: 'group' },
-        hotkey:            { el: 's-hotkey',        type: 'group' },
+        hotkey:            { el: 'hk-trigger',      type: 'group' },
+        hotkey_pause:      { el: 'hk-pause',        type: 'group' },
         auto_type:         { el: 's-auto-type',     type: 'row' },
         debug:             { el: 's-debug',          type: 'row' },
         remove_fillers:    { el: 's-remove-fillers',  type: 'row' },
@@ -1490,13 +1629,155 @@
       initCustomSelects();
 
       // Навешиваем обработчики изменений
-      ['s-model-path', 's-whisper-path', 's-gigaam-path', 's-max-record', 's-hotkey']
+      ['s-model-path', 's-whisper-path', 's-gigaam-path', 's-max-record']
         .forEach(id => document.getElementById(id).addEventListener('input', checkChanges));
       ['s-transcriber', 's-sample-rate']
         .forEach(id => document.getElementById(id).addEventListener('change', checkChanges));
       // При смене модели по умолчанию — обновить блокировки предзагрузки
       document.getElementById('s-transcriber').addEventListener('change', () => {
         updatePreloadLocks(document.getElementById('s-transcriber').dataset.value);
+      });
+
+      // === Композер горячих клавиш ===
+      // Модификаторы выбираются кнопками, основная клавиша — через рекордер.
+      // Super на Wayland не доходит до WebView, поэтому кнопка вместо keydown.
+
+      // Маппинг JS event.code → Tauri формат
+      function mapKeyCode(event) {
+        const code = event.code;
+        if (code.startsWith('Key')) return code.slice(3);
+        if (code.startsWith('Digit')) return code.slice(5);
+        if (/^F\d+$/.test(code)) return code;
+        const map = {
+          Space: 'Space', Enter: 'Return', Tab: 'Tab',
+          Backspace: 'Backspace', Delete: 'Delete', Insert: 'Insert',
+          ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
+          Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',
+          Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']',
+          Semicolon: ';', Quote: "'", Backquote: '`', Backslash: '\\',
+          Comma: ',', Period: '.', Slash: '/',
+        };
+        return map[code] || event.key;
+      }
+
+      // Собрать комбинацию из состояния композера
+      function composeHotkey(composer) {
+        const mods = [];
+        composer.querySelectorAll('.hotkey-mod.active').forEach(btn => {
+          mods.push(btn.dataset.mod);
+        });
+        const keyInput = composer.querySelector('.hotkey-key-input');
+        const key = keyInput.dataset.key || '';
+        if (!key) return '';
+        return [...mods, key].join('+');
+      }
+
+      // Обновить превью
+      function updateHotkeyPreview(composer) {
+        const combo = composeHotkey(composer);
+        const preview = composer.querySelector('.hotkey-preview');
+        preview.dataset.value = combo;
+        preview.textContent = combo || '';
+      }
+
+      // Получить/установить значение
+      function getHotkeyValue(id) {
+        return composeHotkey(document.getElementById(id));
+      }
+
+      function setHotkeyValue(id, value) {
+        const composer = document.getElementById(id);
+        // Сбрасываем всё
+        composer.querySelectorAll('.hotkey-mod').forEach(btn => btn.classList.remove('active'));
+        const keyInput = composer.querySelector('.hotkey-key-input');
+        keyInput.value = '';
+        keyInput.dataset.key = '';
+
+        if (!value) {
+          updateHotkeyPreview(composer);
+          return;
+        }
+
+        // Парсим "Super+Shift+G" → mods + key
+        const parts = value.split('+');
+        const modNames = ['Super', 'Control', 'Alt', 'Shift'];
+        for (const part of parts) {
+          if (modNames.includes(part)) {
+            const btn = composer.querySelector(`.hotkey-mod[data-mod="${part}"]`);
+            if (btn) btn.classList.add('active');
+          } else {
+            keyInput.value = part;
+            keyInput.dataset.key = part;
+          }
+        }
+        updateHotkeyPreview(composer);
+      }
+
+      // Инициализация композера
+      function initHotkeyComposer(composerId) {
+        const composer = document.getElementById(composerId);
+
+        // Toggle модификаторов
+        composer.querySelectorAll('.hotkey-mod').forEach(btn => {
+          btn.addEventListener('click', () => {
+            btn.classList.toggle('active');
+            updateHotkeyPreview(composer);
+            checkChanges();
+          });
+        });
+
+        // Рекордер основной клавиши
+        const keyInput = composer.querySelector('.hotkey-key-input');
+        const recordBtn = composer.querySelector('.hotkey-record-btn');
+        const clearBtn = composer.querySelector('.hotkey-clear-btn');
+
+        recordBtn.addEventListener('click', () => {
+          keyInput.classList.add('recording');
+          keyInput.value = 'Нажмите клавишу...';
+          keyInput.focus();
+
+          const handler = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Пропускаем модификаторы — они управляются кнопками
+            if (['Control', 'Alt', 'Shift', 'Meta', 'Super', 'OS'].includes(e.key)) return;
+
+            // Escape — отмена
+            if (e.key === 'Escape') {
+              keyInput.classList.remove('recording');
+              keyInput.value = keyInput.dataset.key || '';
+              document.removeEventListener('keydown', handler, true);
+              return;
+            }
+
+            const mapped = mapKeyCode(e);
+            keyInput.dataset.key = mapped;
+            keyInput.value = mapped;
+            keyInput.classList.remove('recording');
+            document.removeEventListener('keydown', handler, true);
+            updateHotkeyPreview(composer);
+            checkChanges();
+          };
+
+          document.addEventListener('keydown', handler, true);
+        });
+
+        // Очистка
+        clearBtn.addEventListener('click', () => {
+          setHotkeyValue(composerId, '');
+          checkChanges();
+        });
+      }
+
+      initHotkeyComposer('hk-trigger');
+      initHotkeyComposer('hk-pause');
+
+      // Проверяем Wayland и показываем предупреждение
+      invoke('is_wayland').then(wayland => {
+        if (wayland) {
+          document.getElementById('wayland-warning').style.display = 'block';
+        }
       });
 
       // Переключение табов настроек
@@ -1527,7 +1808,8 @@
         document.getElementById('s-gigaam-path').value = originalConfig.gigaam_model_path;
         setCustomSelect('s-sample-rate', String(originalConfig.sample_rate));
         document.getElementById('s-max-record').value = originalConfig.max_record_secs;
-        document.getElementById('s-hotkey').value = originalConfig.hotkey;
+        setHotkeyValue('hk-trigger', originalConfig.hotkey);
+        setHotkeyValue('hk-pause', originalConfig.hotkey_pause || '');
         document.getElementById('s-auto-type').classList.toggle('on', originalConfig.auto_type);
         document.getElementById('s-debug').classList.toggle('on', originalConfig.debug);
         document.getElementById('s-remove-fillers').classList.toggle('on', originalConfig.remove_fillers !== false);
@@ -1543,6 +1825,35 @@
       saveBtn.addEventListener('click', async () => {
         const cfg = getFormConfig();
         await invoke('save_config', { config: cfg });
+
+        // На Wayland — проверяем конфликты и регистрируем хоткеи через gsettings
+        try {
+          const wayland = await invoke('is_wayland');
+          if (wayland) {
+            // Проверяем конфликты
+            const conflicts = [];
+            if (cfg.hotkey) {
+              const c = await invoke('check_hotkey_conflict', { hotkey: cfg.hotkey });
+              if (c) conflicts.push(`Trigger (${cfg.hotkey}): занята — ${c}`);
+            }
+            if (cfg.hotkey_pause) {
+              const c = await invoke('check_hotkey_conflict', { hotkey: cfg.hotkey_pause });
+              if (c) conflicts.push(`Pause (${cfg.hotkey_pause}): занята — ${c}`);
+            }
+            if (conflicts.length > 0) {
+              const msg = 'Обнаружены конфликты клавиш:\n\n' + conflicts.join('\n') + '\n\nВсё равно сохранить?';
+              if (!confirm(msg)) return;
+            }
+
+            await invoke('register_gnome_hotkeys', {
+              hotkeyTrigger: cfg.hotkey,
+              hotkeyPause: cfg.hotkey_pause,
+            });
+          }
+        } catch (e) {
+          console.warn('Не удалось зарегистрировать GNOME хоткеи:', e);
+        }
+
         originalConfig = JSON.parse(JSON.stringify(cfg));
         checkChanges();
         saveNotice.classList.add('visible');
