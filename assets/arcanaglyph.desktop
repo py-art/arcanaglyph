@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=ArcanaGlyph
+GenericName=Voice Input
+Comment=Голосовой ввод текста — Vosk, Whisper, GigaAM, Qwen3-ASR
+Exec=arcanaglyph
+Icon=arcanaglyph
+Terminal=false
+Categories=Utility;Audio;Accessibility;
+Keywords=voice;speech;transcription;stt;dictation;
+StartupWMClass=arcanaglyph

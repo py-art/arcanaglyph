@@ -47,7 +47,7 @@ build:
 ##############################################################################
 .PHONY: run   ## Run application (single command)
 run:
-	cargo run -p arcanaglyph-app
+	cargo run -p arcanaglyph-app --bin arcanaglyph
 
 ##############################################################################
 # Code quality
@@ -77,9 +77,7 @@ dist:
 .PHONY: clean  ## Clean the build cache
 clean:
 	echo "${GREEN}INFO : ${AZURE}Start Clean${AZURE}${RESET}"
-	rm -f Cargo.lock
 	cargo clean
-	rm -rf target/
 
 .PHONY: rebuild ## Clean and rebuild the project
 rebuild: clean check

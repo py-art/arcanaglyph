@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ArcanaGlyph",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "identifier": "com.arcanaglyph.dev",
   "build": {
     "beforeDevCommand": "",
@@ -18,7 +18,24 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "targets": ["deb", "appimage"]
+    "targets": ["deb", "appimage"],
+    "linux": {
+      "deb": {
+        "depends": [
+          "libasound2",
+          "libgtk-3-0",
+          "libwebkit2gtk-4.1-0",
+          "libxdo3",
+          "wl-clipboard",
+          "netcat-openbsd"
+        ],
+        "section": "utils",
+        "desktopTemplate": "../../assets/arcanaglyph.desktop"
+      }
+    },
+    "shortDescription": "Голосовой ввод текста",
+    "longDescription": "ArcanaGlyph — десктопное приложение для голосового ввода текста. Поддерживает Vosk, Whisper, GigaAM v3, Qwen3-ASR. Работает на Wayland и X11.",
+    "category": "Utility"
   },
   "app": {
     "withGlobalTauri": true,
