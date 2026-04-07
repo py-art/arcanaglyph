@@ -244,6 +244,7 @@ impl ArcanaEngine {
         let silence_timeout_secs = config.max_record_secs;
         let sample_rate = config.sample_rate;
         let auto_type = config.auto_type;
+        let remove_fillers = config.remove_fillers;
         let debug = config.debug;
         let audio_level = Arc::clone(&self.audio_level);
         let handle = self.rt_handle.clone();
@@ -368,7 +369,14 @@ impl ArcanaEngine {
 
                     match result {
                         Ok(Ok(rec)) => {
-                            if rec.text.is_empty() {
+                            // Пост-процессинг: удаление слов-паразитов
+                            let text = if remove_fillers {
+                                crate::transcriber::remove_filler_words(&rec.text)
+                            } else {
+                                rec.text.clone()
+                            };
+
+                            if text.is_empty() {
                                 tracing::warn!("Распознавание вернуло пустой результат. Проверьте микрофон.");
                                 let _ = event_tx_clone.send(EngineEvent::Error(
                                     "Микрофон не захватил речь. Проверьте, что микрофон подключён и выбран как устройство по умолчанию.".to_string(),
@@ -379,7 +387,7 @@ impl ArcanaEngine {
                                 let transcriber_type_str = config.transcriber_type_str();
                                 if let Err(e) = (|| -> Result<(), crate::error::ArcanaError> {
                                     let rec_id = history_db.add_recording(&rec.audio_path, rec.duration_secs)?;
-                                    history_db.add_transcription(rec_id, &rec.text, &model_name, &transcriber_type_str)?;
+                                    history_db.add_transcription(rec_id, &text, &model_name, &transcriber_type_str)?;
                                     Ok(())
                                 })() {
                                     tracing::warn!("Не удалось сохранить в историю: {}", e);
@@ -389,11 +397,11 @@ impl ArcanaEngine {
                                 // Вставляем текст только когда окно скрыто (в трее)
                                 if auto_type && !is_visible {
                                     eprintln!("[Вставка] в активное окно...");
-                                    if let Err(e) = crate::input::type_text(&rec.text).await {
+                                    if let Err(e) = crate::input::type_text(&text).await {
                                         tracing::error!("Не удалось вставить текст: {}", e);
                                     }
                                 }
-                                let _ = event_tx_clone.send(EngineEvent::TranscriptionResult(rec.text));
+                                let _ = event_tx_clone.send(EngineEvent::TranscriptionResult(text));
                                 // Если окно видимо — запрашиваем фокус для вывода на передний план
                                 if is_visible {
                                     let _ = event_tx_clone.send(EngineEvent::RequestFocus);

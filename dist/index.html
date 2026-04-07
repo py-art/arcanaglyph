@@ -954,6 +954,11 @@
         </div>
 
         <div class="setting-row">
+          <label>Удалять слова-паразиты</label>
+          <div class="toggle" id="s-remove-fillers"></div>
+        </div>
+
+        <div class="setting-row">
           <label>Запуск в трей</label>
           <div class="toggle" id="s-start-minimized"></div>
         </div>
@@ -1288,6 +1293,7 @@
           hotkey: cfg.hotkey,
           auto_type: cfg.auto_type,
           debug: cfg.debug,
+          remove_fillers: cfg.remove_fillers !== false,
           start_minimized: cfg.start_minimized || false,
           preload_models: normalizePreload(cfg.preload_models || [], cfg.transcriber),
         };
@@ -1301,6 +1307,7 @@
         document.getElementById('s-hotkey').value = cfg.hotkey;
         document.getElementById('s-auto-type').classList.toggle('on', cfg.auto_type);
         document.getElementById('s-debug').classList.toggle('on', cfg.debug);
+        document.getElementById('s-remove-fillers').classList.toggle('on', cfg.remove_fillers !== false);
         document.getElementById('s-start-minimized').classList.toggle('on', cfg.start_minimized || false);
         const preload = cfg.preload_models || [];
         document.getElementById('s-preload-vosk').classList.toggle('on', preload.includes('vosk') || cfg.transcriber === 'vosk');
@@ -1366,6 +1373,7 @@
           hotkey: document.getElementById('s-hotkey').value,
           auto_type: document.getElementById('s-auto-type').classList.contains('on'),
           debug: document.getElementById('s-debug').classList.contains('on'),
+          remove_fillers: document.getElementById('s-remove-fillers').classList.contains('on'),
           start_minimized: document.getElementById('s-start-minimized').classList.contains('on'),
           preload_models: normalizePreload([
             ...(document.getElementById('s-preload-vosk').classList.contains('on') ? ['vosk'] : []),
@@ -1386,6 +1394,7 @@
         hotkey:            { el: 's-hotkey',        type: 'group' },
         auto_type:         { el: 's-auto-type',     type: 'row' },
         debug:             { el: 's-debug',          type: 'row' },
+        remove_fillers:    { el: 's-remove-fillers',  type: 'row' },
         start_minimized:   { el: 's-start-minimized', type: 'row' },
         preload_models:    { el: 's-preload-vosk',   type: 'row' },
       };
@@ -1502,7 +1511,7 @@
       });
 
       // Toggle-переключатели
-      ['s-auto-type', 's-debug', 's-start-minimized', 's-preload-vosk', 's-preload-whisper', 's-preload-gigaam'].forEach(id => {
+      ['s-auto-type', 's-debug', 's-remove-fillers', 's-start-minimized', 's-preload-vosk', 's-preload-whisper', 's-preload-gigaam'].forEach(id => {
         document.getElementById(id).addEventListener('click', () => {
           document.getElementById(id).classList.toggle('on');
           checkChanges();
@@ -1521,6 +1530,7 @@
         document.getElementById('s-hotkey').value = originalConfig.hotkey;
         document.getElementById('s-auto-type').classList.toggle('on', originalConfig.auto_type);
         document.getElementById('s-debug').classList.toggle('on', originalConfig.debug);
+        document.getElementById('s-remove-fillers').classList.toggle('on', originalConfig.remove_fillers !== false);
         document.getElementById('s-start-minimized').classList.toggle('on', originalConfig.start_minimized || false);
         const preloadOrig = originalConfig.preload_models || [];
         document.getElementById('s-preload-vosk').classList.toggle('on', preloadOrig.includes('vosk'));
