@@ -16,6 +16,8 @@ pub enum TranscriberType {
     Whisper,
     /// GigaAM v3 — лучший для русского (ONNX, SberDevices)
     GigaAm,
+    /// Qwen3-ASR — мультиязычный (ONNX, Alibaba)
+    Qwen3Asr,
 }
 
 /// Конфигурация ядра ArcanaGlyph
@@ -51,9 +53,22 @@ pub struct CoreConfig {
     /// Директория должна содержать v3_e2e_ctc.int8.onnx и v3_e2e_ctc_vocab.txt
     #[serde(default = "default_gigaam_model_path")]
     pub gigaam_model_path: PathBuf,
+    /// Путь к директории Qwen3-ASR (для transcriber = "qwen3asr")
+    /// Директория: onnx_models/ (4 onnx файла + embed_tokens.bin) + tokenizer.json
+    #[serde(default = "default_qwen3asr_model_path")]
+    pub qwen3asr_model_path: PathBuf,
+    /// Авто-стоп записи при тишине после речи
+    #[serde(default = "default_true")]
+    pub vad_enabled: bool,
+    /// Секунды тишины после речи для авто-стопа (если vad_enabled)
+    #[serde(default = "default_vad_silence_secs")]
+    pub vad_silence_secs: u64,
     /// Удалять слова-паразиты из транскрибации (э, э-э, ээ, эм, мм)
     #[serde(default = "default_true")]
     pub remove_fillers: bool,
+    /// Срок хранения записей в часах (0 = хранить вечно)
+    #[serde(default = "default_retention_hours")]
+    pub retention_hours: u64,
     /// Запускать в свёрнутом виде (сразу в трей)
     #[serde(default)]
     pub start_minimized: bool,
@@ -70,6 +85,20 @@ fn default_whisper_model_path() -> PathBuf {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_vad_silence_secs() -> u64 {
+    7
+}
+
+fn default_retention_hours() -> u64 {
+    24
+}
+
+fn default_qwen3asr_model_path() -> PathBuf {
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("models/qwen3-asr-0.6b")
 }
 
 fn default_gigaam_model_path() -> PathBuf {
@@ -89,6 +118,10 @@ impl Default for CoreConfig {
             .unwrap_or_else(|_| PathBuf::from("."))
             .join("models/ggml-large-v3-turbo.bin");
 
+        let qwen3asr_model_path = std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("models/qwen3-asr-0.6b");
+
         let gigaam_model_path = std::env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join("models/gigaam-v3-e2e-ctc");
@@ -98,13 +131,17 @@ impl Default for CoreConfig {
             model_path,
             whisper_model_path,
             gigaam_model_path,
+            qwen3asr_model_path,
             sample_rate: 48000,
             max_record_secs: 20,
             auto_type: true,
             hotkey: "Super+W".to_string(),
             hotkey_pause: "Super+Shift+W".to_string(),
             debug: true,
+            vad_enabled: true,
+            vad_silence_secs: 7,
             remove_fillers: true,
+            retention_hours: 24,
             start_minimized: false,
             preload_models: vec![],
         }
@@ -147,6 +184,9 @@ impl CoreConfig {
             TranscriberType::GigaAm => self.gigaam_model_path.file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "gigaam".to_string()),
+            TranscriberType::Qwen3Asr => self.qwen3asr_model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "qwen3asr".to_string()),
         }
     }
 
@@ -156,6 +196,7 @@ impl CoreConfig {
             TranscriberType::Vosk => "vosk".to_string(),
             TranscriberType::Whisper => "whisper".to_string(),
             TranscriberType::GigaAm => "gigaam".to_string(),
+            TranscriberType::Qwen3Asr => "qwen3asr".to_string(),
         }
     }
 
@@ -274,13 +315,17 @@ auto_type = false
             model_path: PathBuf::from("/tmp/test-model"),
             whisper_model_path: PathBuf::from("/tmp/test-whisper-model"),
             gigaam_model_path: PathBuf::from("/tmp/test-gigaam-model"),
+            qwen3asr_model_path: PathBuf::from("/tmp/test-qwen3asr-model"),
             sample_rate: 16000,
             max_record_secs: 30,
             auto_type: false,
             hotkey: "Ctrl+Shift+R".to_string(),
             hotkey_pause: String::new(),
             debug: true,
+            vad_enabled: true,
+            vad_silence_secs: 7,
             remove_fillers: true,
+            retention_hours: 24,
             start_minimized: false,
             preload_models: vec![],
         };

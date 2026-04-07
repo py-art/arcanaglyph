@@ -20,4 +20,5 @@ pub static MODEL: SpeechModelInfo = SpeechModelInfo {
     description: "Быстрая потоковая модель для русского языка. Работает в реальном времени, но менее точная.",
     size: "~42 МБ",
     download_url: "https://alphacephei.com/vosk/models/vosk-model-ru-0.42.zip",
+    extra_files: None,
 };

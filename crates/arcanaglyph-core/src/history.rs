@@ -269,6 +269,41 @@ impl HistoryDB {
         Ok(())
     }
 
+    /// Удаляет записи старше `hours` часов (и их аудиофайлы)
+    pub fn cleanup_old_recordings(&self, hours: u64) -> Result<u64, ArcanaError> {
+        if hours == 0 {
+            return Ok(0);
+        }
+        let cutoff = chrono::Utc::now().timestamp() - (hours as i64 * 3600);
+        let conn = self.conn.lock().map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+
+        // Собираем пути аудио для удаления файлов
+        let mut stmt = conn
+            .prepare("SELECT id, audio_path FROM recordings WHERE timestamp < ?1")
+            .map_err(|e| ArcanaError::Database(format!("Ошибка подготовки запроса: {}", e)))?;
+        let rows: Vec<(i64, String)> = stmt
+            .query_map(rusqlite::params![cutoff], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| ArcanaError::Database(format!("Ошибка выборки: {}", e)))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let count = rows.len() as u64;
+
+        // Удаляем аудиофайлы
+        for (_, path) in &rows {
+            let _ = std::fs::remove_file(path);
+        }
+
+        // Удаляем записи из БД (каскадно удалит транскрибации)
+        conn.execute("DELETE FROM recordings WHERE timestamp < ?1", rusqlite::params![cutoff])
+            .map_err(|e| ArcanaError::Database(format!("Ошибка удаления: {}", e)))?;
+
+        if count > 0 {
+            tracing::info!("Автоочистка: удалено {} записей старше {} ч.", count, hours);
+        }
+        Ok(count)
+    }
+
     /// Проверяет физическое наличие аудиофайла
     pub fn audio_exists(&self, recording_id: i64) -> bool {
         let conn = match self.conn.lock() {

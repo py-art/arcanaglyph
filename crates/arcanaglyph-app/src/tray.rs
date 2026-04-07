@@ -71,6 +71,7 @@ pub fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     // Сохраняем TrayIcon в state для смены иконки
     app.manage(TrayIconHandle(tray));
+    app.manage(TrayCurrentState(std::sync::Mutex::new(TrayState::Idle)));
 
     Ok(())
 }
@@ -83,6 +84,7 @@ pub fn set_tray_text(app: &AppHandle, text: &str) {
 }
 
 /// Состояние иконки трея
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayState {
     /// Обычное состояние (белая иконка)
     Idle,
@@ -92,8 +94,21 @@ pub enum TrayState {
     Paused,
 }
 
-/// Переключает иконку трея в зависимости от состояния
+/// Хранение текущего состояния трея для предотвращения лишних обновлений
+pub struct TrayCurrentState(pub std::sync::Mutex<TrayState>);
+
+/// Переключает иконку трея в зависимости от состояния.
+/// Пропускает обновление если состояние не изменилось (предотвращает мерцание).
 pub fn set_tray_state(app: &AppHandle, state: TrayState) {
+    // Проверяем, изменилось ли состояние
+    if let Some(current) = app.try_state::<TrayCurrentState>() {
+        let mut guard = current.0.lock().unwrap();
+        if *guard == state {
+            return;
+        }
+        *guard = state;
+    }
+
     if let Some(tray) = app.try_state::<TrayIconHandle>() {
         let icon = match state {
             TrayState::Recording => tauri::image::Image::from_bytes(RECORDING_ICON).ok(),

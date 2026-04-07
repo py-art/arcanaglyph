@@ -21,4 +21,5 @@ pub static MODEL: SpeechModelInfo = SpeechModelInfo {
     description: "Высокоточная модель от OpenAI. Лучший баланс скорости и качества среди Whisper моделей.",
     size: "~1.5 ГБ",
     download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
+    extra_files: None,
 };

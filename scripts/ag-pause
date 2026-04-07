@@ -1,0 +1,5 @@
+#!/bin/bash
+
+# ArcanaGlyph: UDP-триггер паузы/возобновления записи
+# Используется на Wayland как команда для горячей клавиши через gsettings
+echo "pause" | /usr/bin/nc -u -w0 127.0.0.1 9002

@@ -61,6 +61,138 @@ fn get_loaded_models(engine: tauri::State<'_, EngineState>) -> Result<serde_json
     }))
 }
 
+/// Устанавливает UDP-скрипты ag-trigger и ag-pause в ~/.local/bin/ (для Wayland)
+fn install_wayland_scripts() {
+    let is_wayland = std::env::var("XDG_SESSION_TYPE")
+        .map(|v| v == "wayland")
+        .unwrap_or(false);
+    if !is_wayland {
+        return;
+    }
+
+    let home = match std::env::var("HOME") {
+        Ok(h) => std::path::PathBuf::from(h),
+        Err(_) => return,
+    };
+    let bin_dir = home.join(".local/bin");
+    let _ = std::fs::create_dir_all(&bin_dir);
+
+    let scripts = [
+        ("ag-trigger", "#!/bin/bash\n# ArcanaGlyph: UDP-триггер записи\necho \"trigger\" | /usr/bin/nc -u -w0 127.0.0.1 9002\n"),
+        ("ag-pause", "#!/bin/bash\n# ArcanaGlyph: UDP-триггер паузы\necho \"pause\" | /usr/bin/nc -u -w0 127.0.0.1 9002\n"),
+    ];
+
+    for (name, content) in &scripts {
+        let path = bin_dir.join(name);
+        if !path.exists() {
+            if let Err(e) = std::fs::write(&path, content) {
+                tracing::warn!("Не удалось создать {}: {}", path.display(), e);
+                continue;
+            }
+            // chmod +x
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755));
+            }
+            tracing::info!("Установлен скрипт: {}", path.display());
+        }
+    }
+}
+
+/// Скачивание одного файла с прогрессом
+async fn download_file(
+    url: &str,
+    dest: &std::path::Path,
+    model_id: &str,
+    file_idx: usize,
+    total_files: usize,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    use futures_util::StreamExt;
+    use tauri::Emitter;
+
+    if let Some(parent) = dest.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let filename = dest.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+    tracing::info!("Скачивание [{}/{}] {} → {}", file_idx + 1, total_files, filename, dest.display());
+
+    let response = reqwest::get(url).await.map_err(|e| format!("Ошибка запроса {}: {}", filename, e))?;
+    let total_size = response.content_length().unwrap_or(0);
+
+    let mut stream = response.bytes_stream();
+    let mut file = tokio::fs::File::create(dest).await
+        .map_err(|e| format!("Не удалось создать {}: {}", filename, e))?;
+
+    let mut downloaded: u64 = 0;
+    let mut last_progress: u64 = 0;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Ошибка скачивания {}: {}", filename, e))?;
+        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk).await
+            .map_err(|e| format!("Ошибка записи {}: {}", filename, e))?;
+
+        downloaded += chunk.len() as u64;
+        let progress_pct = if total_size > 0 { downloaded * 100 / total_size } else { 0 };
+        if progress_pct != last_progress {
+            last_progress = progress_pct;
+            let _ = app.emit("download://progress", serde_json::json!({
+                "model_id": model_id,
+                "file": filename,
+                "file_idx": file_idx,
+                "total_files": total_files,
+                "downloaded": downloaded,
+                "total": total_size,
+                "percent": progress_pct,
+            }));
+        }
+    }
+    Ok(())
+}
+
+/// Tauri-команда: скачать модель (один или несколько файлов) с прогрессом
+#[tauri::command]
+async fn download_model(
+    model_id: String,
+    url: String,
+    dest_dir: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    use tauri::Emitter;
+
+    let dest_path = std::path::PathBuf::from(&dest_dir);
+    let _ = std::fs::create_dir_all(&dest_path);
+
+    // Находим модель в реестре для extra_files
+    let model_info = arcanaglyph_core::transcription_models::find(&model_id);
+    let extra_files: Vec<(&str, &str)> = model_info
+        .and_then(|m| m.extra_files)
+        .map(|files| files.to_vec())
+        .unwrap_or_default();
+
+    let total_files = 1 + extra_files.len();
+
+    // Скачиваем основной файл
+    let main_filename = url.rsplit('/').next().unwrap_or("model");
+    let main_dest = dest_path.join(main_filename);
+    download_file(&url, &main_dest, &model_id, 0, total_files, &app).await?;
+
+    // Скачиваем дополнительные файлы
+    for (idx, (extra_url, rel_path)) in extra_files.iter().enumerate() {
+        let extra_dest = dest_path.join(rel_path);
+        download_file(extra_url, &extra_dest, &model_id, idx + 1, total_files, &app).await?;
+    }
+
+    let _ = app.emit("download://complete", serde_json::json!({
+        "model_id": model_id,
+    }));
+
+    tracing::info!("Модель '{}' скачана ({} файлов)", model_id, total_files);
+    Ok(())
+}
+
 /// Tauri-команда: определить, работает ли Wayland
 #[tauri::command]
 fn is_wayland() -> bool {
@@ -233,6 +365,19 @@ fn register_gnome_hotkeys(hotkey_trigger: String, hotkey_pause: String) -> Resul
     Ok(())
 }
 
+/// Проверяет, установлена ли модель (не просто существование директории, а ключевые файлы)
+fn is_model_installed(path: &std::path::Path, transcriber_type: &str) -> bool {
+    if !path.exists() {
+        return false;
+    }
+    match transcriber_type {
+        "gigaam" => path.join("v3_e2e_ctc.int8.onnx").exists() && path.join("v3_e2e_ctc_vocab.txt").exists(),
+        "qwen3asr" => path.join("onnx_models/encoder_conv.onnx").exists() && path.join("tokenizer.json").exists(),
+        "vosk" => path.join("conf").exists() || path.join("am").exists() || path.join("graph").exists(),
+        _ => path.exists(),
+    }
+}
+
 /// Tauri-команда: получить реестр моделей с проверкой наличия файлов
 #[tauri::command]
 fn get_models() -> Result<serde_json::Value, String> {
@@ -243,6 +388,7 @@ fn get_models() -> Result<serde_json::Value, String> {
             "vosk" => &config.model_path,
             "whisper" => &config.whisper_model_path,
             "gigaam" => &config.gigaam_model_path,
+            "qwen3asr" => &config.qwen3asr_model_path,
             _ => &config.model_path,
         };
         serde_json::json!({
@@ -253,7 +399,7 @@ fn get_models() -> Result<serde_json::Value, String> {
             "description": m.description,
             "size": m.size,
             "download_url": m.download_url,
-            "installed": path.exists(),
+            "installed": is_model_installed(path, m.transcriber_type),
         })
     }).collect();
     Ok(serde_json::json!(result))
@@ -354,6 +500,12 @@ async fn retranscribe(
                 .unwrap_or_else(|| "gigaam".to_string());
             (name, "gigaam".to_string())
         }
+        "qwen3asr" => {
+            let name = config.qwen3asr_model_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "qwen3asr".to_string());
+            (name, "qwen3asr".to_string())
+        }
         _ => return Err("Неизвестный тип транскрайбера".to_string()),
     };
 
@@ -375,6 +527,10 @@ async fn retranscribe(
         }
         "gigaam" => {
             let t = GigaAmTranscriber::new(&config.gigaam_model_path).map_err(|e| e.to_string())?;
+            (Box::new(t), config.sample_rate)
+        }
+        "qwen3asr" => {
+            let t = arcanaglyph_core::qwen3asr::transcriber::Qwen3AsrTranscriber::new(&config.qwen3asr_model_path).map_err(|e| e.to_string())?;
             (Box::new(t), config.sample_rate)
         }
         _ => unreachable!(),
@@ -477,6 +633,40 @@ fn main() {
                 .build(),
         )
         .setup(move |app| {
+            // Устанавливаем UDP-скрипты для Wayland (если ещё не установлены)
+            install_wayland_scripts();
+
+            // Автоочистка старых записей при старте + периодически
+            if let Ok(cfg) = CoreConfig::load()
+                && cfg.retention_hours > 0
+                && let (Some(db_path), Some(cache)) = (CoreConfig::history_db_path(), CoreConfig::audio_cache_dir())
+                && let Ok(db) = arcanaglyph_core::history::HistoryDB::new(&db_path, cache)
+            {
+                let _ = db.cleanup_old_recordings(cfg.retention_hours);
+            }
+
+            // Периодическая очистка: интервал = retention_hours
+            tauri::async_runtime::spawn(async {
+                loop {
+                    let hours = CoreConfig::load()
+                        .map(|c| c.retention_hours)
+                        .unwrap_or(0);
+                    if hours == 0 {
+                        // Хранить вечно — спим час и проверяем снова (вдруг настройку поменяли)
+                        tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                        continue;
+                    }
+                    // Спим retention_hours, потом чистим
+                    tokio::time::sleep(std::time::Duration::from_secs(hours * 3600)).await;
+
+                    if let (Some(db_path), Some(cache)) = (CoreConfig::history_db_path(), CoreConfig::audio_cache_dir())
+                        && let Ok(db) = arcanaglyph_core::history::HistoryDB::new(&db_path, cache)
+                    {
+                        let _ = db.cleanup_old_recordings(hours);
+                    }
+                }
+            });
+
             // Проверяем start_minimized до инициализации движка
             let start_minimized = CoreConfig::load()
                 .map(|c| c.start_minimized)
@@ -658,7 +848,7 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_model_loaded, get_loaded_models, get_models, is_wayland, check_hotkey_conflict, register_gnome_hotkeys, hide_window, load_config, save_config, get_history, delete_history_entry, clear_history, retranscribe, get_audio_data])
+        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_model_loaded, get_loaded_models, get_models, download_model, is_wayland, check_hotkey_conflict, register_gnome_hotkeys, hide_window, load_config, save_config, get_history, delete_history_entry, clear_history, retranscribe, get_audio_data])
         .on_window_event(|window, event| {
             // Перехватываем закрытие окна — скрываем в трей вместо закрытия
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
