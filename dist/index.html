@@ -557,19 +557,60 @@
       .settings-tab-content { display: none; }
       .settings-tab-content.active { display: block; }
 
-      /* === Рекордер горячих клавиш === */
-      .hotkey-field {
-        display: flex;
-        align-items: center;
-        gap: 0.4rem;
+      /* === Композер горячих клавиш === */
+      .hotkey-composer {
         background: #1f2335;
         border: 1px solid #292e42;
         border-radius: 6px;
-        padding: 0.4rem 0.6rem;
-        min-height: 38px;
+        padding: 0.6rem;
         transition: border-color 0.15s;
       }
-      .hotkey-field.recording {
+      .setting-group.changed .hotkey-composer { border-color: #ff9e64; }
+      .hotkey-mods {
+        display: flex;
+        gap: 0.3rem;
+        margin-bottom: 0.4rem;
+      }
+      .hotkey-mod {
+        padding: 0.25rem 0.5rem;
+        background: #292e42;
+        border: 1px solid #292e42;
+        border-radius: 4px;
+        color: #565f89;
+        font-size: 0.75rem;
+        cursor: pointer;
+        transition: all 0.15s;
+        user-select: none;
+      }
+      .hotkey-mod:hover { border-color: #7aa2f7; color: #c0caf5; }
+      .hotkey-mod.active {
+        background: rgba(122, 162, 247, 0.15);
+        border-color: #7aa2f7;
+        color: #7aa2f7;
+      }
+      .hotkey-key-row {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+      }
+      .hotkey-plus {
+        color: #565f89;
+        font-size: 0.85rem;
+      }
+      .hotkey-key-input {
+        flex: 1;
+        height: 32px;
+        padding: 0 0.5rem;
+        background: #292e42;
+        border: 1px solid #292e42;
+        border-radius: 4px;
+        color: #c0caf5;
+        font-size: 0.85rem;
+        outline: none;
+        transition: border-color 0.15s;
+      }
+      .hotkey-key-input:focus { border-color: #7aa2f7; }
+      .hotkey-key-input.recording {
         border-color: #ff9e64;
         animation: hotkey-pulse 1s ease-in-out infinite;
       }
@@ -577,13 +618,7 @@
         0%, 100% { border-color: #ff9e64; }
         50% { border-color: #292e42; }
       }
-      .hotkey-value {
-        flex: 1;
-        font-size: 0.85rem;
-        color: #c0caf5;
-        user-select: none;
-      }
-      .hotkey-value[data-value=""] { color: #565f89; }
+      .hotkey-key-input::placeholder { color: #565f89; }
       .hotkey-record-btn, .hotkey-clear-btn {
         background: none;
         border: 1px solid #292e42;
@@ -596,7 +631,13 @@
       }
       .hotkey-record-btn:hover { color: #7aa2f7; border-color: #7aa2f7; }
       .hotkey-clear-btn:hover { color: #f7768e; border-color: #f7768e; }
-      .setting-group.changed .hotkey-field { border-color: #ff9e64; }
+      .hotkey-preview {
+        margin-top: 0.4rem;
+        font-size: 0.75rem;
+        color: #565f89;
+        min-height: 1em;
+      }
+      .hotkey-preview:not([data-value=""]) { color: #9ece6a; }
       .wayland-warning {
         margin-top: 1rem;
         padding: 0.6rem 0.8rem;
@@ -1016,19 +1057,39 @@
       <div class="settings-tab-content" id="tab-hotkeys">
         <div class="setting-group">
           <label>Запись (старт/стоп)</label>
-          <div class="hotkey-field" id="hk-trigger">
-            <span class="hotkey-value" data-value="">Не задана</span>
-            <button class="hotkey-clear-btn" title="Очистить">✕</button>
-            <button class="hotkey-record-btn" title="Записать комбинацию">✎</button>
+          <div class="hotkey-composer" id="hk-trigger">
+            <div class="hotkey-mods">
+              <button class="hotkey-mod" data-mod="Super">Super</button>
+              <button class="hotkey-mod" data-mod="Control">Ctrl</button>
+              <button class="hotkey-mod" data-mod="Alt">Alt</button>
+              <button class="hotkey-mod" data-mod="Shift">Shift</button>
+            </div>
+            <div class="hotkey-key-row">
+              <span class="hotkey-plus">+</span>
+              <input type="text" class="hotkey-key-input" placeholder="клавиша" readonly />
+              <button class="hotkey-record-btn" title="Записать клавишу">✎</button>
+              <button class="hotkey-clear-btn" title="Очистить">✕</button>
+            </div>
+            <div class="hotkey-preview" data-value=""></div>
           </div>
         </div>
 
         <div class="setting-group">
           <label>Пауза</label>
-          <div class="hotkey-field" id="hk-pause">
-            <span class="hotkey-value" data-value="">Не задана</span>
-            <button class="hotkey-clear-btn" title="Очистить">✕</button>
-            <button class="hotkey-record-btn" title="Записать комбинацию">✎</button>
+          <div class="hotkey-composer" id="hk-pause">
+            <div class="hotkey-mods">
+              <button class="hotkey-mod" data-mod="Super">Super</button>
+              <button class="hotkey-mod" data-mod="Control">Ctrl</button>
+              <button class="hotkey-mod" data-mod="Alt">Alt</button>
+              <button class="hotkey-mod" data-mod="Shift">Shift</button>
+            </div>
+            <div class="hotkey-key-row">
+              <span class="hotkey-plus">+</span>
+              <input type="text" class="hotkey-key-input" placeholder="клавиша" readonly />
+              <button class="hotkey-record-btn" title="Записать клавишу">✎</button>
+              <button class="hotkey-clear-btn" title="Очистить">✕</button>
+            </div>
+            <div class="hotkey-preview" data-value=""></div>
           </div>
         </div>
 
@@ -1577,118 +1638,140 @@
         updatePreloadLocks(document.getElementById('s-transcriber').dataset.value);
       });
 
-      // === Рекордер горячих клавиш ===
-
-      // Хелпер: получить/установить значение рекордера
-      function getHotkeyValue(id) {
-        return document.querySelector(`#${id} .hotkey-value`).dataset.value || '';
-      }
-      function setHotkeyValue(id, value) {
-        const span = document.querySelector(`#${id} .hotkey-value`);
-        span.dataset.value = value;
-        span.textContent = value || 'Не задана';
-      }
+      // === Композер горячих клавиш ===
+      // Модификаторы выбираются кнопками, основная клавиша — через рекордер.
+      // Super на Wayland не доходит до WebView, поэтому кнопка вместо keydown.
 
       // Маппинг JS event.code → Tauri формат
       function mapKeyCode(event) {
-        const key = event.key;
         const code = event.code;
-        // Буквы
         if (code.startsWith('Key')) return code.slice(3);
-        // Цифры
         if (code.startsWith('Digit')) return code.slice(5);
-        // Функциональные
         if (/^F\d+$/.test(code)) return code;
-        // Специальные
         const map = {
-          Space: 'Space', Enter: 'Return', Escape: 'Escape', Tab: 'Tab',
+          Space: 'Space', Enter: 'Return', Tab: 'Tab',
           Backspace: 'Backspace', Delete: 'Delete', Insert: 'Insert',
           ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
           Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',
           Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']',
           Semicolon: ';', Quote: "'", Backquote: '`', Backslash: '\\',
           Comma: ',', Period: '.', Slash: '/',
-          NumpadAdd: 'NumpadAdd', NumpadSubtract: 'NumpadSubtract',
-          NumpadMultiply: 'NumpadMultiply', NumpadDivide: 'NumpadDivide',
-          NumpadEnter: 'NumpadEnter',
         };
-        return map[code] || key;
+        return map[code] || event.key;
       }
 
-      // Инициализация рекордера для одного поля
-      function initHotkeyRecorder(fieldId) {
-        const field = document.getElementById(fieldId);
-        const recordBtn = field.querySelector('.hotkey-record-btn');
-        const clearBtn = field.querySelector('.hotkey-clear-btn');
-        let recording = false;
-        let handler = null;
+      // Собрать комбинацию из состояния композера
+      function composeHotkey(composer) {
+        const mods = [];
+        composer.querySelectorAll('.hotkey-mod.active').forEach(btn => {
+          mods.push(btn.dataset.mod);
+        });
+        const keyInput = composer.querySelector('.hotkey-key-input');
+        const key = keyInput.dataset.key || '';
+        if (!key) return '';
+        return [...mods, key].join('+');
+      }
+
+      // Обновить превью
+      function updateHotkeyPreview(composer) {
+        const combo = composeHotkey(composer);
+        const preview = composer.querySelector('.hotkey-preview');
+        preview.dataset.value = combo;
+        preview.textContent = combo || '';
+      }
+
+      // Получить/установить значение
+      function getHotkeyValue(id) {
+        return composeHotkey(document.getElementById(id));
+      }
+
+      function setHotkeyValue(id, value) {
+        const composer = document.getElementById(id);
+        // Сбрасываем всё
+        composer.querySelectorAll('.hotkey-mod').forEach(btn => btn.classList.remove('active'));
+        const keyInput = composer.querySelector('.hotkey-key-input');
+        keyInput.value = '';
+        keyInput.dataset.key = '';
+
+        if (!value) {
+          updateHotkeyPreview(composer);
+          return;
+        }
+
+        // Парсим "Super+Shift+G" → mods + key
+        const parts = value.split('+');
+        const modNames = ['Super', 'Control', 'Alt', 'Shift'];
+        for (const part of parts) {
+          if (modNames.includes(part)) {
+            const btn = composer.querySelector(`.hotkey-mod[data-mod="${part}"]`);
+            if (btn) btn.classList.add('active');
+          } else {
+            keyInput.value = part;
+            keyInput.dataset.key = part;
+          }
+        }
+        updateHotkeyPreview(composer);
+      }
+
+      // Инициализация композера
+      function initHotkeyComposer(composerId) {
+        const composer = document.getElementById(composerId);
+
+        // Toggle модификаторов
+        composer.querySelectorAll('.hotkey-mod').forEach(btn => {
+          btn.addEventListener('click', () => {
+            btn.classList.toggle('active');
+            updateHotkeyPreview(composer);
+            checkChanges();
+          });
+        });
+
+        // Рекордер основной клавиши
+        const keyInput = composer.querySelector('.hotkey-key-input');
+        const recordBtn = composer.querySelector('.hotkey-record-btn');
+        const clearBtn = composer.querySelector('.hotkey-clear-btn');
 
         recordBtn.addEventListener('click', () => {
-          if (recording) return;
-          recording = true;
-          field.classList.add('recording');
-          field.querySelector('.hotkey-value').textContent = 'Нажмите комбинацию...';
+          keyInput.classList.add('recording');
+          keyInput.value = 'Нажмите клавишу...';
+          keyInput.focus();
 
-          // Трекинг Super/Meta вручную (event.metaKey не работает в Wayland/Tauri)
-          let superPressed = false;
-          const onKeyUp = (e) => {
-            if (e.key === 'Meta' || e.key === 'Super') superPressed = false;
-          };
-
-          handler = (e) => {
+          const handler = (e) => {
             e.preventDefault();
             e.stopPropagation();
 
-            // Запоминаем Super при нажатии
-            if (e.key === 'Meta' || e.key === 'Super') {
-              superPressed = true;
-              return;
-            }
-
-            // Пропускаем чисто модификаторные нажатия
-            if (['Control', 'Alt', 'Shift'].includes(e.key)) return;
+            // Пропускаем модификаторы — они управляются кнопками
+            if (['Control', 'Alt', 'Shift', 'Meta', 'Super', 'OS'].includes(e.key)) return;
 
             // Escape — отмена
-            if (e.key === 'Escape' && !superPressed && !e.altKey && !e.ctrlKey && !e.shiftKey) {
-              recording = false;
-              field.classList.remove('recording');
-              const val = field.querySelector('.hotkey-value').dataset.value;
-              field.querySelector('.hotkey-value').textContent = val || 'Не задана';
+            if (e.key === 'Escape') {
+              keyInput.classList.remove('recording');
+              keyInput.value = keyInput.dataset.key || '';
               document.removeEventListener('keydown', handler, true);
-              document.removeEventListener('keyup', onKeyUp, true);
               return;
             }
 
-            // Собираем модификаторы
-            const parts = [];
-            if (superPressed || e.metaKey) parts.push('Super');
-            if (e.altKey) parts.push('Alt');
-            if (e.ctrlKey) parts.push('Control');
-            if (e.shiftKey) parts.push('Shift');
-            parts.push(mapKeyCode(e));
-
-            const combo = parts.join('+');
-            setHotkeyValue(fieldId, combo);
-            recording = false;
-            superPressed = false;
-            field.classList.remove('recording');
+            const mapped = mapKeyCode(e);
+            keyInput.dataset.key = mapped;
+            keyInput.value = mapped;
+            keyInput.classList.remove('recording');
             document.removeEventListener('keydown', handler, true);
-            document.removeEventListener('keyup', onKeyUp, true);
+            updateHotkeyPreview(composer);
             checkChanges();
           };
 
           document.addEventListener('keydown', handler, true);
-          document.addEventListener('keyup', onKeyUp, true);
         });
 
+        // Очистка
         clearBtn.addEventListener('click', () => {
-          setHotkeyValue(fieldId, '');
+          setHotkeyValue(composerId, '');
           checkChanges();
         });
       }
 
-      initHotkeyRecorder('hk-trigger');
-      initHotkeyRecorder('hk-pause');
+      initHotkeyComposer('hk-trigger');
+      initHotkeyComposer('hk-pause');
 
       // Проверяем Wayland и показываем предупреждение
       invoke('is_wayland').then(wayland => {
