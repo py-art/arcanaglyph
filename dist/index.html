@@ -1728,10 +1728,25 @@
         const cfg = getFormConfig();
         await invoke('save_config', { config: cfg });
 
-        // На Wayland — регистрируем хоткеи через gsettings (GNOME)
+        // На Wayland — проверяем конфликты и регистрируем хоткеи через gsettings
         try {
           const wayland = await invoke('is_wayland');
           if (wayland) {
+            // Проверяем конфликты
+            const conflicts = [];
+            if (cfg.hotkey) {
+              const c = await invoke('check_hotkey_conflict', { hotkey: cfg.hotkey });
+              if (c) conflicts.push(`Trigger (${cfg.hotkey}): занята — ${c}`);
+            }
+            if (cfg.hotkey_pause) {
+              const c = await invoke('check_hotkey_conflict', { hotkey: cfg.hotkey_pause });
+              if (c) conflicts.push(`Pause (${cfg.hotkey_pause}): занята — ${c}`);
+            }
+            if (conflicts.length > 0) {
+              const msg = 'Обнаружены конфликты клавиш:\n\n' + conflicts.join('\n') + '\n\nВсё равно сохранить?';
+              if (!confirm(msg)) return;
+            }
+
             await invoke('register_gnome_hotkeys', {
               hotkeyTrigger: cfg.hotkey,
               hotkeyPause: cfg.hotkey_pause,

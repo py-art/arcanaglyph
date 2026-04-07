@@ -89,6 +89,80 @@ fn tauri_hotkey_to_gsettings(hotkey: &str) -> String {
     format!("{}{}", mods, key)
 }
 
+/// Tauri-команда: проверить, занята ли комбинация клавиш в GNOME
+#[tauri::command]
+fn check_hotkey_conflict(hotkey: String) -> Result<Option<String>, String> {
+    if hotkey.is_empty() {
+        return Ok(None);
+    }
+    let binding = tauri_hotkey_to_gsettings(&hotkey);
+    if binding.is_empty() {
+        return Ok(None);
+    }
+
+    // Сканируем все схемы GNOME на совпадение
+    let schemas = [
+        "org.gnome.desktop.wm.keybindings",
+        "org.gnome.shell.keybindings",
+        "org.gnome.mutter.keybindings",
+    ];
+
+    for schema in &schemas {
+        let output = std::process::Command::new("gsettings")
+            .args(["list-recursively", schema])
+            .output();
+        if let Ok(out) = output {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for line in text.lines() {
+                if line.contains(&binding) {
+                    // Извлекаем имя настройки (второе слово в строке)
+                    let name = line.split_whitespace().nth(1).unwrap_or("???");
+                    return Ok(Some(format!("{} ({})", name, schema)));
+                }
+            }
+        }
+    }
+
+    // Проверяем custom keybindings (кроме наших arcanaglyph-*)
+    let output = std::process::Command::new("gsettings")
+        .args(["get", "org.gnome.settings-daemon.plugins.media-keys", "custom-keybindings"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let paths_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if paths_str != "@as []" && !paths_str.is_empty() {
+        let paths: Vec<String> = paths_str.trim_matches(|c| c == '[' || c == ']')
+            .split(',')
+            .map(|s| s.trim().trim_matches('\'').trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let base = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding";
+        for path in &paths {
+            // Пропускаем наши собственные слоты
+            if path.contains("arcanaglyph-") {
+                continue;
+            }
+            let schema_path = format!("{}:{}", base, path);
+            let out = std::process::Command::new("gsettings")
+                .args(["get", &schema_path, "binding"])
+                .output();
+            if let Ok(out) = out {
+                let existing = String::from_utf8_lossy(&out.stdout).trim().trim_matches('\'').to_string();
+                if existing == binding {
+                    let name_out = std::process::Command::new("gsettings")
+                        .args(["get", &schema_path, "name"])
+                        .output();
+                    let name = name_out.map(|o| String::from_utf8_lossy(&o.stdout).trim().trim_matches('\'').to_string())
+                        .unwrap_or_else(|_| "???".to_string());
+                    return Ok(Some(format!("{} (custom keybinding)", name)));
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 /// Tauri-команда: зарегистрировать глобальные хоткеи через gsettings (Wayland/GNOME)
 #[tauri::command]
 fn register_gnome_hotkeys(hotkey_trigger: String, hotkey_pause: String) -> Result<(), String> {
@@ -583,7 +657,7 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_model_loaded, get_loaded_models, get_models, is_wayland, register_gnome_hotkeys, hide_window, load_config, save_config, get_history, delete_history_entry, clear_history, retranscribe, get_audio_data])
+        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_model_loaded, get_loaded_models, get_models, is_wayland, check_hotkey_conflict, register_gnome_hotkeys, hide_window, load_config, save_config, get_history, delete_history_entry, clear_history, retranscribe, get_audio_data])
         .on_window_event(|window, event| {
             // Перехватываем закрытие окна — скрываем в трей вместо закрытия
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
