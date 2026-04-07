@@ -61,7 +61,7 @@ pub struct CoreConfig {
     #[serde(default = "default_true")]
     pub remove_fillers: bool,
     /// Срок хранения записей в часах (0 = хранить вечно)
-    #[serde(default)]
+    #[serde(default = "default_retention_hours")]
     pub retention_hours: u64,
     /// Запускать в свёрнутом виде (сразу в трей)
     #[serde(default)]
@@ -83,6 +83,10 @@ fn default_true() -> bool {
 
 fn default_vad_silence_secs() -> u64 {
     7
+}
+
+fn default_retention_hours() -> u64 {
+    24
 }
 
 fn default_gigaam_model_path() -> PathBuf {
@@ -120,7 +124,7 @@ impl Default for CoreConfig {
             vad_enabled: true,
             vad_silence_secs: 7,
             remove_fillers: true,
-            retention_hours: 0,
+            retention_hours: 24,
             start_minimized: false,
             preload_models: vec![],
         }
@@ -299,7 +303,7 @@ auto_type = false
             vad_enabled: true,
             vad_silence_secs: 7,
             remove_fillers: true,
-            retention_hours: 0,
+            retention_hours: 24,
             start_minimized: false,
             preload_models: vec![],
         };
