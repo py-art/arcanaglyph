@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="color-scheme" content="dark" />
+    <title>ArcanaGlyph Widget</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+
+      html, body {
+        background: transparent;
+        overflow: hidden;
+        height: 100%;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        user-select: none;
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        -webkit-app-region: drag;
+      }
+
+      .widget {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        width: 100%;
+        height: 32px;
+        padding: 0 8px;
+        background: #1a1b26;
+        border: 1px solid #292e42;
+        border-radius: 8px;
+      }
+
+      /* === Индикатор записи === */
+      .rec-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #f7768e;
+        flex-shrink: 0;
+        animation: pulse 1.2s ease-in-out infinite;
+      }
+      .rec-dot.paused {
+        background: #ff9e64;
+        animation: none;
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.3; }
+      }
+
+      /* === Таймер === */
+      .timer {
+        font-size: 0.65rem;
+        font-weight: 400;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.5px;
+        color: #565f89;
+        flex-shrink: 0;
+      }
+
+      /* === Уровень звука === */
+      .level-bar {
+        flex: 1;
+        height: 3px;
+        background: #1f2335;
+        border-radius: 2px;
+        overflow: hidden;
+        min-width: 20px;
+      }
+      .level-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #9ece6a 0%, #7aa2f7 50%, #f7768e 100%);
+        border-radius: 2px;
+        transition: width 0.12s;
+      }
+
+      /* === Кнопки === */
+      .controls {
+        display: flex;
+        gap: 4px;
+        align-items: center;
+        flex-shrink: 0;
+        -webkit-app-region: no-drag;
+      }
+
+      .ctrl-btn {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        border: none;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: opacity 0.2s;
+      }
+      .ctrl-btn:hover { opacity: 0.8; }
+
+      .pause-btn { background: #ff9e64; }
+      .pause-btn.resume { background: #9ece6a; }
+      .pause-btn svg { width: 8px; height: 8px; fill: #1a1b26; }
+
+      .stop-btn { background: #f7768e; }
+      .stop-icon {
+        width: 7px;
+        height: 7px;
+        background: #1a1b26;
+        border-radius: 1px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="widget">
+      <div class="rec-dot" id="rec-dot"></div>
+      <div class="timer" id="timer">00:00.00</div>
+      <div class="level-bar">
+        <div class="level-fill" id="level-fill"></div>
+      </div>
+      <div class="controls">
+        <button class="ctrl-btn pause-btn" id="pause-btn" title="Пауза">
+          <svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+        </button>
+        <button class="ctrl-btn stop-btn" id="stop-btn" title="Остановить">
+          <div class="stop-icon"></div>
+        </button>
+      </div>
+    </div>
+
+    <script>
+      const { invoke } = window.__TAURI__.core;
+      const { listen } = window.__TAURI__.event;
+      const { getCurrentWindow } = window.__TAURI__.window;
+
+      const timerEl   = document.getElementById('timer');
+      const levelFill = document.getElementById('level-fill');
+      const pauseBtn  = document.getElementById('pause-btn');
+      const stopBtn   = document.getElementById('stop-btn');
+      const recDot    = document.getElementById('rec-dot');
+
+      let timerId = null;
+      let levelId = null;
+      let timerMs = 0;
+
+      function fmt(ms) {
+        const s = Math.floor(ms / 1000);
+        const cs = Math.floor((ms % 1000) / 10);
+        const m = Math.floor(s / 60);
+        return String(m).padStart(2, '0') + ':' +
+               String(s % 60).padStart(2, '0') + '.' +
+               String(cs).padStart(2, '0');
+      }
+
+      function startPolling() {
+        timerMs = 0;
+        timerEl.textContent = '00:00.00';
+        timerId = setInterval(() => { timerMs += 70; timerEl.textContent = fmt(timerMs); }, 70);
+        levelId = setInterval(async () => {
+          const level = await invoke('get_audio_level');
+          levelFill.style.width = level + '%';
+        }, 100);
+      }
+
+      function stopPolling() {
+        clearInterval(timerId);
+        clearInterval(levelId);
+        timerId = null;
+        levelId = null;
+        levelFill.style.width = '0%';
+      }
+
+      function resetPauseBtn() {
+        pauseBtn.innerHTML = '<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
+        pauseBtn.classList.remove('resume');
+        pauseBtn.title = 'Пауза';
+        recDot.classList.remove('paused');
+      }
+
+      // === События engine ===
+
+      listen('engine://recording-started', () => {
+        resetPauseBtn();
+        startPolling();
+      });
+
+      listen('engine://recording-paused', () => {
+        stopPolling();
+        pauseBtn.innerHTML = '<svg viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20"/></svg>';
+        pauseBtn.classList.add('resume');
+        pauseBtn.title = 'Продолжить';
+        recDot.classList.add('paused');
+      });
+
+      listen('engine://recording-resumed', () => {
+        resetPauseBtn();
+        timerId = setInterval(() => { timerMs += 70; timerEl.textContent = fmt(timerMs); }, 70);
+        levelId = setInterval(async () => {
+          const level = await invoke('get_audio_level');
+          levelFill.style.width = level + '%';
+        }, 100);
+      });
+
+      listen('engine://transcribing', () => {
+        stopPolling();
+      });
+
+      listen('engine://finished-processing', () => {
+        stopPolling();
+        resetPauseBtn();
+        timerMs = 0;
+        timerEl.textContent = '00:00.00';
+      });
+
+      // === Кнопки ===
+
+      stopBtn.addEventListener('click', () => {
+        invoke('trigger');
+      });
+
+      pauseBtn.addEventListener('click', () => {
+        invoke('pause');
+      });
+
+      // === Перетаскивание через кастомный titlebar ===
+      // -webkit-app-region: drag на body обеспечивает перетаскивание
+      // Кнопки исключены через -webkit-app-region: no-drag на .controls
+    </script>
+  </body>
+</html>

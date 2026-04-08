@@ -45,6 +45,12 @@ async fn is_recording(engine: tauri::State<'_, EngineState>) -> Result<bool, Str
     Ok(get_engine(&engine)?.is_recording().await)
 }
 
+/// Tauri-команда: проверить, на паузе ли запись
+#[tauri::command]
+async fn is_paused(engine: tauri::State<'_, EngineState>) -> Result<bool, String> {
+    Ok(get_engine(&engine)?.is_paused().await)
+}
+
 /// Tauri-команда: проверить, загружена ли модель
 #[tauri::command]
 fn is_model_loaded(engine: tauri::State<'_, EngineState>) -> bool {
@@ -895,6 +901,7 @@ fn main() {
 
                         // Event loop: пробрасываем события engine → фронтенд
                         let app_handle_events = app_handle_load.clone();
+                        let engine_state_events = engine_state_load.clone();
                         tokio::spawn(async move {
                             loop {
                                 match rx.recv().await {
@@ -903,18 +910,34 @@ fn main() {
                                             EngineEvent::RecordingStarted | EngineEvent::RecordingResumed => {
                                                 tray::set_tray_text(&app_handle_events, "Остановить запись");
                                                 tray::set_tray_recording(&app_handle_events, true);
+                                                // Показываем виджет записи (если включён в настройках)
+                                                if engine_state_events.get().is_some_and(|e| e.show_widget())
+                                                    && let Some(w) = app_handle_events.get_webview_window("widget")
+                                                {
+                                                    let _ = w.show();
+                                                    let _ = w.set_focus();
+                                                }
                                             }
                                             EngineEvent::RecordingPaused => {
                                                 tray::set_tray_text(&app_handle_events, "Продолжить запись");
                                                 tray::set_tray_state(&app_handle_events, tray::TrayState::Paused);
+                                                // Виджет остаётся видимым при паузе
                                             }
                                             EngineEvent::Transcribing => {
                                                 tray::set_tray_text(&app_handle_events, "Транскрибация...");
                                                 tray::set_tray_recording(&app_handle_events, false);
+                                                // Скрываем виджет — запись окончена
+                                                if let Some(w) = app_handle_events.get_webview_window("widget") {
+                                                    let _ = w.hide();
+                                                }
                                             }
                                             EngineEvent::FinishedProcessing => {
                                                 tray::set_tray_text(&app_handle_events, "Начать запись");
                                                 tray::set_tray_recording(&app_handle_events, false);
+                                                // Скрываем виджет (страховка)
+                                                if let Some(w) = app_handle_events.get_webview_window("widget") {
+                                                    let _ = w.hide();
+                                                }
                                             }
                                             _ => {}
                                         }
@@ -952,6 +975,37 @@ fn main() {
             // Создаём иконку в системном трее
             if let Err(e) = tray::create_tray(app) {
                 tracing::error!("Не удалось создать иконку в трее: {}", e);
+            }
+
+            // Создаём виджет записи программно (для точного контроля размера)
+            {
+                let widget_width = 220.0;
+                let widget_height = 40.0;
+                let mut builder = tauri::WebviewWindowBuilder::new(
+                    app,
+                    "widget",
+                    tauri::WebviewUrl::App("widget.html".into()),
+                )
+                .title("")
+                .inner_size(widget_width, widget_height)
+                .resizable(false)
+                .decorations(false)
+                .transparent(true)
+                .always_on_top(true)
+                .visible(false)
+                .skip_taskbar(true);
+
+                // Позиционируем в правом верхнем углу экрана
+                if let Some(monitor) = app.primary_monitor().ok().flatten() {
+                    let screen = monitor.size();
+                    let scale = monitor.scale_factor();
+                    let x = (screen.width as f64 / scale) - widget_width - 24.0;
+                    builder = builder.position(x, 48.0);
+                }
+
+                if let Err(e) = builder.build() {
+                    tracing::error!("Не удалось создать виджет записи: {}", e);
+                }
             }
 
             // Регистрируем глобальные горячие клавиши
@@ -1032,13 +1086,16 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_model_loaded, get_loaded_models, get_models, download_model, is_wayland, check_hotkey_conflict, register_gnome_hotkeys, hide_window, load_config, save_config, get_history, delete_history_entry, clear_history, retranscribe, get_audio_data])
+        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_paused, is_model_loaded, get_loaded_models, get_models, download_model, is_wayland, check_hotkey_conflict, register_gnome_hotkeys, hide_window, load_config, save_config, get_history, delete_history_entry, clear_history, retranscribe, get_audio_data])
         .on_window_event(|window, event| {
-            // Перехватываем закрытие окна — скрываем в трей вместо закрытия
+            // Перехватываем закрытие окна — скрываем вместо закрытия
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
-                if let Some(vis) = window.app_handle().try_state::<Arc<AtomicBool>>() {
+                // Обновляем флаг видимости только для главного окна
+                if window.label() == "main"
+                    && let Some(vis) = window.app_handle().try_state::<Arc<AtomicBool>>()
+                {
                     vis.store(false, Ordering::Relaxed);
                 }
             }

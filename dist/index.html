@@ -1222,6 +1222,11 @@
           <label>Запуск в трей</label>
           <div class="toggle" id="s-start-minimized"></div>
         </div>
+
+        <div class="setting-row">
+          <label>Виджет записи</label>
+          <div class="toggle" id="s-show-widget"></div>
+        </div>
       </div>
 
       <!-- Таб: Модели -->
@@ -1623,6 +1628,7 @@
           retention_hours: cfg.retention_hours || 0,
           autostart: cfg.autostart || false,
           start_minimized: cfg.start_minimized || false,
+          show_widget: cfg.show_widget !== false,
           preload_models: normalizePreload(cfg.preload_models || [], cfg.transcriber),
         };
 
@@ -1643,6 +1649,7 @@
         setCustomSelect('s-retention', String(cfg.retention_hours || 0));
         document.getElementById('s-autostart').classList.toggle('on', cfg.autostart || false);
         document.getElementById('s-start-minimized').classList.toggle('on', cfg.start_minimized || false);
+        document.getElementById('s-show-widget').classList.toggle('on', cfg.show_widget !== false);
         const preload = cfg.preload_models || [];
         document.getElementById('s-preload-vosk').classList.toggle('on', preload.includes('vosk') || cfg.transcriber === 'vosk');
         document.getElementById('s-preload-whisper').classList.toggle('on', preload.includes('whisper') || cfg.transcriber === 'whisper');
@@ -1776,6 +1783,7 @@
           retention_hours: parseInt(document.getElementById('s-retention').dataset.value) || 0,
           autostart: document.getElementById('s-autostart').classList.contains('on'),
           start_minimized: document.getElementById('s-start-minimized').classList.contains('on'),
+          show_widget: document.getElementById('s-show-widget').classList.contains('on'),
           preload_models: normalizePreload([
             ...(document.getElementById('s-preload-vosk').classList.contains('on') ? ['vosk'] : []),
             ...(document.getElementById('s-preload-whisper').classList.contains('on') ? ['whisper'] : []),
@@ -1804,6 +1812,7 @@
         retention_hours:   { el: 's-retention',       type: 'group' },
         autostart:         { el: 's-autostart',        type: 'row' },
         start_minimized:   { el: 's-start-minimized', type: 'row' },
+        show_widget:       { el: 's-show-widget',     type: 'row' },
         preload_models:    { el: 's-preload-vosk',   type: 'row' },
       };
 
@@ -2061,7 +2070,7 @@
       });
 
       // Toggle-переключатели
-      ['s-auto-type', 's-debug', 's-vad-enabled', 's-remove-fillers', 's-autostart', 's-start-minimized', 's-preload-vosk', 's-preload-whisper', 's-preload-gigaam', 's-preload-qwen3asr'].forEach(id => {
+      ['s-auto-type', 's-debug', 's-vad-enabled', 's-remove-fillers', 's-autostart', 's-start-minimized', 's-show-widget', 's-preload-vosk', 's-preload-whisper', 's-preload-gigaam', 's-preload-qwen3asr'].forEach(id => {
         document.getElementById(id).addEventListener('click', () => {
           document.getElementById(id).classList.toggle('on');
           checkChanges();
@@ -2088,6 +2097,7 @@
         setCustomSelect('s-retention', String(originalConfig.retention_hours || 0));
         document.getElementById('s-autostart').classList.toggle('on', originalConfig.autostart || false);
         document.getElementById('s-start-minimized').classList.toggle('on', originalConfig.start_minimized || false);
+        document.getElementById('s-show-widget').classList.toggle('on', originalConfig.show_widget !== false);
         const preloadOrig = originalConfig.preload_models || [];
         document.getElementById('s-preload-vosk').classList.toggle('on', preloadOrig.includes('vosk'));
         document.getElementById('s-preload-whisper').classList.toggle('on', preloadOrig.includes('whisper'));

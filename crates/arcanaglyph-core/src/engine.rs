@@ -241,6 +241,16 @@ impl ArcanaEngine {
         *self.is_busy.lock().await
     }
 
+    /// Проверить, на паузе ли запись
+    pub async fn is_paused(&self) -> bool {
+        *self.is_paused.lock().await
+    }
+
+    /// Показывать ли виджет записи (из текущего конфига)
+    pub fn show_widget(&self) -> bool {
+        self.config.read().map_or(true, |c| c.show_widget)
+    }
+
     /// Переключатель записи: если не записывает — начать, если записывает — остановить.
     pub fn trigger(&self) {
         let is_busy = Arc::clone(&self.is_busy);
