@@ -81,6 +81,9 @@ pub struct CoreConfig {
     /// Показывать плавающий виджет записи поверх всех окон
     #[serde(default = "default_true")]
     pub show_widget: bool,
+    /// Показывать иконку в системном трее
+    #[serde(default = "default_true")]
+    pub show_tray: bool,
 }
 
 fn default_models_dir() -> PathBuf {
@@ -143,6 +146,7 @@ impl Default for CoreConfig {
             start_minimized: false,
             preload_models: vec![],
             show_widget: true,
+            show_tray: true,
         }
     }
 }
@@ -339,6 +343,7 @@ auto_type = false
             start_minimized: false,
             preload_models: vec![],
             show_widget: true,
+            show_tray: true,
         };
 
         let content = toml::to_string_pretty(&config).unwrap();

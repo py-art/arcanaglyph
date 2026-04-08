@@ -538,12 +538,15 @@ fn load_config() -> Result<serde_json::Value, String> {
 
 /// Tauri-команда: сохранить конфигурацию и применить к движку
 #[tauri::command]
-fn save_config(config: serde_json::Value, engine: tauri::State<'_, EngineState>) -> Result<(), String> {
+fn save_config(config: serde_json::Value, app: tauri::AppHandle, engine: tauri::State<'_, EngineState>) -> Result<(), String> {
     let config: CoreConfig = serde_json::from_value(config).map_err(|e| format!("Ошибка парсинга конфига: {}", e))?;
     config.save().map_err(|e| e.to_string())?;
 
     // Управляем автозапуском
     set_autostart(config.autostart);
+
+    // Управляем видимостью трея
+    tray::set_tray_visible(&app, config.show_tray);
 
     if let Some(e) = engine.get() {
         e.update_config(config);
@@ -737,6 +740,10 @@ fn main() {
     let pause_hk = Arc::new(hotkey_pause.clone());
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // Второй экземпляр — показываем окно первого
+            tray::show_window(app);
+        }))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler({
@@ -975,6 +982,11 @@ fn main() {
             // Создаём иконку в системном трее
             if let Err(e) = tray::create_tray(app) {
                 tracing::error!("Не удалось создать иконку в трее: {}", e);
+            }
+
+            // Скрываем иконку трея если выключена в настройках
+            if !CoreConfig::load().map(|c| c.show_tray).unwrap_or(true) {
+                tray::set_tray_visible(app.handle(), false);
             }
 
             // Создаём виджет записи программно (для точного контроля размера)
