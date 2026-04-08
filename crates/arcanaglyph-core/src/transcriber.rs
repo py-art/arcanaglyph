@@ -262,7 +262,7 @@ pub(crate) fn trim_silence(samples: &[i16], sample_rate: u32) -> &[i16] {
 }
 
 /// Слова-паразиты для удаления (сравнение в нижнем регистре, по целым словам)
-const FILLER_WORDS: &[&str] = &["э", "э-э", "ээ", "эээ", "эм", "мм", "ммм"];
+const FILLER_WORDS: &[&str] = &["э", "э-э", "э-э-э", "э-ээ", "ээ", "эээ", "эм", "мм", "ммм"];
 
 /// Удаляет слова-паразиты из транскрибации.
 /// Сравнивает по целым словам в нижнем регистре, чтобы не повредить нормальные слова.
@@ -338,5 +338,12 @@ mod tests {
     #[test]
     fn test_remove_fillers_empty_result() {
         assert_eq!(remove_filler_words("э э-э мм"), "");
+    }
+
+    #[test]
+    fn test_remove_fillers_extended() {
+        // "э-э-э" и "э-ээ" — новые слова-паразиты
+        assert_eq!(remove_filler_words("э-э-э привет э-ээ мир"), "привет мир");
+        assert_eq!(remove_filler_words("Э-Э-Э тест Э-ЭЭ"), "тест");
     }
 }

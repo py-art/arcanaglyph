@@ -78,6 +78,9 @@ pub struct CoreConfig {
     /// Модели для предзагрузки при старте (помимо основной)
     #[serde(default)]
     pub preload_models: Vec<TranscriberType>,
+    /// Показывать плавающий виджет записи поверх всех окон
+    #[serde(default = "default_true")]
+    pub show_widget: bool,
 }
 
 fn default_models_dir() -> PathBuf {
@@ -139,6 +142,7 @@ impl Default for CoreConfig {
             autostart: false,
             start_minimized: false,
             preload_models: vec![],
+            show_widget: true,
         }
     }
 }
@@ -334,6 +338,7 @@ auto_type = false
             autostart: false,
             start_minimized: false,
             preload_models: vec![],
+            show_widget: true,
         };
 
         let content = toml::to_string_pretty(&config).unwrap();
