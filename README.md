@@ -58,7 +58,7 @@ make dist
 ls target/release/bundle/deb/ArcanaGlyph_*.deb
 
 # Установка
-sudo dpkg -i target/release/bundle/deb/ArcanaGlyph_1.0.0_amd64.deb
+sudo dpkg -i target/release/bundle/deb/ArcanaGlyph_1.2.0_amd64.deb
 sudo apt-get install -f   # если не хватает зависимостей
 
 # Запуск

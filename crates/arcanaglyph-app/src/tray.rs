@@ -125,3 +125,10 @@ pub fn set_tray_state(app: &AppHandle, state: TrayState) {
 pub fn set_tray_recording(app: &AppHandle, recording: bool) {
     set_tray_state(app, if recording { TrayState::Recording } else { TrayState::Idle });
 }
+
+/// Показать или скрыть иконку трея
+pub fn set_tray_visible(app: &AppHandle, visible: bool) {
+    if let Some(tray) = app.try_state::<TrayIconHandle>() {
+        let _ = tray.0.set_visible(visible);
+    }
+}
