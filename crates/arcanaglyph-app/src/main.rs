@@ -583,6 +583,25 @@ fn clear_history(db: tauri::State<'_, Arc<HistoryDB>>) -> Result<(), String> {
     db.clear().map_err(|e| e.to_string())
 }
 
+/// Tauri-команда: экспорт истории в файл (txt или csv)
+#[tauri::command]
+fn export_history(format: String, db: tauri::State<'_, Arc<HistoryDB>>) -> Result<String, String> {
+    let content = db.export(&format).map_err(|e| e.to_string())?;
+    let ext = if format == "csv" { "csv" } else { "txt" };
+    let date = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
+    let filename = format!("arcanaglyph-history-{}.{}", date, ext);
+
+    // Сохраняем в ~/Downloads/ или ~/
+    let dir = dirs::download_dir()
+        .or_else(dirs::home_dir)
+        .ok_or("Не удалось определить директорию для сохранения")?;
+    let path = dir.join(&filename);
+    std::fs::write(&path, &content)
+        .map_err(|e| format!("Ошибка записи файла: {}", e))?;
+
+    Ok(path.to_string_lossy().to_string())
+}
+
 /// Tauri-команда: повторно транскрибировать запись другой моделью
 #[tauri::command]
 async fn retranscribe(
@@ -1098,7 +1117,7 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_paused, is_model_loaded, get_loaded_models, get_models, download_model, is_wayland, check_hotkey_conflict, register_gnome_hotkeys, hide_window, load_config, save_config, get_history, delete_history_entry, clear_history, retranscribe, get_audio_data])
+        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_paused, is_model_loaded, get_loaded_models, get_models, download_model, is_wayland, check_hotkey_conflict, register_gnome_hotkeys, hide_window, load_config, save_config, get_history, delete_history_entry, clear_history, export_history, retranscribe, get_audio_data])
         .on_window_event(|window, event| {
             // Перехватываем закрытие окна — скрываем вместо закрытия
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

@@ -8,6 +8,8 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use ndarray::{Array2, Array4};
+#[cfg(feature = "cuda")]
+use ort::execution_providers::CUDAExecutionProvider;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 use ort::value::TensorRef;
@@ -78,8 +80,16 @@ impl Qwen3AsrTranscriber {
             .unwrap_or(4);
 
         let load_session = |name: &str| -> Result<Session, ArcanaError> {
-            Session::builder()
-                .map_err(|e| ArcanaError::ModelLoad(format!("Session builder: {}", e)))?
+            #[allow(unused_mut)]
+            let mut builder = Session::builder()
+                .map_err(|e| ArcanaError::ModelLoad(format!("Session builder: {}", e)))?;
+            #[cfg(feature = "cuda")]
+            {
+                builder = builder
+                    .with_execution_providers([CUDAExecutionProvider::default().build()])
+                    .map_err(|e| ArcanaError::ModelLoad(format!("CUDA EP: {}", e)))?;
+            }
+            builder
                 .with_optimization_level(GraphOptimizationLevel::Level3)
                 .map_err(|e| ArcanaError::ModelLoad(format!("Opt level: {}", e)))?
                 .with_intra_threads(n_threads)

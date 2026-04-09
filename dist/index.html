@@ -523,6 +523,55 @@
         cursor: pointer;
       }
       .cancel-btn:not(:disabled):hover { background: rgba(255, 158, 100, 0.1); }
+      .cancel-btn--danger:not(:disabled) { border-color: #f7768e !important; color: #f7768e; }
+      .cancel-btn--danger:not(:disabled):hover { background: rgba(247, 118, 142, 0.1); }
+
+      .toast {
+        position: fixed;
+        bottom: 5rem;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 0.6rem 1.2rem;
+        border-radius: 8px;
+        font-size: 0.85rem;
+        z-index: 200;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s;
+        max-width: 90%;
+        text-align: center;
+      }
+      .toast.visible { opacity: 1; }
+      .toast--success { background: #1a2e1a; border: 1px solid #9ece6a; color: #9ece6a; }
+      .toast--error { background: #2e1a1a; border: 1px solid #f7768e; color: #f7768e; }
+
+      .export-dropdown {
+        position: relative;
+        flex: 1;
+      }
+      .export-dropdown > .save-btn { width: 100%; }
+      .export-dropdown-menu {
+        display: none;
+        position: absolute;
+        bottom: 100%;
+        left: 0;
+        right: 0;
+        margin-bottom: 4px;
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 8px;
+        overflow: hidden;
+        z-index: 100;
+      }
+      .export-dropdown-menu.visible { display: block; }
+      .export-dropdown-item {
+        padding: 0.6rem 1rem;
+        color: #c0caf5;
+        cursor: pointer;
+        text-align: center;
+        font-size: 0.9rem;
+      }
+      .export-dropdown-item:hover { background: #292e42; }
 
       .save-notice {
         text-align: center;
@@ -1050,7 +1099,7 @@
           </svg>
         </div>
         <div class="about-title">ArcanaGlyph</div>
-        <div class="about-version">v1.2.0</div>
+        <div class="about-version">v1.3.0</div>
         <div class="about-divider"></div>
         <div class="about-desc">
           Голосовой ввод текста
@@ -1107,7 +1156,13 @@
 
       <div class="save-area">
         <div class="save-buttons">
-          <button class="save-btn" id="h-clear-btn" style="background:#292e42 !important;color:#f7768e !important;">Очистить историю</button>
+          <button class="cancel-btn cancel-btn--danger" id="h-clear-btn">Очистить историю</button>
+          <div class="export-dropdown">
+            <button class="save-btn" id="h-export-btn">Экспорт</button>
+            <div class="export-dropdown-menu" id="export-menu">
+              <div class="export-dropdown-item" data-format="csv">.csv</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1327,11 +1382,23 @@
       </div>
     </div>
 
+    <div class="toast" id="toast"></div>
+
     <script>
       const { invoke } = window.__TAURI__.core;
       const { listen } = window.__TAURI__.event;
       const { getCurrentWindow } = window.__TAURI__.window;
       const appWindow = getCurrentWindow();
+
+      /* --- Toast --- */
+      const toastEl = document.getElementById('toast');
+      let toastTimer = null;
+      function showToast(msg, type = 'success', ms = 2000) {
+        toastEl.textContent = msg;
+        toastEl.className = `toast toast--${type} visible`;
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toastEl.classList.remove('visible'), ms);
+      }
 
       /* --- Кнопки titlebar --- */
       document.getElementById('tb-min').addEventListener('click', () => invoke('hide_window'));
@@ -2502,6 +2569,28 @@
           document.getElementById('modal-cancel').addEventListener('click', onCancel);
         });
       }
+
+      // Экспорт истории — dropdown
+      const exportMenu = document.getElementById('export-menu');
+      document.getElementById('h-export-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        exportMenu.classList.toggle('visible');
+      });
+      document.addEventListener('click', () => exportMenu.classList.remove('visible'));
+      exportMenu.addEventListener('click', (e) => e.stopPropagation());
+
+      async function exportHistory(format) {
+        exportMenu.classList.remove('visible');
+        try {
+          const path = await invoke('export_history', { format });
+          showToast('Файл сохранён в папку Загрузки', 'success', 5000);
+        } catch (e) {
+          showToast(`Ошибка: ${e}`, 'error', 3000);
+        }
+      }
+      document.querySelectorAll('.export-dropdown-item').forEach(item => {
+        item.addEventListener('click', () => exportHistory(item.dataset.format));
+      });
 
       document.getElementById('h-clear-btn').addEventListener('click', async () => {
         if (await showConfirm('Удалить всю историю транскрибаций?')) {
