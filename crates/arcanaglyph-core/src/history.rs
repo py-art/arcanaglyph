@@ -322,4 +322,48 @@ impl HistoryDB {
     pub fn audio_cache_path(&self) -> &Path {
         &self.audio_cache_dir
     }
+
+    /// Экспорт всей истории в текстовый формат (txt или csv)
+    pub fn export(&self, format: &str) -> Result<String, ArcanaError> {
+        let (entries, _) = self.query(0, u32::MAX, 0)?;
+
+        match format {
+            "csv" => {
+                // BOM для корректного отображения UTF-8 в Excel
+                let mut out = String::from("\u{FEFF}Дата;Длительность (сек);Модель;Движок;Текст\n");
+                for entry in &entries {
+                    for t in &entry.transcriptions {
+                        let date = chrono::DateTime::from_timestamp(entry.recording.timestamp, 0)
+                            .map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string())
+                            .unwrap_or_default();
+                        // Экранируем кавычки в тексте для CSV
+                        let text = t.text.replace('"', "\"\"");
+                        out.push_str(&format!(
+                            "{};{};{};{};\"{}\"\n",
+                            date, entry.recording.duration_secs, t.model_name, t.transcriber_type, text
+                        ));
+                    }
+                }
+                Ok(out)
+            }
+            _ => {
+                // txt формат
+                let mut out = String::new();
+                for entry in &entries {
+                    let date = chrono::DateTime::from_timestamp(entry.recording.timestamp, 0)
+                        .map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string())
+                        .unwrap_or_default();
+                    out.push_str(&format!(
+                        "[{}] ({}с)\n",
+                        date, entry.recording.duration_secs
+                    ));
+                    for t in &entry.transcriptions {
+                        out.push_str(&format!("  [{}] {}\n", t.model_name, t.text));
+                    }
+                    out.push('\n');
+                }
+                Ok(out)
+            }
+        }
+    }
 }

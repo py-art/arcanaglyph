@@ -6,6 +6,8 @@
 use std::path::Path;
 use std::sync::Mutex;
 
+#[cfg(feature = "cuda")]
+use ort::execution_providers::CUDAExecutionProvider;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 use ort::value::TensorRef;
@@ -47,8 +49,17 @@ impl GigaAmTranscriber {
             .map(|n| n.get())
             .unwrap_or(4);
 
-        let session = Session::builder()
-            .map_err(|e| ArcanaError::ModelLoad(format!("Ошибка создания ONNX Session builder: {}", e)))?
+        #[allow(unused_mut)]
+        let mut builder = Session::builder()
+            .map_err(|e| ArcanaError::ModelLoad(format!("Ошибка создания ONNX Session builder: {}", e)))?;
+        #[cfg(feature = "cuda")]
+        {
+            builder = builder
+                .with_execution_providers([CUDAExecutionProvider::default().build()])
+                .map_err(|e| ArcanaError::ModelLoad(format!("Ошибка настройки CUDA EP: {}", e)))?;
+            tracing::info!("CUDA ExecutionProvider запрошен для GigaAM");
+        }
+        let session = builder
             .with_optimization_level(GraphOptimizationLevel::Level3)
             .map_err(|e| ArcanaError::ModelLoad(format!("Ошибка установки уровня оптимизации: {}", e)))?
             .with_intra_threads(n_threads)
