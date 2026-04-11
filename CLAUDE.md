@@ -77,6 +77,16 @@ Cargo workspace из двух крейтов:
   - `tray.rs` — иконка в системном трее с меню
   - `dist/index.html` — фронтенд на vanilla JS, общается через Tauri IPC
 
+## GitHub-зеркало
+
+Репозиторий зеркалируется в GitHub (py-art/arcanaglyph) через GitLab CI.
+При зеркалировании dev-файлы удаляются (job `mirror-to-github` в `.gitlab-ci.yml`).
+
+**При добавлении нового dev-only файла** — добавить его в `git rm` список в `.gitlab-ci.yml`.
+
+Текущий список исключений: `CLAUDE.md`, `.gitlab-ci.yml`, `.markdownlint.yaml`,
+`.taplo.toml`, `rustfmt.toml`, `Makefile`, `NOTE.md`, `Roadmap.md`, `README.public.md`.
+
 ## Конвенции
 
 - Комментарии в коде — только на русском, не удалять существующие
