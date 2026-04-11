@@ -1,0 +1,70 @@
+name: Build & Upload Release Assets
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
+            libxdo-dev libayatana-appindicator3-dev
+
+      - name: Install libvosk
+        run: |
+          curl -fSL -o /tmp/vosk.zip \
+            https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-linux-x86_64-0.3.45.zip
+          unzip -o /tmp/vosk.zip -d /tmp/vosk
+          sudo cp /tmp/vosk/vosk-linux-x86_64-0.3.45/libvosk.so /usr/local/lib/
+          sudo ldconfig
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --locked
+
+      - name: Build
+        env:
+          LIBRARY_PATH: /usr/local/lib
+          LD_LIBRARY_PATH: /usr/local/lib
+        run: cargo tauri build
+
+      - name: Generate SHA256 checksums
+        run: |
+          cd target/release/bundle
+          sha256sum deb/*.deb appimage/*.AppImage > SHA256SUMS.txt
+          echo "=== SHA256SUMS ===" && cat SHA256SUMS.txt
+
+      - name: Upload assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          gh release upload "$TAG" \
+            target/release/bundle/deb/*.deb \
+            target/release/bundle/appimage/*.AppImage \
+            target/release/bundle/SHA256SUMS.txt \
+            --clobber
