@@ -25,9 +25,22 @@ export LD_LIBRARY_PATH := /usr/local/lib:$(LD_LIBRARY_PATH)
 # Dependencies
 ##############################################################################
 
-.PHONY: install  ## Install dependencies
+.PHONY: install  ## Build (if needed) and install .deb package locally
 install:
-	cargo build
+	@if pgrep -x arcanaglyph >/dev/null 2>&1; then \
+		echo "${YELLOW}INFO : ${RESET}ArcanaGlyph запущен — останавливаю...${RESET}"; \
+		pkill -x arcanaglyph && sleep 1; \
+	fi; \
+	VERSION=$$(grep '"version"' crates/arcanaglyph-app/tauri.conf.json | head -1 | sed 's/.*"version": *"//;s/".*//');\
+	DEB="target/release/bundle/deb/ArcanaGlyph_$${VERSION}_amd64.deb"; \
+	if [ ! -f "$$DEB" ]; then \
+		echo "${YELLOW}INFO : ${RESET}.deb v$${VERSION} не найден — собираю...${RESET}"; \
+		cargo tauri build || exit 1; \
+	fi; \
+	echo "${GREEN}INFO : ${AZURE}Устанавливаю $$DEB${RESET}"; \
+	sudo dpkg -i "$$DEB" && sudo apt-get install -f -y; \
+	echo "${GREEN}INFO : ${AZURE}Запускаю ArcanaGlyph...${RESET}"; \
+	nohup arcanaglyph >/dev/null 2>&1 &
 
 .PHONY: sync  ## Sync, update and remove extra dependencies
 sync:
