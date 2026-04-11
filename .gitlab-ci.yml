@@ -1,5 +1,6 @@
 stages:
   - tag
+  - mirror
 
 # Автоматическое создание тега при merge в main, если версия изменилась
 create-tag:
@@ -22,3 +23,20 @@ create-tag:
         git push origin "v$VERSION"
         echo "Тег v$VERSION создан"
       fi
+
+# Зеркалирование в GitHub при merge в main
+mirror-to-github:
+  stage: mirror
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 0
+  before_script:
+    - eval $(ssh-agent -s)
+    - echo "$GITHUB_SSH_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh && ssh-keyscan github.com >> ~/.ssh/known_hosts
+  script:
+    - git remote add github git@github.com:py-art/arcanaglyph.git || true
+    - git push github HEAD:main --force
+    - git push github --tags
