@@ -2,7 +2,7 @@
 
 use arcanaglyph_core::ArcanaEngine;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tauri::{
     AppHandle, Emitter, Manager,
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
@@ -58,7 +58,9 @@ pub fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 let _ = app.emit("tray://open-settings", ());
             }
             "toggle" => {
-                if let Some(engine) = app.try_state::<Arc<ArcanaEngine>>() {
+                if let Some(engine_state) = app.try_state::<Arc<OnceLock<ArcanaEngine>>>()
+                    && let Some(engine) = engine_state.get()
+                {
                     engine.trigger();
                 }
             }
