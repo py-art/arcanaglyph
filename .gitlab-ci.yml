@@ -39,6 +39,13 @@ mirror-to-github:
     - mkdir -p ~/.ssh && ssh-keyscan github.com >> ~/.ssh/known_hosts
   script:
     - git remote add github git@github.com:py-art/arcanaglyph.git || true
+    # Подменяем README на публичную версию и убираем [Unreleased] из CHANGELOG
+    - git config user.email "ci@arcanaglyph.dev"
+    - git config user.name "GitLab CI"
+    - cp README.public.md README.md
+    - sed -i '/^## \[Unreleased\]/d' CHANGELOG.md
+    - git add README.md CHANGELOG.md
+    - git commit -m "ci: public README + clean CHANGELOG" --allow-empty
     - git push github HEAD:refs/heads/main --force
     - git push github --tags
 
