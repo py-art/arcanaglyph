@@ -38,15 +38,16 @@ mirror-to-github:
     - echo "$GITHUB_SSH_KEY" | tr -d '\r' | ssh-add -
     - mkdir -p ~/.ssh && ssh-keyscan github.com >> ~/.ssh/known_hosts
   script:
-    - git remote add github git@github.com:py-art/arcanaglyph.git || true
-    - git config user.email "ci@arcanaglyph.dev"
-    - git config user.name "GitLab CI"
-    - cp README.public.md README.md
-    - sed -i '/^## \[Unreleased\]/d' CHANGELOG.md
-    - git add README.md CHANGELOG.md
-    - git commit -m "ci: public README + clean CHANGELOG" --allow-empty
-    - git push github HEAD:refs/heads/main --force
-    - git push github --tags
+    - |
+      git remote add github git@github.com:py-art/arcanaglyph.git || true
+      git config user.email "ci@arcanaglyph.dev"
+      git config user.name "GitLab CI"
+      cp README.public.md README.md
+      sed -i '/^## \[Unreleased\]/d' CHANGELOG.md
+      git add README.md CHANGELOG.md
+      git commit -m "ci: public README + clean CHANGELOG" --allow-empty
+      git push github HEAD:refs/heads/main --force
+      git push github --tags
 
 # Создание релиза в GitLab (в том же pipeline, после создания тега)
 create-gitlab-release:
