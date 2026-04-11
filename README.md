@@ -58,7 +58,7 @@ make dist
 ls target/release/bundle/deb/ArcanaGlyph_*.deb
 
 # Установка
-sudo dpkg -i target/release/bundle/deb/ArcanaGlyph_1.3.1_amd64.deb
+sudo dpkg -i target/release/bundle/deb/ArcanaGlyph_1.3.2_amd64.deb
 sudo apt-get install -f   # если не хватает зависимостей
 
 # Запуск
@@ -113,6 +113,7 @@ make lint     # cargo clippy -- -D warnings
 make test     # cargo test
 make build    # Release-сборка
 make dist     # Сборка .deb и .AppImage
+make install  # Собрать (если нужно) и установить .deb локально
 make clean    # Очистка кэша сборки
 ```
 
