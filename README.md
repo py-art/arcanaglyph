@@ -113,6 +113,7 @@ make lint     # cargo clippy -- -D warnings
 make test     # cargo test
 make build    # Release-сборка
 make dist     # Сборка .deb и .AppImage
+make install  # Собрать (если нужно) и установить .deb локально
 make clean    # Очистка кэша сборки
 ```
 
