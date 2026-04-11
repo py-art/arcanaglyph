@@ -53,12 +53,12 @@ jobs:
           LIBRARY_PATH: /usr/local/lib
           LD_LIBRARY_PATH: /usr/local/lib
           APPIMAGE_EXTRACT_AND_RUN: 1
-        run: cargo tauri build
+        run: cargo tauri build --bundles deb
 
       - name: Generate SHA256 checksums
         run: |
           cd target/release/bundle
-          sha256sum deb/*.deb appimage/*.AppImage > SHA256SUMS.txt
+          sha256sum deb/*.deb > SHA256SUMS.txt
           echo "=== SHA256SUMS ===" && cat SHA256SUMS.txt
 
       - name: Upload assets to release
@@ -68,6 +68,5 @@ jobs:
           TAG="${{ github.event.release.tag_name }}"
           gh release upload "$TAG" \
             target/release/bundle/deb/*.deb \
-            target/release/bundle/appimage/*.AppImage \
             target/release/bundle/SHA256SUMS.txt \
             --clobber
