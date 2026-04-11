@@ -42,28 +42,32 @@ mirror-to-github:
     - git push github HEAD:main --force
     - git push github --tags
 
-# Создание релиза в GitLab (запускается при появлении тега)
+# Создание релиза в GitLab (в том же pipeline, после создания тега)
 create-gitlab-release:
   stage: release
   image: registry.gitlab.com/gitlab-org/release-cli:latest
   rules:
-    - if: $CI_COMMIT_TAG =~ /^v/
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
   script:
-    - VERSION=${CI_COMMIT_TAG#v}
+    - VERSION=$(grep -m1 '"version"' crates/arcanaglyph-app/tauri.conf.json | sed 's/.*"version".*"\(.*\)".*/\1/')
+    - TAG="v$VERSION"
+    - echo "Создаю GitLab Release $TAG"
     - awk "/^## \\[$VERSION\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md > notes.md
     - echo "Release notes:" && cat notes.md
-    - release-cli create --name "Release $CI_COMMIT_TAG" --tag-name "$CI_COMMIT_TAG" --description "$(cat notes.md)"
+    - release-cli create --name "Release $TAG" --tag-name "$TAG" --description "$(cat notes.md)"
 
-# Создание релиза в GitHub (запускается при появлении тега)
+# Создание релиза в GitHub (в том же pipeline, после зеркалирования)
 create-github-release:
   stage: release
   image: alpine:latest
   rules:
-    - if: $CI_COMMIT_TAG =~ /^v/
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
   before_script:
     - apk add --no-cache curl jq
   script:
-    - VERSION=${CI_COMMIT_TAG#v}
+    - VERSION=$(grep -m1 '"version"' crates/arcanaglyph-app/tauri.conf.json | sed 's/.*"version".*"\(.*\)".*/\1/')
+    - TAG="v$VERSION"
+    - echo "Создаю GitHub Release $TAG"
     - awk "/^## \\[$VERSION\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md > notes.md
     - echo "Release notes:" && cat notes.md
     - |
@@ -72,4 +76,4 @@ create-github-release:
         -H "Authorization: token $GITHUB_TOKEN" \
         -H "Accept: application/vnd.github+json" \
         "https://api.github.com/repos/py-art/arcanaglyph/releases" \
-        -d "{\"tag_name\": \"$CI_COMMIT_TAG\", \"name\": \"Release $CI_COMMIT_TAG\", \"body\": $BODY}"
+        -d "{\"tag_name\": \"$TAG\", \"name\": \"Release $TAG\", \"body\": $BODY}"
