@@ -44,8 +44,12 @@ mirror-to-github:
       git config user.name "GitLab CI"
       cp README.public.md README.md
       sed -i '/^## \[Unreleased\]/d' CHANGELOG.md
-      git rm -rf CLAUDE.md README.public.md NOTE.md Roadmap.md .gitlab-ci.yml .markdownlint.yaml .taplo.toml rustfmt.toml Makefile scripts/ || true
+      for f in CLAUDE.md README.public.md NOTE.md Roadmap.md .gitlab-ci.yml .markdownlint.yaml .taplo.toml rustfmt.toml Makefile; do
+        [ -f "$f" ] && git rm -f "$f"
+      done
+      [ -d scripts ] && git rm -rf scripts/
       git add -A
+      git status
       git commit -m "ci: prepare public release" --allow-empty
       git push github HEAD:refs/heads/main --force
       git push github --tags
