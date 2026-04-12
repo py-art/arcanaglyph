@@ -85,7 +85,7 @@ Cargo workspace из двух крейтов:
 **При добавлении нового dev-only файла** — добавить его в `git rm` список в `.gitlab-ci.yml`.
 
 Текущий список исключений: `CLAUDE.md`, `.gitlab-ci.yml`, `.markdownlint.yaml`,
-`.taplo.toml`, `rustfmt.toml`, `Makefile`, `NOTE.md`, `Roadmap.md`, `README.public.md`.
+`.taplo.toml`, `rustfmt.toml`, `Makefile`, `NOTE.md`, `Roadmap.md`, `README.public.md`, `scripts/`.
 
 ## Конвенции
 
