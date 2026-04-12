@@ -524,6 +524,7 @@ fn get_models() -> Result<serde_json::Value, String> {
             "size": m.size,
             "download_url": m.download_url,
             "installed": is_model_installed(path, m.transcriber_type),
+            "path": path.display().to_string(),
         })
     }).collect();
     Ok(serde_json::json!(result))
@@ -763,6 +764,7 @@ fn main() {
             // Второй экземпляр — показываем окно первого
             tray::show_window(app);
         }))
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler({

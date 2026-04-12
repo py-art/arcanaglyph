@@ -60,6 +60,10 @@ build:
 ##############################################################################
 .PHONY: run   ## Run application (single command)
 run:
+	@if pgrep -x arcanaglyph >/dev/null 2>&1; then \
+		echo "${YELLOW}INFO : ${RESET}ArcanaGlyph запущен — останавливаю...${RESET}"; \
+		pkill -x arcanaglyph && sleep 1; \
+	fi
 	cargo run -p arcanaglyph-app --bin arcanaglyph
 
 ##############################################################################

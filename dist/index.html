@@ -698,6 +698,52 @@
         line-height: 1.4;
       }
 
+      /* === Путь с кнопкой выбора === */
+      .path-input-row {
+        display: flex;
+        gap: 0.4rem;
+        align-items: center;
+      }
+      .path-input-row input {
+        flex: 1;
+        min-width: 0;
+      }
+      .path-pick-btn {
+        padding: 0.35rem 0.5rem;
+        background: #292e42;
+        border: 1px solid #3b4261;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.85rem;
+        line-height: 1;
+        transition: background 0.15s;
+        flex-shrink: 0;
+      }
+      .path-pick-btn:hover { background: rgba(122, 162, 247, 0.15); }
+      .model-card-path {
+        display: flex;
+        gap: 0.4rem;
+        align-items: center;
+        margin-top: 0.4rem;
+      }
+      .model-card-path input {
+        flex: 1;
+        min-width: 0;
+        font-size: 0.75rem;
+        padding: 0.25rem 0.4rem;
+        background: #1a1b26;
+        border: 1px solid #292e42;
+        border-radius: 4px;
+        color: #a9b1d6;
+        text-overflow: ellipsis;
+        overflow: hidden;
+        cursor: default;
+      }
+      .model-card-path .path-pick-btn {
+        padding: 0.2rem 0.35rem;
+        font-size: 0.75rem;
+      }
+
       /* === Карточки моделей === */
       .models-section-title {
         font-size: 0.85rem;
@@ -1099,7 +1145,7 @@
           </svg>
         </div>
         <div class="about-title">ArcanaGlyph</div>
-        <div class="about-version">v1.3.7</div>
+        <div class="about-version">v1.4.0</div>
         <div class="about-divider"></div>
         <div class="about-desc">
           Голосовой ввод текста
@@ -1339,23 +1385,11 @@
       <!-- Таб: Модели -->
       <div class="settings-tab-content" id="tab-models">
         <div class="setting-group">
-          <label>Путь к Vosk-модели</label>
-          <input type="text" id="s-model-path" placeholder="models/vosk-model-ru-0.42" />
-        </div>
-
-        <div class="setting-group">
-          <label>Путь к Whisper-модели (ggml)</label>
-          <input type="text" id="s-whisper-path" placeholder="models/ggml-large-v3-turbo.bin" />
-        </div>
-
-        <div class="setting-group">
-          <label>Путь к GigaAM-модели (директория)</label>
-          <input type="text" id="s-gigaam-path" placeholder="models/gigaam-v3-e2e-ctc" />
-        </div>
-
-        <div class="setting-group">
-          <label>Путь к Qwen3-ASR (директория)</label>
-          <input type="text" id="s-qwen3asr-path" placeholder="models/qwen3-asr-0.6b" />
+          <label>Базовый путь к моделям</label>
+          <div class="path-input-row">
+            <input type="text" id="s-models-base-dir" placeholder="~/.local/share/arcanaglyph/models" />
+            <button class="path-pick-btn" id="pick-base-dir" title="Выбрать директорию">📁</button>
+          </div>
         </div>
 
         <div class="models-section-title">Доступные модели</div>
@@ -1702,14 +1736,12 @@
           start_minimized: cfg.start_minimized || false,
           show_widget: cfg.show_widget !== false,
           show_tray: cfg.show_tray !== false,
+          models_base_dir: cfg.models_base_dir || '',
           preload_models: normalizePreload(cfg.preload_models || [], cfg.transcriber),
         };
 
         setCustomSelect('s-transcriber', cfg.transcriber);
-        document.getElementById('s-model-path').value = cfg.model_path;
-        document.getElementById('s-whisper-path').value = cfg.whisper_model_path;
-        document.getElementById('s-gigaam-path').value = cfg.gigaam_model_path;
-        document.getElementById('s-qwen3asr-path').value = cfg.qwen3asr_model_path;
+        document.getElementById('s-models-base-dir').value = cfg.models_base_dir || '';
         setCustomSelect('s-sample-rate', String(cfg.sample_rate));
         document.getElementById('s-max-record').value = cfg.max_record_secs;
         setHotkeyValue('hk-trigger', cfg.hotkey);
@@ -1753,6 +1785,10 @@
                 <span class="model-card-size">${m.size}</span>
               </div>
               <div class="model-card-desc">${m.description}</div>
+              <div class="model-card-path">
+                <input type="text" class="model-path-input" data-type="${m.transcriber_type}" value="${m.path || ''}" readonly placeholder="Нажмите 📁 для выбора" title="${m.path || ''}" />
+                <button class="path-pick-btn model-path-pick" data-type="${m.transcriber_type}" title="Выбрать директорию модели">📁</button>
+              </div>
               <div class="model-card-footer">
                 <span class="model-card-status ${m.installed ? 'found' : 'missing'}">
                   ${m.installed ? 'Установлена' : 'Не найдена'}
@@ -1766,6 +1802,26 @@
             `;
             container.appendChild(card);
           }
+          // Обработчики кнопок выбора директории в карточках
+          container.querySelectorAll('.model-path-pick').forEach(btn => {
+            btn.addEventListener('click', async () => {
+              const input = btn.parentElement.querySelector('.model-path-input');
+              const currentPath = input.value || document.getElementById('s-models-base-dir').value || '';
+              const selected = await window.__TAURI__.dialog.open({
+                directory: true,
+                title: 'Выбрать директорию модели',
+                defaultPath: currentPath,
+              });
+              if (selected) {
+                input.value = selected;
+                checkChanges();
+              }
+            });
+          });
+          // Отслеживание изменений в путях карточек
+          container.querySelectorAll('.model-path-input').forEach(input => {
+            input.addEventListener('input', checkChanges);
+          });
           // Обработчики кнопок «Скачать»
           container.querySelectorAll('.model-download-btn').forEach(btn => {
             btn.addEventListener('click', async () => {
@@ -1774,19 +1830,18 @@
               const filename = btn.dataset.filename;
               const ttype = btn.dataset.type;
 
-              // Определяем директорию скачивания из текущих путей в настройках
-              let destDir;
-              if (ttype === 'vosk') destDir = document.getElementById('s-model-path').value || 'models/' + filename;
-              else if (ttype === 'whisper') {
-                const p = document.getElementById('s-whisper-path').value || 'models/' + filename;
-                destDir = p.substring(0, p.lastIndexOf('/') + 1) || 'models/';
-              } else if (ttype === 'gigaam') destDir = document.getElementById('s-gigaam-path').value || 'models/' + filename;
-              else if (ttype === 'qwen3asr') destDir = document.getElementById('s-qwen3asr-path').value || 'models/' + filename;
-              else destDir = 'models/' + filename;
+              // Определяем директорию скачивания из пути в карточке
+              const card = btn.closest('.model-card');
+              const pathInput = card.querySelector('.model-path-input');
+              let destDir = pathInput ? pathInput.value : '';
+              if (!destDir) destDir = document.getElementById('s-models-base-dir').value + '/' + filename;
+              // Для whisper путь — к файлу, берём директорию
+              if (ttype === 'whisper') {
+                destDir = destDir.substring(0, destDir.lastIndexOf('/') + 1) || destDir;
+              }
 
               btn.disabled = true;
               btn.textContent = 'Скачивание...';
-              const card = btn.closest('.model-card');
               const progress = card.querySelector('.model-progress');
               progress.style.display = 'flex';
 
@@ -1838,13 +1893,20 @@
       });
 
       // Собираем текущие значения из формы
+      // Получить путь модели из карточки по типу транскрайбера
+      function getModelPathFromCard(ttype) {
+        const input = document.querySelector(`.model-path-input[data-type="${ttype}"]`);
+        return input ? input.value : '';
+      }
+
       function getFormConfig() {
         return {
           transcriber: document.getElementById('s-transcriber').dataset.value,
-          model_path: document.getElementById('s-model-path').value,
-          whisper_model_path: document.getElementById('s-whisper-path').value,
-          gigaam_model_path: document.getElementById('s-gigaam-path').value,
-          qwen3asr_model_path: document.getElementById('s-qwen3asr-path').value,
+          model_path: getModelPathFromCard('vosk'),
+          whisper_model_path: getModelPathFromCard('whisper'),
+          gigaam_model_path: getModelPathFromCard('gigaam'),
+          qwen3asr_model_path: getModelPathFromCard('qwen3asr'),
+          models_base_dir: document.getElementById('s-models-base-dir').value,
           sample_rate: parseInt(document.getElementById('s-sample-rate').dataset.value),
           max_record_secs: parseInt(document.getElementById('s-max-record').value),
           hotkey: getHotkeyValue('hk-trigger'),
@@ -1871,10 +1933,7 @@
       // Маппинг полей конфига → DOM элементов для подсветки
       const fieldMap = {
         transcriber:       { el: 's-transcriber',  type: 'group' },
-        model_path:        { el: 's-model-path',   type: 'group' },
-        whisper_model_path:{ el: 's-whisper-path',  type: 'group' },
-        gigaam_model_path: { el: 's-gigaam-path',   type: 'group' },
-        qwen3asr_model_path: { el: 's-qwen3asr-path', type: 'group' },
+        models_base_dir:   { el: 's-models-base-dir', type: 'group' },
         sample_rate:       { el: 's-sample-rate',  type: 'group' },
         max_record_secs:   { el: 's-max-record',   type: 'group' },
         hotkey:            { el: 'hk-trigger',      type: 'group' },
@@ -1983,8 +2042,21 @@
       initCustomSelects();
 
       // Навешиваем обработчики изменений
-      ['s-model-path', 's-whisper-path', 's-gigaam-path', 's-qwen3asr-path', 's-max-record', 's-vad-silence']
+      ['s-models-base-dir', 's-max-record', 's-vad-silence']
         .forEach(id => document.getElementById(id).addEventListener('input', checkChanges));
+      // Кнопка выбора базовой директории моделей
+      document.getElementById('pick-base-dir').addEventListener('click', async () => {
+        const currentPath = document.getElementById('s-models-base-dir').value || '';
+        const selected = await window.__TAURI__.dialog.open({
+          directory: true,
+          title: 'Выбрать базовую директорию моделей',
+          defaultPath: currentPath,
+        });
+        if (selected) {
+          document.getElementById('s-models-base-dir').value = selected;
+          checkChanges();
+        }
+      });
       ['s-transcriber', 's-sample-rate', 's-retention']
         .forEach(id => document.getElementById(id).addEventListener('change', checkChanges));
       // При смене модели по умолчанию — обновить блокировки предзагрузки
@@ -2157,10 +2229,8 @@
       cancelBtn.addEventListener('click', () => {
         if (!originalConfig) return;
         setCustomSelect('s-transcriber', originalConfig.transcriber);
-        document.getElementById('s-model-path').value = originalConfig.model_path;
-        document.getElementById('s-whisper-path').value = originalConfig.whisper_model_path;
-        document.getElementById('s-gigaam-path').value = originalConfig.gigaam_model_path;
-        document.getElementById('s-qwen3asr-path').value = originalConfig.qwen3asr_model_path;
+        document.getElementById('s-models-base-dir').value = originalConfig.models_base_dir || '';
+        renderModelCards();
         setCustomSelect('s-sample-rate', String(originalConfig.sample_rate));
         document.getElementById('s-max-record').value = originalConfig.max_record_secs;
         setHotkeyValue('hk-trigger', originalConfig.hotkey);
