@@ -84,6 +84,9 @@ pub struct CoreConfig {
     /// Показывать иконку в системном трее
     #[serde(default = "default_true")]
     pub show_tray: bool,
+    /// Базовый путь к директории моделей
+    #[serde(default = "default_models_dir")]
+    pub models_base_dir: PathBuf,
 }
 
 fn default_models_dir() -> PathBuf {
@@ -147,6 +150,7 @@ impl Default for CoreConfig {
             preload_models: vec![],
             show_widget: true,
             show_tray: true,
+            models_base_dir: models,
         }
     }
 }
@@ -344,6 +348,7 @@ auto_type = false
             preload_models: vec![],
             show_widget: true,
             show_tray: true,
+            models_base_dir: PathBuf::from("/tmp/test-models"),
         };
 
         let content = toml::to_string_pretty(&config).unwrap();
