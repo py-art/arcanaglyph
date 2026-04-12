@@ -363,6 +363,43 @@
         transition: border-color 0.15s;
       }
       .setting-group input:focus { border-color: #7aa2f7; }
+      /* Скрываем нативные стрелки number-input */
+      .setting-group input[type="number"]::-webkit-inner-spin-button,
+      .setting-group input[type="number"]::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        appearance: none;
+        margin: 0;
+      }
+      /* Обёртка для number-input с кастомными стрелками */
+      .number-input-wrap {
+        position: relative;
+      }
+      .number-input-wrap input { padding-right: 1.8rem; }
+      .number-input-arrows {
+        position: absolute;
+        right: 6px;
+        top: 50%;
+        transform: translateY(-50%);
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        cursor: pointer;
+      }
+      .number-input-arrows .arrow-up,
+      .number-input-arrows .arrow-down {
+        width: 0;
+        height: 0;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+      }
+      .number-input-arrows .arrow-up {
+        border-bottom: 5px solid #565f89;
+      }
+      .number-input-arrows .arrow-down {
+        border-top: 5px solid #565f89;
+      }
+      .number-input-arrows .arrow-up:hover { border-bottom-color: #7aa2f7; }
+      .number-input-arrows .arrow-down:hover { border-top-color: #7aa2f7; }
 
       /* Кастомный dropdown (замена <select>) */
       .custom-select {
@@ -1145,7 +1182,7 @@
           </svg>
         </div>
         <div class="about-title">ArcanaGlyph</div>
-        <div class="about-version">v1.4.0</div>
+        <div class="about-version">v1.4.1</div>
         <div class="about-divider"></div>
         <div class="about-desc">
           Голосовой ввод текста
@@ -1269,7 +1306,13 @@
 
         <div class="setting-group">
           <label>Таймаут записи (секунды)</label>
-          <input type="number" id="s-max-record" min="5" max="120" />
+          <div class="number-input-wrap">
+            <input type="number" id="s-max-record" min="5" max="120" />
+            <div class="number-input-arrows">
+              <div class="arrow-up"></div>
+              <div class="arrow-down"></div>
+            </div>
+          </div>
         </div>
 
         <div class="setting-row">
@@ -1279,7 +1322,13 @@
 
         <div class="setting-group">
           <label>Тишина для авто-стопа (секунды)</label>
-          <input type="number" id="s-vad-silence" min="1" max="30" />
+          <div class="number-input-wrap">
+            <input type="number" id="s-vad-silence" min="1" max="30" />
+            <div class="number-input-arrows">
+              <div class="arrow-up"></div>
+              <div class="arrow-down"></div>
+            </div>
+          </div>
         </div>
 
         <div class="setting-group">
@@ -2044,6 +2093,12 @@
       // Навешиваем обработчики изменений
       ['s-models-base-dir', 's-max-record', 's-vad-silence']
         .forEach(id => document.getElementById(id).addEventListener('input', checkChanges));
+      // Кастомные стрелки для number-input
+      document.querySelectorAll('.number-input-wrap').forEach(wrap => {
+        const input = wrap.querySelector('input[type="number"]');
+        wrap.querySelector('.arrow-up').addEventListener('click', () => { input.stepUp(); input.dispatchEvent(new Event('input')); });
+        wrap.querySelector('.arrow-down').addEventListener('click', () => { input.stepDown(); input.dispatchEvent(new Event('input')); });
+      });
       // Кнопка выбора базовой директории моделей
       document.getElementById('pick-base-dir').addEventListener('click', async () => {
         const currentPath = document.getElementById('s-models-base-dir').value || '';
