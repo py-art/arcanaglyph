@@ -1,5 +1,0 @@
-#!/bin/bash
-
-# ArcanaGlyph: UDP-триггер записи (старт/стоп)
-# Используется на Wayland как команда для горячей клавиши через gsettings
-echo "trigger" | /usr/bin/nc -u -w0 127.0.0.1 9002
