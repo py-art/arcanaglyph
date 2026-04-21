@@ -3,8 +3,8 @@
 
 use arcanaglyph_core::{ArcanaEngine, CoreConfig, EngineEvent};
 use std::net::SocketAddr;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use tokio::net::{TcpListener, UdpSocket};
 use tracing::info;
 

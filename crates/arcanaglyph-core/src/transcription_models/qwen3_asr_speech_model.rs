@@ -20,12 +20,33 @@ pub static MODEL: SpeechModelInfo = SpeechModelInfo {
     size: "~2.5 ГБ",
     download_url: "https://huggingface.co/Daumee/Qwen3-ASR-0.6B-ONNX-CPU/resolve/main/tokenizer.json",
     extra_files: Some(&[
-        ("https://huggingface.co/Daumee/Qwen3-ASR-0.6B-ONNX-CPU/resolve/main/onnx_models/encoder_conv.onnx", "onnx_models/encoder_conv.onnx"),
-        ("https://huggingface.co/Daumee/Qwen3-ASR-0.6B-ONNX-CPU/resolve/main/onnx_models/encoder_conv.onnx.data", "onnx_models/encoder_conv.onnx.data"),
-        ("https://huggingface.co/Daumee/Qwen3-ASR-0.6B-ONNX-CPU/resolve/main/onnx_models/encoder_transformer.onnx", "onnx_models/encoder_transformer.onnx"),
-        ("https://huggingface.co/Daumee/Qwen3-ASR-0.6B-ONNX-CPU/resolve/main/onnx_models/encoder_transformer.onnx.data", "onnx_models/encoder_transformer.onnx.data"),
-        ("https://huggingface.co/Daumee/Qwen3-ASR-0.6B-ONNX-CPU/resolve/main/onnx_models/decoder_init.int8.onnx", "onnx_models/decoder_init.int8.onnx"),
-        ("https://huggingface.co/Daumee/Qwen3-ASR-0.6B-ONNX-CPU/resolve/main/onnx_models/decoder_step.int8.onnx", "onnx_models/decoder_step.int8.onnx"),
-        ("https://huggingface.co/Daumee/Qwen3-ASR-0.6B-ONNX-CPU/resolve/main/onnx_models/embed_tokens.bin", "onnx_models/embed_tokens.bin"),
+        (
+            "https://huggingface.co/Daumee/Qwen3-ASR-0.6B-ONNX-CPU/resolve/main/onnx_models/encoder_conv.onnx",
+            "onnx_models/encoder_conv.onnx",
+        ),
+        (
+            "https://huggingface.co/Daumee/Qwen3-ASR-0.6B-ONNX-CPU/resolve/main/onnx_models/encoder_conv.onnx.data",
+            "onnx_models/encoder_conv.onnx.data",
+        ),
+        (
+            "https://huggingface.co/Daumee/Qwen3-ASR-0.6B-ONNX-CPU/resolve/main/onnx_models/encoder_transformer.onnx",
+            "onnx_models/encoder_transformer.onnx",
+        ),
+        (
+            "https://huggingface.co/Daumee/Qwen3-ASR-0.6B-ONNX-CPU/resolve/main/onnx_models/encoder_transformer.onnx.data",
+            "onnx_models/encoder_transformer.onnx.data",
+        ),
+        (
+            "https://huggingface.co/Daumee/Qwen3-ASR-0.6B-ONNX-CPU/resolve/main/onnx_models/decoder_init.int8.onnx",
+            "onnx_models/decoder_init.int8.onnx",
+        ),
+        (
+            "https://huggingface.co/Daumee/Qwen3-ASR-0.6B-ONNX-CPU/resolve/main/onnx_models/decoder_step.int8.onnx",
+            "onnx_models/decoder_step.int8.onnx",
+        ),
+        (
+            "https://huggingface.co/Daumee/Qwen3-ASR-0.6B-ONNX-CPU/resolve/main/onnx_models/embed_tokens.bin",
+            "onnx_models/embed_tokens.bin",
+        ),
     ]),
 };

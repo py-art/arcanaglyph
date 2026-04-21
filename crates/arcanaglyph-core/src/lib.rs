@@ -7,8 +7,8 @@ pub mod engine;
 pub mod error;
 pub mod gigaam;
 pub mod history;
-pub mod qwen3asr;
 pub mod input;
+pub mod qwen3asr;
 pub mod transcriber;
 pub mod transcription_models;
 

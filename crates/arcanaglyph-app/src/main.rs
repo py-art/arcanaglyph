@@ -4,8 +4,8 @@
 
 mod tray;
 
-use arcanaglyph_core::{ArcanaEngine, CoreConfig, EngineEvent};
 use arcanaglyph_core::history::HistoryDB;
+use arcanaglyph_core::{ArcanaEngine, CoreConfig, EngineEvent};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use tauri::{Emitter, Manager};
@@ -124,8 +124,14 @@ fn install_wayland_scripts() {
     let _ = std::fs::create_dir_all(&bin_dir);
 
     let scripts = [
-        ("ag-trigger", "#!/bin/bash\n# ArcanaGlyph: UDP-триггер записи\necho \"trigger\" | /usr/bin/nc -u -w0 127.0.0.1 9002\n"),
-        ("ag-pause", "#!/bin/bash\n# ArcanaGlyph: UDP-триггер паузы\necho \"pause\" | /usr/bin/nc -u -w0 127.0.0.1 9002\n"),
+        (
+            "ag-trigger",
+            "#!/bin/bash\n# ArcanaGlyph: UDP-триггер записи\necho \"trigger\" | /usr/bin/nc -u -w0 127.0.0.1 9002\n",
+        ),
+        (
+            "ag-pause",
+            "#!/bin/bash\n# ArcanaGlyph: UDP-триггер паузы\necho \"pause\" | /usr/bin/nc -u -w0 127.0.0.1 9002\n",
+        ),
     ];
 
     for (name, content) in &scripts {
@@ -163,13 +169,22 @@ async fn download_file(
     }
 
     let filename = dest.file_name().and_then(|n| n.to_str()).unwrap_or("file");
-    tracing::info!("Скачивание [{}/{}] {} → {}", file_idx + 1, total_files, filename, dest.display());
+    tracing::info!(
+        "Скачивание [{}/{}] {} → {}",
+        file_idx + 1,
+        total_files,
+        filename,
+        dest.display()
+    );
 
-    let response = reqwest::get(url).await.map_err(|e| format!("Ошибка запроса {}: {}", filename, e))?;
+    let response = reqwest::get(url)
+        .await
+        .map_err(|e| format!("Ошибка запроса {}: {}", filename, e))?;
     let total_size = response.content_length().unwrap_or(0);
 
     let mut stream = response.bytes_stream();
-    let mut file = tokio::fs::File::create(dest).await
+    let mut file = tokio::fs::File::create(dest)
+        .await
         .map_err(|e| format!("Не удалось создать {}: {}", filename, e))?;
 
     let mut downloaded: u64 = 0;
@@ -177,22 +192,30 @@ async fn download_file(
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| format!("Ошибка скачивания {}: {}", filename, e))?;
-        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk).await
+        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
+            .await
             .map_err(|e| format!("Ошибка записи {}: {}", filename, e))?;
 
         downloaded += chunk.len() as u64;
-        let progress_pct = if total_size > 0 { downloaded * 100 / total_size } else { 0 };
+        let progress_pct = if total_size > 0 {
+            downloaded * 100 / total_size
+        } else {
+            0
+        };
         if progress_pct != last_progress {
             last_progress = progress_pct;
-            let _ = app.emit("download://progress", serde_json::json!({
-                "model_id": model_id,
-                "file": filename,
-                "file_idx": file_idx,
-                "total_files": total_files,
-                "downloaded": downloaded,
-                "total": total_size,
-                "percent": progress_pct,
-            }));
+            let _ = app.emit(
+                "download://progress",
+                serde_json::json!({
+                    "model_id": model_id,
+                    "file": filename,
+                    "file_idx": file_idx,
+                    "total_files": total_files,
+                    "downloaded": downloaded,
+                    "total": total_size,
+                    "percent": progress_pct,
+                }),
+            );
         }
     }
     Ok(())
@@ -200,12 +223,7 @@ async fn download_file(
 
 /// Tauri-команда: скачать модель (один или несколько файлов) с прогрессом
 #[tauri::command]
-async fn download_model(
-    model_id: String,
-    url: String,
-    dest_dir: String,
-    app: tauri::AppHandle,
-) -> Result<(), String> {
+async fn download_model(model_id: String, url: String, dest_dir: String, app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Emitter;
 
     let dest_path = std::path::PathBuf::from(&dest_dir);
@@ -231,9 +249,12 @@ async fn download_model(
         download_file(extra_url, &extra_dest, &model_id, idx + 1, total_files, &app).await?;
     }
 
-    let _ = app.emit("download://complete", serde_json::json!({
-        "model_id": model_id,
-    }));
+    let _ = app.emit(
+        "download://complete",
+        serde_json::json!({
+            "model_id": model_id,
+        }),
+    );
 
     tracing::info!("Модель '{}' скачана ({} файлов)", model_id, total_files);
     Ok(())
@@ -271,32 +292,32 @@ fn tauri_hotkey_to_gsettings(hotkey: &str) -> String {
 /// Маппинг латинских клавиш → XKB keysym кириллических (для GNOME gsettings)
 fn latin_to_cyrillic_keysym(key: &str) -> Option<&'static str> {
     match key {
-        "q" => Some("Cyrillic_shorti"),    // й
-        "w" => Some("Cyrillic_tse"),       // ц
-        "e" => Some("Cyrillic_u"),         // у
-        "r" => Some("Cyrillic_ka"),        // к
-        "t" => Some("Cyrillic_ie"),        // е
-        "y" => Some("Cyrillic_en"),        // н
-        "u" => Some("Cyrillic_ghe"),       // г
-        "i" => Some("Cyrillic_sha"),       // ш
-        "o" => Some("Cyrillic_shcha"),     // щ
-        "p" => Some("Cyrillic_ze"),        // з
-        "a" => Some("Cyrillic_ef"),        // ф
-        "s" => Some("Cyrillic_yeru"),      // ы
-        "d" => Some("Cyrillic_ve"),        // в
-        "f" => Some("Cyrillic_a"),         // а
-        "g" => Some("Cyrillic_pe"),        // п
-        "h" => Some("Cyrillic_er"),        // р
-        "j" => Some("Cyrillic_o"),         // о
-        "k" => Some("Cyrillic_el"),        // л
-        "l" => Some("Cyrillic_de"),        // д
-        "z" => Some("Cyrillic_ya"),        // я
-        "x" => Some("Cyrillic_che"),       // ч
-        "c" => Some("Cyrillic_es"),        // с
-        "v" => Some("Cyrillic_em"),        // м
-        "b" => Some("Cyrillic_i"),         // и
-        "n" => Some("Cyrillic_te"),        // т
-        "m" => Some("Cyrillic_softsign"),  // ь
+        "q" => Some("Cyrillic_shorti"),   // й
+        "w" => Some("Cyrillic_tse"),      // ц
+        "e" => Some("Cyrillic_u"),        // у
+        "r" => Some("Cyrillic_ka"),       // к
+        "t" => Some("Cyrillic_ie"),       // е
+        "y" => Some("Cyrillic_en"),       // н
+        "u" => Some("Cyrillic_ghe"),      // г
+        "i" => Some("Cyrillic_sha"),      // ш
+        "o" => Some("Cyrillic_shcha"),    // щ
+        "p" => Some("Cyrillic_ze"),       // з
+        "a" => Some("Cyrillic_ef"),       // ф
+        "s" => Some("Cyrillic_yeru"),     // ы
+        "d" => Some("Cyrillic_ve"),       // в
+        "f" => Some("Cyrillic_a"),        // а
+        "g" => Some("Cyrillic_pe"),       // п
+        "h" => Some("Cyrillic_er"),       // р
+        "j" => Some("Cyrillic_o"),        // о
+        "k" => Some("Cyrillic_el"),       // л
+        "l" => Some("Cyrillic_de"),       // д
+        "z" => Some("Cyrillic_ya"),       // я
+        "x" => Some("Cyrillic_che"),      // ч
+        "c" => Some("Cyrillic_es"),       // с
+        "v" => Some("Cyrillic_em"),       // м
+        "b" => Some("Cyrillic_i"),        // и
+        "n" => Some("Cyrillic_te"),       // т
+        "m" => Some("Cyrillic_softsign"), // ь
         _ => None,
     }
 }
@@ -337,12 +358,17 @@ fn check_hotkey_conflict(hotkey: String) -> Result<Option<String>, String> {
 
     // Проверяем custom keybindings (кроме наших arcanaglyph-*)
     let output = std::process::Command::new("gsettings")
-        .args(["get", "org.gnome.settings-daemon.plugins.media-keys", "custom-keybindings"])
+        .args([
+            "get",
+            "org.gnome.settings-daemon.plugins.media-keys",
+            "custom-keybindings",
+        ])
         .output()
         .map_err(|e| e.to_string())?;
     let paths_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if paths_str != "@as []" && !paths_str.is_empty() {
-        let paths: Vec<String> = paths_str.trim_matches(|c| c == '[' || c == ']')
+        let paths: Vec<String> = paths_str
+            .trim_matches(|c| c == '[' || c == ']')
             .split(',')
             .map(|s| s.trim().trim_matches('\'').trim().to_string())
             .filter(|s| !s.is_empty())
@@ -359,12 +385,16 @@ fn check_hotkey_conflict(hotkey: String) -> Result<Option<String>, String> {
                 .args(["get", &schema_path, "binding"])
                 .output();
             if let Ok(out) = out {
-                let existing = String::from_utf8_lossy(&out.stdout).trim().trim_matches('\'').to_string();
+                let existing = String::from_utf8_lossy(&out.stdout)
+                    .trim()
+                    .trim_matches('\'')
+                    .to_string();
                 if existing == binding {
                     let name_out = std::process::Command::new("gsettings")
                         .args(["get", &schema_path, "name"])
                         .output();
-                    let name = name_out.map(|o| String::from_utf8_lossy(&o.stdout).trim().trim_matches('\'').to_string())
+                    let name = name_out
+                        .map(|o| String::from_utf8_lossy(&o.stdout).trim().trim_matches('\'').to_string())
                         .unwrap_or_else(|_| "???".to_string());
                     return Ok(Some(format!("{} (custom keybinding)", name)));
                 }
@@ -380,14 +410,19 @@ fn check_hotkey_conflict(hotkey: String) -> Result<Option<String>, String> {
 fn register_gnome_hotkeys(hotkey_trigger: String, hotkey_pause: String) -> Result<(), String> {
     // Получаем текущий список custom keybindings
     let output = std::process::Command::new("gsettings")
-        .args(["get", "org.gnome.settings-daemon.plugins.media-keys", "custom-keybindings"])
+        .args([
+            "get",
+            "org.gnome.settings-daemon.plugins.media-keys",
+            "custom-keybindings",
+        ])
         .output()
         .map_err(|e| format!("Не удалось вызвать gsettings: {}", e))?;
     let current = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
     // Определяем слоты для ArcanaGlyph (ищем существующие или берём свободные)
     let ag_trigger_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/arcanaglyph-trigger/";
-    let ag_trigger_cyr_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/arcanaglyph-trigger-cyr/";
+    let ag_trigger_cyr_path =
+        "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/arcanaglyph-trigger-cyr/";
     let ag_pause_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/arcanaglyph-pause/";
     let ag_pause_cyr_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/arcanaglyph-pause-cyr/";
     let base = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding";
@@ -403,8 +438,8 @@ fn register_gnome_hotkeys(hotkey_trigger: String, hotkey_pause: String) -> Resul
     };
 
     // Определяем путь к скриптам
-    let scripts_dir = CoreConfig::scripts_dir()
-        .ok_or_else(|| "Не удалось определить директорию скриптов".to_string())?;
+    let scripts_dir =
+        CoreConfig::scripts_dir().ok_or_else(|| "Не удалось определить директорию скриптов".to_string())?;
     let trigger_cmd = scripts_dir.join("ag-trigger").display().to_string();
     let pause_cmd = scripts_dir.join("ag-pause").display().to_string();
 
@@ -449,7 +484,8 @@ fn register_gnome_hotkeys(hotkey_trigger: String, hotkey_pause: String) -> Resul
         vec![]
     } else {
         // Парсим ['path1', 'path2', ...]
-        current.trim_matches(|c| c == '[' || c == ']')
+        current
+            .trim_matches(|c| c == '[' || c == ']')
             .split(',')
             .map(|s| s.trim().trim_matches('\'').trim().to_string())
             .filter(|s| !s.is_empty())
@@ -462,7 +498,8 @@ fn register_gnome_hotkeys(hotkey_trigger: String, hotkey_pause: String) -> Resul
     // Кириллический дубль trigger
     let trigger_binding = tauri_hotkey_to_gsettings(&hotkey_trigger);
     let trigger_key = trigger_binding.rsplit('>').next().unwrap_or("");
-    if !hotkey_trigger.is_empty() && latin_to_cyrillic_keysym(trigger_key).is_some()
+    if !hotkey_trigger.is_empty()
+        && latin_to_cyrillic_keysym(trigger_key).is_some()
         && !paths.iter().any(|p| p == ag_trigger_cyr_path)
     {
         paths.push(ag_trigger_cyr_path.to_string());
@@ -473,19 +510,32 @@ fn register_gnome_hotkeys(hotkey_trigger: String, hotkey_pause: String) -> Resul
     // Кириллический дубль pause
     let pause_binding = tauri_hotkey_to_gsettings(&hotkey_pause);
     let pause_key = pause_binding.rsplit('>').next().unwrap_or("");
-    if !hotkey_pause.is_empty() && latin_to_cyrillic_keysym(pause_key).is_some()
+    if !hotkey_pause.is_empty()
+        && latin_to_cyrillic_keysym(pause_key).is_some()
         && !paths.iter().any(|p| p == ag_pause_cyr_path)
     {
         paths.push(ag_pause_cyr_path.to_string());
     }
 
-    let paths_str = format!("[{}]", paths.iter().map(|p| format!("'{}'", p)).collect::<Vec<_>>().join(", "));
+    let paths_str = format!(
+        "[{}]",
+        paths.iter().map(|p| format!("'{}'", p)).collect::<Vec<_>>().join(", ")
+    );
     std::process::Command::new("gsettings")
-        .args(["set", "org.gnome.settings-daemon.plugins.media-keys", "custom-keybindings", &paths_str])
+        .args([
+            "set",
+            "org.gnome.settings-daemon.plugins.media-keys",
+            "custom-keybindings",
+            &paths_str,
+        ])
         .output()
         .map_err(|e| format!("Не удалось обновить список keybindings: {}", e))?;
 
-    tracing::info!("GNOME хоткеи зарегистрированы: trigger='{}', pause='{}'", hotkey_trigger, hotkey_pause);
+    tracing::info!(
+        "GNOME хоткеи зарегистрированы: trigger='{}', pause='{}'",
+        hotkey_trigger,
+        hotkey_pause
+    );
     Ok(())
 }
 
@@ -507,26 +557,29 @@ fn is_model_installed(path: &std::path::Path, transcriber_type: &str) -> bool {
 fn get_models() -> Result<serde_json::Value, String> {
     let config = CoreConfig::load().map_err(|e| e.to_string())?;
     let models = arcanaglyph_core::transcription_models::all();
-    let result: Vec<_> = models.iter().map(|m| {
-        let path = match m.transcriber_type {
-            "vosk" => &config.model_path,
-            "whisper" => &config.whisper_model_path,
-            "gigaam" => &config.gigaam_model_path,
-            "qwen3asr" => &config.qwen3asr_model_path,
-            _ => &config.model_path,
-        };
-        serde_json::json!({
-            "id": m.id,
-            "display_name": m.display_name,
-            "transcriber_type": m.transcriber_type,
-            "default_filename": m.default_filename,
-            "description": m.description,
-            "size": m.size,
-            "download_url": m.download_url,
-            "installed": is_model_installed(path, m.transcriber_type),
-            "path": path.display().to_string(),
+    let result: Vec<_> = models
+        .iter()
+        .map(|m| {
+            let path = match m.transcriber_type {
+                "vosk" => &config.model_path,
+                "whisper" => &config.whisper_model_path,
+                "gigaam" => &config.gigaam_model_path,
+                "qwen3asr" => &config.qwen3asr_model_path,
+                _ => &config.model_path,
+            };
+            serde_json::json!({
+                "id": m.id,
+                "display_name": m.display_name,
+                "transcriber_type": m.transcriber_type,
+                "default_filename": m.default_filename,
+                "description": m.description,
+                "size": m.size,
+                "download_url": m.download_url,
+                "installed": is_model_installed(path, m.transcriber_type),
+                "path": path.display().to_string(),
+            })
         })
-    }).collect();
+        .collect();
     Ok(serde_json::json!(result))
 }
 
@@ -539,7 +592,11 @@ fn load_config() -> Result<serde_json::Value, String> {
 
 /// Tauri-команда: сохранить конфигурацию и применить к движку
 #[tauri::command]
-fn save_config(config: serde_json::Value, app: tauri::AppHandle, engine: tauri::State<'_, EngineState>) -> Result<(), String> {
+fn save_config(
+    config: serde_json::Value,
+    app: tauri::AppHandle,
+    engine: tauri::State<'_, EngineState>,
+) -> Result<(), String> {
     let config: CoreConfig = serde_json::from_value(config).map_err(|e| format!("Ошибка парсинга конфига: {}", e))?;
     config.save().map_err(|e| e.to_string())?;
 
@@ -553,6 +610,22 @@ fn save_config(config: serde_json::Value, app: tauri::AppHandle, engine: tauri::
         e.update_config(config);
     }
     Ok(())
+}
+
+/// Tauri-команда: сохранить выбранный период фильтра истории (без применения к движку)
+#[tauri::command]
+fn set_history_filter(secs: u64) -> Result<(), String> {
+    let mut cfg = CoreConfig::load().map_err(|e| e.to_string())?;
+    cfg.history_filter_secs = secs;
+    cfg.save().map_err(|e| e.to_string())
+}
+
+/// Tauri-команда: сохранить выбранный язык интерфейса (без применения к движку)
+#[tauri::command]
+fn set_language(lang: String) -> Result<(), String> {
+    let mut cfg = CoreConfig::load().map_err(|e| e.to_string())?;
+    cfg.language = lang;
+    cfg.save().map_err(|e| e.to_string())
 }
 
 /// Tauri-команда: получить историю транскрибаций
@@ -597,8 +670,7 @@ fn export_history(format: String, db: tauri::State<'_, Arc<HistoryDB>>) -> Resul
         .or_else(dirs::home_dir)
         .ok_or("Не удалось определить директорию для сохранения")?;
     let path = dir.join(&filename);
-    std::fs::write(&path, &content)
-        .map_err(|e| format!("Ошибка записи файла: {}", e))?;
+    std::fs::write(&path, &content).map_err(|e| format!("Ошибка записи файла: {}", e))?;
 
     Ok(path.to_string_lossy().to_string())
 }
@@ -611,11 +683,13 @@ async fn retranscribe(
     db: tauri::State<'_, Arc<HistoryDB>>,
 ) -> Result<serde_json::Value, String> {
     use arcanaglyph_core::gigaam::transcriber::GigaAmTranscriber;
-    use arcanaglyph_core::transcriber::{VoskTranscriber, WhisperTranscriber, Transcriber};
+    use arcanaglyph_core::transcriber::{Transcriber, VoskTranscriber, WhisperTranscriber};
 
     // Получаем запись из БД
     let entries = db.query(0, 1000, 0).map_err(|e| e.to_string())?.0;
-    let entry = entries.iter().find(|e| e.recording.id == recording_id)
+    let entry = entries
+        .iter()
+        .find(|e| e.recording.id == recording_id)
         .ok_or("Запись не найдена")?;
 
     if !entry.audio_exists {
@@ -627,32 +701,41 @@ async fn retranscribe(
 
     // Загружаем аудио
     let raw_bytes = std::fs::read(audio_path).map_err(|e| format!("Не удалось прочитать аудио: {}", e))?;
-    let samples: Vec<i16> = raw_bytes.chunks_exact(2)
+    let samples: Vec<i16> = raw_bytes
+        .chunks_exact(2)
         .map(|c| i16::from_le_bytes([c[0], c[1]]))
         .collect();
 
     // Определяем имя модели
     let (model_name, t_type) = match transcriber_type.as_str() {
         "vosk" => {
-            let name = config.model_path.file_name()
+            let name = config
+                .model_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "vosk".to_string());
             (name, "vosk".to_string())
         }
         "whisper" => {
-            let name = config.whisper_model_path.file_name()
+            let name = config
+                .whisper_model_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "whisper".to_string());
             (name, "whisper".to_string())
         }
         "gigaam" => {
-            let name = config.gigaam_model_path.file_name()
+            let name = config
+                .gigaam_model_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "gigaam".to_string());
             (name, "gigaam".to_string())
         }
         "qwen3asr" => {
-            let name = config.qwen3asr_model_path.file_name()
+            let name = config
+                .qwen3asr_model_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "qwen3asr".to_string());
             (name, "qwen3asr".to_string())
@@ -681,23 +764,26 @@ async fn retranscribe(
             (Box::new(t), config.sample_rate)
         }
         "qwen3asr" => {
-            let t = arcanaglyph_core::qwen3asr::transcriber::Qwen3AsrTranscriber::new(&config.qwen3asr_model_path).map_err(|e| e.to_string())?;
+            let t = arcanaglyph_core::qwen3asr::transcriber::Qwen3AsrTranscriber::new(&config.qwen3asr_model_path)
+                .map_err(|e| e.to_string())?;
             (Box::new(t), config.sample_rate)
         }
         _ => unreachable!(),
     };
 
     // Транскрибируем
-    let text = tokio::task::spawn_blocking(move || {
-        transcriber.transcribe(&samples, sr)
-    }).await.map_err(|e| format!("{:?}", e))?.map_err(|e| e.to_string())?;
+    let text = tokio::task::spawn_blocking(move || transcriber.transcribe(&samples, sr))
+        .await
+        .map_err(|e| format!("{:?}", e))?
+        .map_err(|e| e.to_string())?;
 
     if text.is_empty() {
         return Err("Распознавание вернуло пустой результат".to_string());
     }
 
     // Сохраняем в БД
-    db.add_transcription(recording_id, &text, &model_name, &t_type).map_err(|e| e.to_string())?;
+    db.add_transcription(recording_id, &text, &model_name, &t_type)
+        .map_err(|e| e.to_string())?;
 
     Ok(serde_json::json!({ "text": text, "model_name": model_name }))
 }
@@ -708,15 +794,17 @@ fn get_audio_data(recording_id: i64, db: tauri::State<'_, Arc<HistoryDB>>) -> Re
     use base64::Engine;
 
     let entries = db.query(0, 100000, 0).map_err(|e| e.to_string())?.0;
-    let entry = entries.iter().find(|e| e.recording.id == recording_id)
+    let entry = entries
+        .iter()
+        .find(|e| e.recording.id == recording_id)
         .ok_or("Запись не найдена")?;
 
     if !entry.audio_exists {
         return Err("Аудиофайл удалён".to_string());
     }
 
-    let raw_bytes = std::fs::read(&entry.recording.audio_path)
-        .map_err(|e| format!("Не удалось прочитать аудио: {}", e))?;
+    let raw_bytes =
+        std::fs::read(&entry.recording.audio_path).map_err(|e| format!("Не удалось прочитать аудио: {}", e))?;
 
     let b64 = base64::engine::general_purpose::STANDARD.encode(&raw_bytes);
 
@@ -730,10 +818,7 @@ fn get_audio_data(recording_id: i64, db: tauri::State<'_, Arc<HistoryDB>>) -> Re
 
 /// Tauri-команда: скрыть окно в трей и обновить флаг видимости
 #[tauri::command]
-async fn hide_window(
-    window: tauri::Window,
-    visible: tauri::State<'_, Arc<AtomicBool>>,
-) -> Result<(), String> {
+async fn hide_window(window: tauri::Window, visible: tauri::State<'_, Arc<AtomicBool>>) -> Result<(), String> {
     let _ = window.hide();
     visible.store(false, Ordering::Relaxed);
     Ok(())
@@ -743,9 +828,7 @@ fn main() {
     // Инициализируем логирование
     // Подавляем логи whisper.cpp (whisper_rs::whisper_sys_log) — оставляем только наши
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::new("info,whisper_rs=warn"),
-        )
+        .with_env_filter(tracing_subscriber::EnvFilter::new("info,whisper_rs=warn"))
         .init();
 
     let config = CoreConfig::load().unwrap_or_else(|e| {
@@ -1119,7 +1202,7 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_paused, is_model_loaded, get_loaded_models, get_models, download_model, is_wayland, check_hotkey_conflict, register_gnome_hotkeys, hide_window, load_config, save_config, get_history, delete_history_entry, clear_history, export_history, retranscribe, get_audio_data])
+        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_paused, is_model_loaded, get_loaded_models, get_models, download_model, is_wayland, check_hotkey_conflict, register_gnome_hotkeys, hide_window, load_config, save_config, set_history_filter, set_language, get_history, delete_history_entry, clear_history, export_history, retranscribe, get_audio_data])
         .on_window_event(|window, event| {
             // Перехватываем закрытие окна — скрываем вместо закрытия
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

@@ -40,7 +40,10 @@ pub fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let quit_item = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[&show_item, &sep1, &toggle_item, &settings_item, &sep2, &quit_item])?;
+    let menu = Menu::with_items(
+        app,
+        &[&show_item, &sep1, &toggle_item, &settings_item, &sep2, &quit_item],
+    )?;
 
     // Сохраняем toggle_item в state для обновления текста при смене состояния
     app.manage(TrayToggleItem(toggle_item));
@@ -125,7 +128,14 @@ pub fn set_tray_state(app: &AppHandle, state: TrayState) {
 
 /// Обратная совместимость: переключает запись/нет
 pub fn set_tray_recording(app: &AppHandle, recording: bool) {
-    set_tray_state(app, if recording { TrayState::Recording } else { TrayState::Idle });
+    set_tray_state(
+        app,
+        if recording {
+            TrayState::Recording
+        } else {
+            TrayState::Idle
+        },
+    );
 }
 
 /// Показать или скрыть иконку трея

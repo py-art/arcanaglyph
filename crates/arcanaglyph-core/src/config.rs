@@ -87,6 +87,12 @@ pub struct CoreConfig {
     /// Базовый путь к директории моделей
     #[serde(default = "default_models_dir")]
     pub models_base_dir: PathBuf,
+    /// Выбранный пользователем период фильтра на странице истории (секунды, 0 = все записи)
+    #[serde(default = "default_history_filter_secs")]
+    pub history_filter_secs: u64,
+    /// Язык интерфейса: "ru" или "en" (пустая строка = авто по локали системы)
+    #[serde(default)]
+    pub language: String,
 }
 
 fn default_models_dir() -> PathBuf {
@@ -121,6 +127,10 @@ fn default_retention_hours() -> u64 {
     24
 }
 
+fn default_history_filter_secs() -> u64 {
+    86400
+}
+
 impl Default for CoreConfig {
     fn default() -> Self {
         let models = default_models_dir();
@@ -151,6 +161,8 @@ impl Default for CoreConfig {
             show_widget: true,
             show_tray: true,
             models_base_dir: models,
+            history_filter_secs: 86400,
+            language: String::new(),
         }
     }
 }
@@ -192,16 +204,24 @@ impl CoreConfig {
     /// Название текущей модели (для записи в историю)
     pub fn transcriber_model_name(&self) -> String {
         match self.transcriber {
-            TranscriberType::Vosk => self.model_path.file_name()
+            TranscriberType::Vosk => self
+                .model_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "vosk".to_string()),
-            TranscriberType::Whisper => self.whisper_model_path.file_name()
+            TranscriberType::Whisper => self
+                .whisper_model_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "whisper".to_string()),
-            TranscriberType::GigaAm => self.gigaam_model_path.file_name()
+            TranscriberType::GigaAm => self
+                .gigaam_model_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "gigaam".to_string()),
-            TranscriberType::Qwen3Asr => self.qwen3asr_model_path.file_name()
+            TranscriberType::Qwen3Asr => self
+                .qwen3asr_model_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "qwen3asr".to_string()),
         }
@@ -219,10 +239,10 @@ impl CoreConfig {
 
     /// Загружает конфигурацию из SQLite БД. При первом запуске импортирует из config.toml если есть.
     pub fn load() -> Result<Self, ArcanaError> {
-        let db_path = Self::history_db_path()
-            .ok_or_else(|| ArcanaError::Config("Не удалось определить путь к БД".into()))?;
-        let audio_cache = Self::audio_cache_dir()
-            .ok_or_else(|| ArcanaError::Config("Не удалось определить путь к кэшу".into()))?;
+        let db_path =
+            Self::history_db_path().ok_or_else(|| ArcanaError::Config("Не удалось определить путь к БД".into()))?;
+        let audio_cache =
+            Self::audio_cache_dir().ok_or_else(|| ArcanaError::Config("Не удалось определить путь к кэшу".into()))?;
 
         // Открываем БД (применяет миграции, создаёт таблицу settings)
         let db = crate::history::HistoryDB::new(&db_path, audio_cache)?;
@@ -238,8 +258,9 @@ impl CoreConfig {
         // Нет настроек в БД — пробуем импортировать из config.toml
         let config = if let Some(config_path) = Self::config_path() {
             if config_path.exists() {
-                let content = std::fs::read_to_string(&config_path)
-                    .map_err(|e| ArcanaError::Config(format!("Не удалось прочитать {}: {}", config_path.display(), e)))?;
+                let content = std::fs::read_to_string(&config_path).map_err(|e| {
+                    ArcanaError::Config(format!("Не удалось прочитать {}: {}", config_path.display(), e))
+                })?;
                 let config: CoreConfig = toml::from_str(&content)
                     .map_err(|e| ArcanaError::Config(format!("Ошибка парсинга config.toml: {}", e)))?;
 
@@ -264,10 +285,10 @@ impl CoreConfig {
 
     /// Сохраняет конфигурацию в SQLite БД
     pub fn save(&self) -> Result<(), ArcanaError> {
-        let db_path = Self::history_db_path()
-            .ok_or_else(|| ArcanaError::Config("Не удалось определить путь к БД".into()))?;
-        let audio_cache = Self::audio_cache_dir()
-            .ok_or_else(|| ArcanaError::Config("Не удалось определить путь к кэшу".into()))?;
+        let db_path =
+            Self::history_db_path().ok_or_else(|| ArcanaError::Config("Не удалось определить путь к БД".into()))?;
+        let audio_cache =
+            Self::audio_cache_dir().ok_or_else(|| ArcanaError::Config("Не удалось определить путь к кэшу".into()))?;
 
         let db = crate::history::HistoryDB::new(&db_path, audio_cache)?;
         let json_str = serde_json::to_string(self)
@@ -349,6 +370,8 @@ auto_type = false
             show_widget: true,
             show_tray: true,
             models_base_dir: PathBuf::from("/tmp/test-models"),
+            history_filter_secs: 86400,
+            language: String::new(),
         };
 
         let content = toml::to_string_pretty(&config).unwrap();
