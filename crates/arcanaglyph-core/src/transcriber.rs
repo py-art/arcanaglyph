@@ -42,8 +42,9 @@ impl VoskTranscriber {
             .ok_or_else(|| ArcanaError::ModelLoad("Невалидный путь к модели (не UTF-8)".into()))?;
 
         tracing::info!("Загрузка Vosk-модели из: {:?}", model_path);
-        let model = vosk::Model::new(model_path_str)
-            .ok_or_else(|| ArcanaError::ModelLoad(format!("Не удалось загрузить Vosk-модель из: {}", model_path_str)))?;
+        let model = vosk::Model::new(model_path_str).ok_or_else(|| {
+            ArcanaError::ModelLoad(format!("Не удалось загрузить Vosk-модель из: {}", model_path_str))
+        })?;
         tracing::info!("Vosk-модель успешно загружена.");
 
         let recognizer = vosk::Recognizer::new(&model, sample_rate)
@@ -57,7 +58,10 @@ impl VoskTranscriber {
 
 impl Transcriber for VoskTranscriber {
     fn transcribe(&self, samples: &[i16], _sample_rate: u32) -> Result<String, ArcanaError> {
-        let mut rec = self.recognizer.lock().map_err(|e| ArcanaError::Internal(format!("Mutex отравлен: {}", e)))?;
+        let mut rec = self
+            .recognizer
+            .lock()
+            .map_err(|e| ArcanaError::Internal(format!("Mutex отравлен: {}", e)))?;
 
         // Прогоняем все сэмплы (нужно для retranscribe, когда данные не шли через accept_waveform)
         if !samples.is_empty() {
@@ -79,7 +83,10 @@ impl Transcriber for VoskTranscriber {
     }
 
     fn accept_waveform(&self, samples: &[i16]) -> Result<(), ArcanaError> {
-        let mut rec = self.recognizer.lock().map_err(|e| ArcanaError::Internal(format!("Mutex отравлен: {}", e)))?;
+        let mut rec = self
+            .recognizer
+            .lock()
+            .map_err(|e| ArcanaError::Internal(format!("Mutex отравлен: {}", e)))?;
         rec.accept_waveform(samples)
             .map_err(|e| ArcanaError::Recognizer(format!("Ошибка при обработке аудиоданных: {:?}", e)))?;
         Ok(())
@@ -122,7 +129,12 @@ impl WhisperTranscriber {
             model_path_str,
             whisper_rs::WhisperContextParameters::default(),
         )
-        .map_err(|e| ArcanaError::ModelLoad(format!("Не удалось загрузить Whisper-модель из {}: {}", model_path_str, e)))?;
+        .map_err(|e| {
+            ArcanaError::ModelLoad(format!(
+                "Не удалось загрузить Whisper-модель из {}: {}",
+                model_path_str, e
+            ))
+        })?;
 
         tracing::info!("Whisper-модель успешно загружена.");
         Ok(Self { ctx })
@@ -143,7 +155,9 @@ impl Transcriber for WhisperTranscriber {
             audio_f32 = resample(&audio_f32, sample_rate, 16000);
         }
 
-        let mut state = self.ctx.create_state()
+        let mut state = self
+            .ctx
+            .create_state()
             .map_err(|e| ArcanaError::Recognizer(format!("Не удалось создать Whisper state: {}", e)))?;
 
         let mut params = whisper_rs::FullParams::new(whisper_rs::SamplingStrategy::Greedy { best_of: 1 });
@@ -157,12 +171,18 @@ impl Transcriber for WhisperTranscriber {
         params.set_suppress_non_speech_tokens(true);
         // Не добавлять контекст из предыдущих сегментов (уменьшает галлюцинации)
         params.set_no_context(true);
-        params.set_n_threads(std::thread::available_parallelism().map(|n| n.get() as i32).unwrap_or(4));
+        params.set_n_threads(
+            std::thread::available_parallelism()
+                .map(|n| n.get() as i32)
+                .unwrap_or(4),
+        );
 
-        state.full(params, &audio_f32)
+        state
+            .full(params, &audio_f32)
             .map_err(|e| ArcanaError::Recognizer(format!("Ошибка транскрибации Whisper: {}", e)))?;
 
-        let num_segments = state.full_n_segments()
+        let num_segments = state
+            .full_n_segments()
             .map_err(|e| ArcanaError::Recognizer(format!("Ошибка получения сегментов: {}", e)))?;
 
         let mut text = String::new();

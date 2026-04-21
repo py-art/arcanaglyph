@@ -50,8 +50,8 @@ impl HistoryDB {
         std::fs::create_dir_all(&audio_cache_dir)
             .map_err(|e| ArcanaError::Database(format!("Не удалось создать директорию кэша аудио: {}", e)))?;
 
-        let conn = Connection::open(db_path)
-            .map_err(|e| ArcanaError::Database(format!("Не удалось открыть БД: {}", e)))?;
+        let conn =
+            Connection::open(db_path).map_err(|e| ArcanaError::Database(format!("Не удалось открыть БД: {}", e)))?;
 
         conn.execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(|e| ArcanaError::Database(format!("Не удалось включить foreign keys: {}", e)))?;
@@ -70,12 +70,20 @@ impl HistoryDB {
     /// Получить настройку по ключу
     pub fn get_setting(&self, key: &str) -> Option<String> {
         let conn = self.conn.lock().ok()?;
-        conn.query_row("SELECT value FROM settings WHERE key = ?1", rusqlite::params![key], |row| row.get(0)).ok()
+        conn.query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            rusqlite::params![key],
+            |row| row.get(0),
+        )
+        .ok()
     }
 
     /// Установить настройку
     pub fn set_setting(&self, key: &str, value: &str) -> Result<(), ArcanaError> {
-        let conn = self.conn.lock().map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
         conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
             rusqlite::params![key, value],
@@ -86,20 +94,26 @@ impl HistoryDB {
 
     /// Получить все настройки
     pub fn get_all_settings(&self) -> Result<std::collections::HashMap<String, String>, ArcanaError> {
-        let conn = self.conn.lock().map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
-        let mut stmt = conn.prepare("SELECT key, value FROM settings")
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        let mut stmt = conn
+            .prepare("SELECT key, value FROM settings")
             .map_err(|e| ArcanaError::Database(format!("Ошибка запроса настроек: {}", e)))?;
-        let result = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .map_err(|e| ArcanaError::Database(format!("Ошибка маппинга: {}", e)))?
-        .collect::<Result<std::collections::HashMap<_, _>, _>>()
-        .map_err(|e| ArcanaError::Database(format!("Ошибка сбора: {}", e)))?;
+        let result = stmt
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .map_err(|e| ArcanaError::Database(format!("Ошибка маппинга: {}", e)))?
+            .collect::<Result<std::collections::HashMap<_, _>, _>>()
+            .map_err(|e| ArcanaError::Database(format!("Ошибка сбора: {}", e)))?;
         Ok(result)
     }
 
     pub fn add_recording(&self, audio_path: &str, duration_secs: u32) -> Result<i64, ArcanaError> {
-        let conn = self.conn.lock().map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
         let timestamp = chrono::Utc::now().timestamp();
         conn.execute(
             "INSERT INTO recordings (audio_path, timestamp, duration_secs) VALUES (?1, ?2, ?3)",
@@ -117,7 +131,10 @@ impl HistoryDB {
         model_name: &str,
         transcriber_type: &str,
     ) -> Result<i64, ArcanaError> {
-        let conn = self.conn.lock().map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
         let created_at = chrono::Utc::now().timestamp();
         conn.execute(
             "INSERT INTO transcriptions (recording_id, text, model_name, transcriber_type, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -134,7 +151,10 @@ impl HistoryDB {
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<HistoryEntry>, u32), ArcanaError> {
-        let conn = self.conn.lock().map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
 
         // Общее количество записей
         let total: u32 = conn
@@ -204,7 +224,10 @@ impl HistoryDB {
 
     /// Получить транскрибации для конкретной записи
     pub fn get_transcriptions(&self, recording_id: i64) -> Result<Vec<Transcription>, ArcanaError> {
-        let conn = self.conn.lock().map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
         let mut stmt = conn
             .prepare(
                 "SELECT id, recording_id, text, model_name, transcriber_type, created_at
@@ -232,13 +255,18 @@ impl HistoryDB {
 
     /// Удаляет запись и её транскрибации + аудиофайл
     pub fn delete_recording(&self, id: i64) -> Result<(), ArcanaError> {
-        let conn = self.conn.lock().map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
 
         // Получаем путь к аудио для удаления файла
         let audio_path: Option<String> = conn
-            .query_row("SELECT audio_path FROM recordings WHERE id = ?1", rusqlite::params![id], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT audio_path FROM recordings WHERE id = ?1",
+                rusqlite::params![id],
+                |row| row.get(0),
+            )
             .ok();
 
         // Каскадно удаляет транскрибации (foreign key ON DELETE CASCADE)
@@ -255,7 +283,10 @@ impl HistoryDB {
 
     /// Очищает всю историю и кэш аудио
     pub fn clear(&self) -> Result<(), ArcanaError> {
-        let conn = self.conn.lock().map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
         conn.execute_batch("DELETE FROM transcriptions; DELETE FROM recordings;")
             .map_err(|e| ArcanaError::Database(format!("Ошибка очистки: {}", e)))?;
 
@@ -275,7 +306,10 @@ impl HistoryDB {
             return Ok(0);
         }
         let cutoff = chrono::Utc::now().timestamp() - (hours as i64 * 3600);
-        let conn = self.conn.lock().map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
 
         // Собираем пути аудио для удаления файлов
         let mut stmt = conn
@@ -311,9 +345,11 @@ impl HistoryDB {
             Err(_) => return false,
         };
         let path: Option<String> = conn
-            .query_row("SELECT audio_path FROM recordings WHERE id = ?1", rusqlite::params![recording_id], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT audio_path FROM recordings WHERE id = ?1",
+                rusqlite::params![recording_id],
+                |row| row.get(0),
+            )
             .ok();
         path.is_some_and(|p| Path::new(&p).exists())
     }
@@ -353,10 +389,7 @@ impl HistoryDB {
                     let date = chrono::DateTime::from_timestamp(entry.recording.timestamp, 0)
                         .map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string())
                         .unwrap_or_default();
-                    out.push_str(&format!(
-                        "[{}] ({}с)\n",
-                        date, entry.recording.duration_secs
-                    ));
+                    out.push_str(&format!("[{}] ({}с)\n", date, entry.recording.duration_secs));
                     for t in &entry.transcriptions {
                         out.push_str(&format!("  [{}] {}\n", t.model_name, t.text));
                     }

@@ -24,9 +24,9 @@ pub enum AudioCommand {
 /// Открывает аудиопоток на 200 мс и проверяет, приходят ли данные.
 pub fn check_microphone(sample_rate: u32) -> Result<(), ArcanaError> {
     let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| ArcanaError::AudioDevice("Микрофон не найден. Подключите микрофон и проверьте настройки звука.".into()))?;
+    let device = host.default_input_device().ok_or_else(|| {
+        ArcanaError::AudioDevice("Микрофон не найден. Подключите микрофон и проверьте настройки звука.".into())
+    })?;
 
     let device_name = device.name().unwrap_or_else(|_| "неизвестно".into());
     info!("Микрофон: {}", device_name);
@@ -51,13 +51,16 @@ pub fn check_microphone(sample_rate: u32) -> Result<(), ArcanaError> {
             |err| tracing::error!("Ошибка проверки микрофона: {}", err),
             None,
         )
-        .map_err(|e| ArcanaError::AudioDevice(format!(
-            "Не удалось открыть микрофон '{}': {}. Проверьте настройки звука.", device_name, e
-        )))?;
+        .map_err(|e| {
+            ArcanaError::AudioDevice(format!(
+                "Не удалось открыть микрофон '{}': {}. Проверьте настройки звука.",
+                device_name, e
+            ))
+        })?;
 
-    stream.play().map_err(|e| ArcanaError::AudioDevice(format!(
-        "Не удалось запустить микрофон '{}': {}", device_name, e
-    )))?;
+    stream
+        .play()
+        .map_err(|e| ArcanaError::AudioDevice(format!("Не удалось запустить микрофон '{}': {}", device_name, e)))?;
 
     // Ждём до 1 сек — PipeWire/ALSA может долго инициализировать поток
     for _ in 0..10 {
@@ -71,7 +74,8 @@ pub fn check_microphone(sample_rate: u32) -> Result<(), ArcanaError> {
 
     if !got_audio.load(Ordering::Relaxed) {
         return Err(ArcanaError::AudioDevice(format!(
-            "Микрофон '{}' не передаёт звук. Возможно, он отключён или выбрано неверное устройство.", device_name
+            "Микрофон '{}' не передаёт звук. Возможно, он отключён или выбрано неверное устройство.",
+            device_name
         )));
     }
 
@@ -276,19 +280,13 @@ pub fn record_and_transcribe(
 
         // VAD: авто-стоп если речь была и тишина длится vad_silence_secs
         if vad_enabled && speech_detected && last_speech.elapsed() >= vad_timeout {
-            info!(
-                "VAD: авто-стоп (речь обнаружена, тишина {}с).",
-                vad_silence_secs
-            );
+            info!("VAD: авто-стоп (речь обнаружена, тишина {}с).", vad_silence_secs);
             break;
         }
 
         // Общий таймаут безопасности (max_record_secs)
         if last_growth.elapsed() >= silence_timeout {
-            info!(
-                "Запись останавливается по таймауту ({}с).",
-                silence_timeout_secs
-            );
+            info!("Запись останавливается по таймауту ({}с).", silence_timeout_secs);
             break;
         }
 
@@ -309,12 +307,17 @@ pub fn record_and_transcribe(
         .map_err(|e| ArcanaError::AudioStream(format!("Не удалось остановить аудиопоток: {}", e)))?;
 
     let recording_duration = recording_start.elapsed();
-    info!("Запись завершена за {:.1}с. Начинаю транскрибацию...", recording_duration.as_secs_f64());
+    info!(
+        "Запись завершена за {:.1}с. Начинаю транскрибацию...",
+        recording_duration.as_secs_f64()
+    );
 
     // Проверяем, приходил ли звук с микрофона
     let frames = audio_frames_received.load(Ordering::Relaxed);
     if frames == 0 {
-        tracing::warn!("За время записи не получено аудиоданных. Микрофон не подключён или выбрано неверное устройство.");
+        tracing::warn!(
+            "За время записи не получено аудиоданных. Микрофон не подключён или выбрано неверное устройство."
+        );
         eprintln!("[Ошибка] Микрофон не захватил звук. Проверьте подключение и настройки аудиоустройства.");
     }
 
@@ -322,7 +325,8 @@ pub fn record_and_transcribe(
     let _ = event_tx.send(EngineEvent::Transcribing);
 
     // Получаем собранные сэмплы
-    let samples = all_samples.lock()
+    let samples = all_samples
+        .lock()
         .map_err(|e| ArcanaError::Internal(format!("Mutex отравлен: {}", e)))?;
 
     let transcription_start = std::time::Instant::now();
@@ -335,7 +339,11 @@ pub fn record_and_transcribe(
 
     if debug {
         eprintln!("─────────────────────────────────────────");
-        eprintln!("[Результат] {} ({:.1}с)", result_text, transcription_duration.as_secs_f64());
+        eprintln!(
+            "[Результат] {} ({:.1}с)",
+            result_text,
+            transcription_duration.as_secs_f64()
+        );
         eprintln!("─────────────────────────────────────────");
     }
     info!(
@@ -370,8 +378,8 @@ fn save_raw_audio(path: &std::path::Path, samples: &[i16]) -> Result<(), ArcanaE
             .map_err(|e| ArcanaError::Internal(format!("Не удалось создать директорию: {}", e)))?;
     }
     let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
-    let mut file = std::fs::File::create(path)
-        .map_err(|e| ArcanaError::Internal(format!("Не удалось создать файл: {}", e)))?;
+    let mut file =
+        std::fs::File::create(path).map_err(|e| ArcanaError::Internal(format!("Не удалось создать файл: {}", e)))?;
     file.write_all(&bytes)
         .map_err(|e| ArcanaError::Internal(format!("Не удалось записать аудио: {}", e)))?;
     Ok(())

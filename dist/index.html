@@ -1091,23 +1091,24 @@
       .hist-page-btn:hover:not(:disabled) { background: #292e42; }
       .hist-page-btn:disabled { color: #565f89; cursor: default; }
     </style>
+    <script src="i18n.js"></script>
   </head>
   <body>
 
     <!-- Кастомный titlebar -->
     <div class="titlebar">
-      <button class="menu-btn" id="menu-btn" title="Меню">
+      <button class="menu-btn" id="menu-btn" data-i18n-title="menu.title">
         <svg viewBox="0 0 16 16"><line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="14" y2="8"/><line x1="2" y1="12" x2="14" y2="12"/></svg>
-        <span class="back-text">← Назад</span>
+        <span class="back-text" data-i18n="titlebar.back">← Назад</span>
       </button>
       <div class="titlebar-btns">
-        <button class="titlebar-btn btn-minimize" id="tb-min" title="Свернуть">
+        <button class="titlebar-btn btn-minimize" id="tb-min" data-i18n-title="titlebar.minimize">
           <svg viewBox="0 0 12 12"><line x1="2" y1="6" x2="10" y2="6"/></svg>
         </button>
-        <button class="titlebar-btn btn-maximize" id="tb-max" title="Развернуть">
+        <button class="titlebar-btn btn-maximize" id="tb-max" data-i18n-title="titlebar.maximize">
           <svg viewBox="0 0 12 12"><rect x="2" y="2" width="8" height="8" rx="1"/></svg>
         </button>
-        <button class="titlebar-btn btn-close" id="tb-close" title="Закрыть">
+        <button class="titlebar-btn btn-close" id="tb-close" data-i18n-title="titlebar.close">
           <svg viewBox="0 0 12 12"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
         </button>
       </div>
@@ -1124,13 +1125,13 @@
       </div>
     </div>
 
-    <p id="status">Загрузка модели...</p>
+    <p id="status" data-i18n="status.loading">Загрузка модели...</p>
     <p id="model-badge" class="model-badge"></p>
 
     <!-- Результат (сразу под статусом) -->
     <div class="result-wrap" id="result-wrap">
       <div id="result"></div>
-      <button class="copy-btn" id="copy-btn" title="Копировать">
+      <button class="copy-btn" id="copy-btn" data-i18n-title="mic.copy">
         <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
       </button>
     </div>
@@ -1145,10 +1146,10 @@
 
     <!-- Кнопки паузы / стоп -->
     <div class="controls" id="controls">
-      <button class="ctrl-btn pause-btn" id="pause-btn" title="Пауза">
+      <button class="ctrl-btn pause-btn" id="pause-btn" data-i18n-title="mic.pause">
         <svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
       </button>
-      <button class="ctrl-btn stop-btn" id="stop-btn" title="Остановить">
+      <button class="ctrl-btn stop-btn" id="stop-btn" data-i18n-title="mic.stop">
         <div class="stop-icon"></div>
       </button>
     </div>
@@ -1157,18 +1158,18 @@
 
     <!-- Страница меню -->
     <div class="menu-page" id="menu-page">
-      <h2>Меню</h2>
+      <h2 data-i18n="menu.title">Меню</h2>
       <div class="menu-item" id="menu-settings">
         <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        Настройки
+        <span data-i18n="menu.settings">Настройки</span>
       </div>
       <div class="menu-item" id="menu-history">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        История
+        <span data-i18n="menu.history">История</span>
       </div>
       <div class="menu-item" id="menu-about">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-        О приложении
+        <span data-i18n="menu.about">О приложении</span>
       </div>
     </div>
 
@@ -1182,14 +1183,14 @@
           </svg>
         </div>
         <div class="about-title">ArcanaGlyph</div>
-        <div class="about-version">v1.4.1</div>
+        <div class="about-version">v1.5.0</div>
         <div class="about-divider"></div>
-        <div class="about-desc">
+        <div class="about-desc" data-i18n="about.desc">
           Голосовой ввод текста
         </div>
         <div class="about-sub">
-          Нажмите горячую клавишу — говорите —<br>
-          нажмите ещё раз — текст вставится в активное окно
+          <span data-i18n="about.sub1">Нажмите горячую клавишу — говорите —</span><br>
+          <span data-i18n="about.sub2">нажмите ещё раз — текст вставится в активное окно</span>
         </div>
         <div class="about-engines">
           <div class="about-engine-badge">GigaAM v3</div>
@@ -1197,7 +1198,7 @@
           <div class="about-engine-badge">Vosk</div>
           <div class="about-engine-badge">Qwen3-ASR</div>
         </div>
-        <div class="about-privacy">
+        <div class="about-privacy" data-i18n="about.privacy">
           Вся транскрибация — локально, без облака
         </div>
       </div>
@@ -1205,43 +1206,43 @@
 
     <!-- Страница истории -->
     <div class="settings-page" id="history-page">
-      <h2>История</h2>
+      <h2 data-i18n="history.title">История</h2>
 
       <div class="setting-group">
-        <label>Период</label>
+        <label data-i18n="history.period">Период</label>
         <div class="custom-select" id="h-period" data-value="86400">
-          <div class="custom-select-trigger">24 часа</div>
+          <div class="custom-select-trigger" data-i18n="period.24h">24 часа</div>
           <div class="custom-select-options">
-            <div class="custom-select-option" data-value="1800">30 минут</div>
-            <div class="custom-select-option" data-value="3600">1 час</div>
-            <div class="custom-select-option" data-value="43200">12 часов</div>
-            <div class="custom-select-option selected" data-value="86400">24 часа</div>
-            <div class="custom-select-option" data-value="172800">2 дня</div>
-            <div class="custom-select-option" data-value="604800">7 дней</div>
-            <div class="custom-select-option" data-value="1296000">15 дней</div>
-            <div class="custom-select-option" data-value="2592000">30 дней</div>
-            <div class="custom-select-option" data-value="5184000">2 месяца</div>
-            <div class="custom-select-option" data-value="15552000">6 месяцев</div>
-            <div class="custom-select-option" data-value="31536000">1 год</div>
-            <div class="custom-select-option" data-value="0">Все записи</div>
+            <div class="custom-select-option" data-value="1800" data-i18n="period.30min">30 минут</div>
+            <div class="custom-select-option" data-value="3600" data-i18n="period.1h">1 час</div>
+            <div class="custom-select-option" data-value="43200" data-i18n="period.12h">12 часов</div>
+            <div class="custom-select-option selected" data-value="86400" data-i18n="period.24h">24 часа</div>
+            <div class="custom-select-option" data-value="172800" data-i18n="period.2d">2 дня</div>
+            <div class="custom-select-option" data-value="604800" data-i18n="period.7d">7 дней</div>
+            <div class="custom-select-option" data-value="1296000" data-i18n="period.15d">15 дней</div>
+            <div class="custom-select-option" data-value="2592000" data-i18n="period.30d">30 дней</div>
+            <div class="custom-select-option" data-value="5184000" data-i18n="period.2m">2 месяца</div>
+            <div class="custom-select-option" data-value="15552000" data-i18n="period.6m">6 месяцев</div>
+            <div class="custom-select-option" data-value="31536000" data-i18n="period.1y">1 год</div>
+            <div class="custom-select-option" data-value="0" data-i18n="period.all">Все записи</div>
           </div>
         </div>
       </div>
 
       <div id="history-list"></div>
-      <div id="history-empty" style="display:none;text-align:center;color:#565f89;padding:2rem 0;">Записей нет</div>
+      <div id="history-empty" data-i18n="history.empty" style="display:none;text-align:center;color:#565f89;padding:2rem 0;">Записей нет</div>
 
       <div id="history-pagination" class="hist-pagination">
-        <button class="hist-page-btn" id="h-prev" disabled>← Пред</button>
+        <button class="hist-page-btn" id="h-prev" data-i18n="history.prev" disabled>← Пред</button>
         <span id="h-page-info" class="hist-page-info"></span>
-        <button class="hist-page-btn" id="h-next" disabled>След →</button>
+        <button class="hist-page-btn" id="h-next" data-i18n="history.next" disabled>След →</button>
       </div>
 
       <div class="save-area">
         <div class="save-buttons">
-          <button class="cancel-btn cancel-btn--danger" id="h-clear-btn">Очистить историю</button>
+          <button class="cancel-btn cancel-btn--danger" id="h-clear-btn" data-i18n="history.clear">Очистить историю</button>
           <div class="export-dropdown">
-            <button class="save-btn" id="h-export-btn">Экспорт</button>
+            <button class="save-btn" id="h-export-btn" data-i18n="history.export">Экспорт</button>
             <div class="export-dropdown-menu" id="export-menu">
               <div class="export-dropdown-item" data-format="csv">.csv</div>
             </div>
@@ -1252,48 +1253,59 @@
 
     <!-- Страница настроек -->
     <div class="settings-page" id="settings-page">
-      <h2>Настройки</h2>
+      <h2 data-i18n="settings.title">Настройки</h2>
 
       <div class="settings-tabs">
-        <div class="settings-tab active" data-tab="general">Основное</div>
-        <div class="settings-tab" data-tab="models">Модели</div>
-        <div class="settings-tab" data-tab="hotkeys">Клавиши</div>
+        <div class="settings-tab active" data-tab="general" data-i18n="settings.tabs.general">Основное</div>
+        <div class="settings-tab" data-tab="models" data-i18n="settings.tabs.models">Модели</div>
+        <div class="settings-tab" data-tab="hotkeys" data-i18n="settings.tabs.hotkeys">Клавиши</div>
       </div>
 
       <!-- Таб: Основное -->
       <div class="settings-tab-content active" id="tab-general">
         <div class="setting-group">
-          <label>Движок транскрибации</label>
+          <label data-i18n="settings.language">Язык интерфейса</label>
+          <div class="custom-select" id="s-language" data-value="ru">
+            <div class="custom-select-trigger"></div>
+            <div class="custom-select-options">
+              <div class="custom-select-option" data-value="ru" data-i18n="settings.lang_ru">Русский</div>
+              <div class="custom-select-option" data-value="en" data-i18n="settings.lang_en">English</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <label data-i18n="settings.transcriber">Движок транскрибации</label>
           <div class="custom-select" id="s-transcriber" data-value="vosk">
             <div class="custom-select-trigger"></div>
             <div class="custom-select-options">
-              <div class="custom-select-option" data-value="vosk">Vosk — быстрый, менее точный</div>
-              <div class="custom-select-option" data-value="whisper">Whisper — точный, медленнее</div>
-              <div class="custom-select-option" data-value="gigaam">GigaAM v3 — лучший для русского</div>
-              <div class="custom-select-option" data-value="qwen3asr">Qwen3-ASR — мультиязычный</div>
+              <div class="custom-select-option" data-value="vosk" data-i18n="settings.t_vosk">Vosk — быстрый, менее точный</div>
+              <div class="custom-select-option" data-value="whisper" data-i18n="settings.t_whisper">Whisper — точный, медленнее</div>
+              <div class="custom-select-option" data-value="gigaam" data-i18n="settings.t_gigaam">GigaAM v3 — лучший для русского</div>
+              <div class="custom-select-option" data-value="qwen3asr" data-i18n="settings.t_qwen3asr">Qwen3-ASR — мультиязычный</div>
             </div>
           </div>
         </div>
 
         <div class="setting-row">
-          <label>Предзагрузка Vosk</label>
+          <label data-i18n="settings.preload_vosk">Предзагрузка Vosk</label>
           <div class="toggle" id="s-preload-vosk"></div>
         </div>
         <div class="setting-row">
-          <label>Предзагрузка Whisper</label>
+          <label data-i18n="settings.preload_whisper">Предзагрузка Whisper</label>
           <div class="toggle" id="s-preload-whisper"></div>
         </div>
         <div class="setting-row">
-          <label>Предзагрузка GigaAM</label>
+          <label data-i18n="settings.preload_gigaam">Предзагрузка GigaAM</label>
           <div class="toggle" id="s-preload-gigaam"></div>
         </div>
         <div class="setting-row" style="margin-bottom:0.5rem;">
-          <label>Предзагрузка Qwen3-ASR</label>
+          <label data-i18n="settings.preload_qwen3asr">Предзагрузка Qwen3-ASR</label>
           <div class="toggle" id="s-preload-qwen3asr"></div>
         </div>
 
         <div class="setting-group">
-          <label>Частота дискретизации (Гц)</label>
+          <label data-i18n="settings.sample_rate">Частота дискретизации (Гц)</label>
           <div class="custom-select" id="s-sample-rate" data-value="48000">
             <div class="custom-select-trigger"></div>
             <div class="custom-select-options">
@@ -1305,7 +1317,7 @@
         </div>
 
         <div class="setting-group">
-          <label>Таймаут записи (секунды)</label>
+          <label data-i18n="settings.max_record">Таймаут записи (секунды)</label>
           <div class="number-input-wrap">
             <input type="number" id="s-max-record" min="5" max="120" />
             <div class="number-input-arrows">
@@ -1316,12 +1328,12 @@
         </div>
 
         <div class="setting-row">
-          <label>Авто-стоп при тишине</label>
+          <label data-i18n="settings.vad_enabled">Авто-стоп при тишине</label>
           <div class="toggle" id="s-vad-enabled"></div>
         </div>
 
         <div class="setting-group">
-          <label>Тишина для авто-стопа (секунды)</label>
+          <label data-i18n="settings.vad_silence">Тишина для авто-стопа (секунды)</label>
           <div class="number-input-wrap">
             <input type="number" id="s-vad-silence" min="1" max="30" />
             <div class="number-input-arrows">
@@ -1332,54 +1344,54 @@
         </div>
 
         <div class="setting-group">
-          <label>Автоочистка записей</label>
+          <label data-i18n="settings.retention">Автоочистка записей</label>
           <div class="custom-select" id="s-retention" data-value="0">
             <div class="custom-select-trigger"></div>
             <div class="custom-select-options">
-              <div class="custom-select-option" data-value="0">Хранить вечно</div>
-              <div class="custom-select-option" data-value="1">1 час</div>
-              <div class="custom-select-option" data-value="12">12 часов</div>
-              <div class="custom-select-option" data-value="24">1 день</div>
-              <div class="custom-select-option" data-value="168">1 неделя</div>
-              <div class="custom-select-option" data-value="720">30 дней</div>
-              <div class="custom-select-option" data-value="4380">Полгода</div>
-              <div class="custom-select-option" data-value="8760">1 год</div>
+              <div class="custom-select-option" data-value="0" data-i18n="settings.retention_never">Хранить вечно</div>
+              <div class="custom-select-option" data-value="1" data-i18n="settings.retention_1h">1 час</div>
+              <div class="custom-select-option" data-value="12" data-i18n="settings.retention_12h">12 часов</div>
+              <div class="custom-select-option" data-value="24" data-i18n="settings.retention_1d">1 день</div>
+              <div class="custom-select-option" data-value="168" data-i18n="settings.retention_1w">1 неделя</div>
+              <div class="custom-select-option" data-value="720" data-i18n="settings.retention_30d">30 дней</div>
+              <div class="custom-select-option" data-value="4380" data-i18n="settings.retention_6m">Полгода</div>
+              <div class="custom-select-option" data-value="8760" data-i18n="settings.retention_1y">1 год</div>
             </div>
           </div>
         </div>
 
         <div class="setting-row">
-          <label>Авто-вставка текста</label>
+          <label data-i18n="settings.auto_type">Авто-вставка текста</label>
           <div class="toggle" id="s-auto-type"></div>
         </div>
 
         <div class="setting-row">
-          <label>Режим отладки</label>
+          <label data-i18n="settings.debug">Режим отладки</label>
           <div class="toggle" id="s-debug"></div>
         </div>
 
         <div class="setting-row">
-          <label>Удалять слова-паразиты</label>
+          <label data-i18n="settings.remove_fillers">Удалять слова-паразиты</label>
           <div class="toggle" id="s-remove-fillers"></div>
         </div>
 
         <div class="setting-row">
-          <label>Автозапуск при входе</label>
+          <label data-i18n="settings.autostart">Автозапуск при входе</label>
           <div class="toggle" id="s-autostart"></div>
         </div>
 
         <div class="setting-row">
-          <label>Запуск в трей</label>
+          <label data-i18n="settings.start_minimized">Запуск в трей</label>
           <div class="toggle" id="s-start-minimized"></div>
         </div>
 
         <div class="setting-row">
-          <label>Иконка в трее</label>
+          <label data-i18n="settings.show_tray">Иконка в трее</label>
           <div class="toggle" id="s-show-tray"></div>
         </div>
 
         <div class="setting-row">
-          <label>Виджет записи</label>
+          <label data-i18n="settings.show_widget">Виджет записи</label>
           <div class="toggle" id="s-show-widget"></div>
         </div>
       </div>
@@ -1388,7 +1400,7 @@
       <!-- Таб: Горячие клавиши -->
       <div class="settings-tab-content" id="tab-hotkeys">
         <div class="setting-group">
-          <label>Запись (старт/стоп)</label>
+          <label data-i18n="settings.hotkey_trigger">Запись (старт/стоп)</label>
           <div class="hotkey-composer" id="hk-trigger">
             <div class="hotkey-mods">
               <button class="hotkey-mod" data-mod="Super">Super</button>
@@ -1398,16 +1410,16 @@
             </div>
             <div class="hotkey-key-row">
               <span class="hotkey-plus">+</span>
-              <input type="text" class="hotkey-key-input" placeholder="клавиша" readonly />
-              <button class="hotkey-record-btn" title="Записать клавишу">✎</button>
-              <button class="hotkey-clear-btn" title="Очистить">✕</button>
+              <input type="text" class="hotkey-key-input" data-i18n-placeholder="settings.hotkey_key_placeholder" placeholder="клавиша" readonly />
+              <button class="hotkey-record-btn" data-i18n-title="settings.hotkey_record_title">✎</button>
+              <button class="hotkey-clear-btn" data-i18n-title="settings.hotkey_clear_title">✕</button>
             </div>
             <div class="hotkey-preview" data-value=""></div>
           </div>
         </div>
 
         <div class="setting-group">
-          <label>Пауза</label>
+          <label data-i18n="settings.hotkey_pause">Пауза</label>
           <div class="hotkey-composer" id="hk-pause">
             <div class="hotkey-mods">
               <button class="hotkey-mod" data-mod="Super">Super</button>
@@ -1417,15 +1429,15 @@
             </div>
             <div class="hotkey-key-row">
               <span class="hotkey-plus">+</span>
-              <input type="text" class="hotkey-key-input" placeholder="клавиша" readonly />
-              <button class="hotkey-record-btn" title="Записать клавишу">✎</button>
-              <button class="hotkey-clear-btn" title="Очистить">✕</button>
+              <input type="text" class="hotkey-key-input" data-i18n-placeholder="settings.hotkey_key_placeholder" placeholder="клавиша" readonly />
+              <button class="hotkey-record-btn" data-i18n-title="settings.hotkey_record_title">✎</button>
+              <button class="hotkey-clear-btn" data-i18n-title="settings.hotkey_clear_title">✕</button>
             </div>
             <div class="hotkey-preview" data-value=""></div>
           </div>
         </div>
 
-        <div class="wayland-warning" id="wayland-warning" style="display:none;">
+        <div class="wayland-warning" id="wayland-warning" data-i18n="settings.wayland_warning" style="display:none;">
           Wayland: горячие клавиши регистрируются через GNOME Settings (gsettings).
           При сохранении комбинации автоматически применяются в системе.
         </div>
@@ -1434,23 +1446,23 @@
       <!-- Таб: Модели -->
       <div class="settings-tab-content" id="tab-models">
         <div class="setting-group">
-          <label>Базовый путь к моделям</label>
+          <label data-i18n="settings.models_base_dir">Базовый путь к моделям</label>
           <div class="path-input-row">
             <input type="text" id="s-models-base-dir" placeholder="~/.local/share/arcanaglyph/models" />
-            <button class="path-pick-btn" id="pick-base-dir" title="Выбрать директорию">📁</button>
+            <button class="path-pick-btn" id="pick-base-dir" data-i18n-title="settings.pick_base_title">📁</button>
           </div>
         </div>
 
-        <div class="models-section-title">Доступные модели</div>
+        <div class="models-section-title" data-i18n="settings.models_title">Доступные модели</div>
         <div id="model-cards-container"></div>
       </div>
 
       <div class="save-area">
         <div class="save-buttons">
-          <button class="cancel-btn" id="cancel-btn" disabled>Отменить</button>
-          <button class="save-btn" id="save-btn" disabled>Сохранить</button>
+          <button class="cancel-btn" id="cancel-btn" data-i18n="settings.cancel" disabled>Отменить</button>
+          <button class="save-btn" id="save-btn" data-i18n="settings.save" disabled>Сохранить</button>
         </div>
-        <div class="save-notice" id="save-notice">Настройки сохранены. Применятся при следующей записи.</div>
+        <div class="save-notice" id="save-notice" data-i18n="settings.save_notice">Настройки сохранены. Применятся при следующей записи.</div>
       </div>
     </div>
 
@@ -1459,8 +1471,8 @@
       <div class="modal-box">
         <p id="modal-text"></p>
         <div class="modal-buttons">
-          <button class="modal-btn cancel" id="modal-cancel">Отмена</button>
-          <button class="modal-btn confirm" id="modal-confirm">Удалить</button>
+          <button class="modal-btn cancel" id="modal-cancel" data-i18n="modal.cancel">Отмена</button>
+          <button class="modal-btn confirm" id="modal-confirm" data-i18n="modal.confirm_delete">Удалить</button>
         </div>
       </div>
     </div>
@@ -1592,7 +1604,8 @@
       function onModelReady() {
         if (modelReady) return;
         modelReady = true;
-        statusEl.textContent = 'Готов к записи';
+        statusEl.textContent = i18n.t('status.ready');
+        statusEl.dataset.i18n = 'status.ready';
         statusEl.className = '';
         micBtn.style.opacity = '';
         micBtn.style.cursor = 'pointer';
@@ -1607,7 +1620,8 @@
 
         micBtn.classList.add('recording');
         micGlow.classList.add('recording');
-        statusEl.textContent = 'Запись...';
+        statusEl.textContent = i18n.t('status.recording');
+        statusEl.dataset.i18n = 'status.recording';
         statusEl.className = 'recording';
 
         controlsEl.classList.add('active');
@@ -1624,18 +1638,21 @@
       });
 
       listen('engine://recording-paused', () => {
-        statusEl.textContent = 'Пауза';
+        statusEl.textContent = i18n.t('status.paused');
+        statusEl.dataset.i18n = 'status.paused';
         statusEl.className = 'recording';
         clearInterval(timerId);
         clearInterval(levelId);
         levelFill.style.width = '0%';
         pauseBtn.innerHTML = '<svg viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20"/></svg>';
         pauseBtn.classList.add('resume');
-        pauseBtn.title = 'Продолжить';
+        pauseBtn.title = i18n.t('mic.resume');
+        pauseBtn.dataset.i18nTitle = 'mic.resume';
       });
 
       listen('engine://recording-resumed', () => {
-        statusEl.textContent = 'Запись...';
+        statusEl.textContent = i18n.t('status.recording');
+        statusEl.dataset.i18n = 'status.recording';
         statusEl.className = 'recording';
         timerId = setInterval(() => { timerMs += 70; timerEl.textContent = fmt(timerMs); }, 70);
         levelId = setInterval(async () => {
@@ -1645,12 +1662,14 @@
         levelBar.classList.add('active');
         pauseBtn.innerHTML = '<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
         pauseBtn.classList.remove('resume');
-        pauseBtn.title = 'Пауза';
+        pauseBtn.title = i18n.t('mic.pause');
+        pauseBtn.dataset.i18nTitle = 'mic.pause';
       });
 
       listen('engine://transcribing', () => {
         // Запись окончена, идёт распознавание — обновляем UI
-        statusEl.textContent = 'Транскрибация...';
+        statusEl.textContent = i18n.t('status.transcribing');
+        statusEl.dataset.i18n = 'status.transcribing';
         statusEl.className = 'recording';
         clearInterval(timerId);
         clearInterval(levelId);
@@ -1660,7 +1679,7 @@
       });
 
       listen('engine://transcription-result', (ev) => {
-        resultEl.textContent = ev.payload.text || '(пустой результат)';
+        resultEl.textContent = ev.payload.text || i18n.t('result.empty');
         resultWrap.classList.add('visible');
         requestAnimationFrame(() => {
           resultEl.classList.toggle('scrollable', resultEl.scrollHeight > resultEl.clientHeight);
@@ -1668,7 +1687,7 @@
       });
 
       listen('engine://error', (ev) => {
-        resultEl.textContent = ev.payload.message || 'Неизвестная ошибка';
+        resultEl.textContent = ev.payload.message || i18n.t('result.unknown_error');
         resultEl.classList.add('error');
         resultWrap.classList.add('visible');
       });
@@ -1679,7 +1698,8 @@
 
         micBtn.classList.remove('recording');
         micGlow.classList.remove('recording');
-        statusEl.textContent = 'Готов к записи';
+        statusEl.textContent = i18n.t('status.ready');
+        statusEl.dataset.i18n = 'status.ready';
         statusEl.className = '';
 
         controlsEl.classList.remove('active');
@@ -1764,6 +1784,8 @@
       // Загрузка настроек из бэкенда
       async function loadSettings() {
         const cfg = await invoke('load_config');
+        const lang = cfg.language || i18n.getLanguage();
+        setCustomSelect('s-language', lang);
         // Нормализуем типы чтобы совпадали с getFormConfig()
         originalConfig = {
           transcriber: cfg.transcriber,
@@ -1835,14 +1857,14 @@
               </div>
               <div class="model-card-desc">${m.description}</div>
               <div class="model-card-path">
-                <input type="text" class="model-path-input" data-type="${m.transcriber_type}" value="${m.path || ''}" readonly placeholder="Нажмите 📁 для выбора" title="${m.path || ''}" />
-                <button class="path-pick-btn model-path-pick" data-type="${m.transcriber_type}" title="Выбрать директорию модели">📁</button>
+                <input type="text" class="model-path-input" data-type="${m.transcriber_type}" value="${m.path || ''}" readonly data-i18n-placeholder="model.pick_placeholder" placeholder="${i18n.t('model.pick_placeholder')}" title="${m.path || ''}" />
+                <button class="path-pick-btn model-path-pick" data-type="${m.transcriber_type}" data-i18n-title="model.pick_dir_title" title="${i18n.t('model.pick_dir_title')}">📁</button>
               </div>
               <div class="model-card-footer">
-                <span class="model-card-status ${m.installed ? 'found' : 'missing'}">
-                  ${m.installed ? 'Установлена' : 'Не найдена'}
+                <span class="model-card-status ${m.installed ? 'found' : 'missing'}" data-i18n="${m.installed ? 'model.installed' : 'model.missing'}">
+                  ${m.installed ? i18n.t('model.installed') : i18n.t('model.missing')}
                 </span>
-                ${!m.installed ? `<button class="model-download-btn" data-id="${m.id}" data-url="${m.download_url}" data-filename="${m.default_filename}" data-type="${m.transcriber_type}">Скачать</button>` : ''}
+                ${!m.installed ? `<button class="model-download-btn" data-id="${m.id}" data-url="${m.download_url}" data-filename="${m.default_filename}" data-type="${m.transcriber_type}" data-i18n="model.download">${i18n.t('model.download')}</button>` : ''}
               </div>
               <div class="model-progress" style="display:none;">
                 <div class="model-progress-bar"><div class="model-progress-fill"></div></div>
@@ -1858,7 +1880,7 @@
               const currentPath = input.value || document.getElementById('s-models-base-dir').value || '';
               const selected = await window.__TAURI__.dialog.open({
                 directory: true,
-                title: 'Выбрать директорию модели',
+                title: i18n.t('model.pick_dir_title'),
                 defaultPath: currentPath,
               });
               if (selected) {
@@ -1890,7 +1912,8 @@
               }
 
               btn.disabled = true;
-              btn.textContent = 'Скачивание...';
+              btn.textContent = i18n.t('model.downloading');
+              btn.dataset.i18n = 'model.downloading';
               const progress = card.querySelector('.model-progress');
               progress.style.display = 'flex';
 
@@ -1898,14 +1921,15 @@
                 await invoke('download_model', { modelId, url, destDir });
               } catch (e) {
                 btn.disabled = false;
-                btn.textContent = 'Скачать';
+                btn.textContent = i18n.t('model.download');
+                btn.dataset.i18n = 'model.download';
                 progress.style.display = 'none';
-                alert('Ошибка скачивания: ' + e);
+                alert(i18n.t('model.download_error') + ': ' + e);
               }
             });
           });
         } catch (e) {
-          container.innerHTML = '<div style="color:#565f89;font-size:0.8rem;">Не удалось загрузить список моделей</div>';
+          container.innerHTML = `<div style="color:#565f89;font-size:0.8rem;">${i18n.t('model.load_error')}</div>`;
         }
       }
 
@@ -1933,7 +1957,7 @@
         const card = document.querySelector(`.model-card[data-model-id="${model_id}"]`);
         if (card) {
           const status = card.querySelector('.model-card-status');
-          if (status) { status.className = 'model-card-status found'; status.textContent = 'Установлена'; }
+          if (status) { status.className = 'model-card-status found'; status.dataset.i18n = 'model.installed'; status.textContent = i18n.t('model.installed'); }
           const btn = card.querySelector('.model-download-btn');
           if (btn) btn.remove();
           const progress = card.querySelector('.model-progress');
@@ -1976,6 +2000,8 @@
             ...(document.getElementById('s-preload-gigaam').classList.contains('on') ? ['gigaam'] : []),
             ...(document.getElementById('s-preload-qwen3asr').classList.contains('on') ? ['qwen3asr'] : []),
           ], document.getElementById('s-transcriber').dataset.value),
+          language: document.getElementById('s-language').dataset.value || i18n.getLanguage(),
+          history_filter_secs: parseInt(document.getElementById('h-period').dataset.value) || 0,
         };
       }
 
@@ -2104,7 +2130,7 @@
         const currentPath = document.getElementById('s-models-base-dir').value || '';
         const selected = await window.__TAURI__.dialog.open({
           directory: true,
-          title: 'Выбрать базовую директорию моделей',
+          title: i18n.t('model.pick_base_title'),
           defaultPath: currentPath,
         });
         if (selected) {
@@ -2117,6 +2143,18 @@
       // При смене модели по умолчанию — обновить блокировки предзагрузки
       document.getElementById('s-transcriber').addEventListener('change', () => {
         updatePreloadLocks(document.getElementById('s-transcriber').dataset.value);
+      });
+
+      // Смена языка — применяется сразу и сохраняется автоматически
+      document.getElementById('s-language').addEventListener('change', async () => {
+        const lang = document.getElementById('s-language').dataset.value;
+        i18n.setLanguage(lang);
+        try {
+          await invoke('set_language', { lang });
+          showToast(i18n.t('toast.saved'), 'success', 1500);
+        } catch (e) {
+          showToast(`${i18n.t('toast.save_error')}: ${e}`, 'error', 3000);
+        }
       });
 
       // === Композер горячих клавиш ===
@@ -2321,14 +2359,14 @@
             const conflicts = [];
             if (cfg.hotkey) {
               const c = await invoke('check_hotkey_conflict', { hotkey: cfg.hotkey });
-              if (c) conflicts.push(`Trigger (${cfg.hotkey}): занята — ${c}`);
+              if (c) conflicts.push(i18n.t('hotkey.trigger_conflict', { hotkey: cfg.hotkey, holder: c }));
             }
             if (cfg.hotkey_pause) {
               const c = await invoke('check_hotkey_conflict', { hotkey: cfg.hotkey_pause });
-              if (c) conflicts.push(`Pause (${cfg.hotkey_pause}): занята — ${c}`);
+              if (c) conflicts.push(i18n.t('hotkey.pause_conflict', { hotkey: cfg.hotkey_pause, holder: c }));
             }
             if (conflicts.length > 0) {
-              const msg = 'Обнаружены конфликты клавиш:\n\n' + conflicts.join('\n') + '\n\nВсё равно сохранить?';
+              const msg = i18n.t('hotkey.conflicts_prompt', { list: conflicts.join('\n') });
               if (!confirm(msg)) return;
             }
 
@@ -2398,7 +2436,16 @@
       // Фильтр периода (кастомный select — инициализируем)
       const hPeriod = document.getElementById('h-period');
       initCustomSelects();
-      hPeriod.addEventListener('change', () => { histPage = 0; loadHistory(); });
+      hPeriod.addEventListener('change', async () => {
+        histPage = 0;
+        loadHistory();
+        try {
+          await invoke('set_history_filter', { secs: parseInt(hPeriod.dataset.value) || 0 });
+          showToast(i18n.t('toast.saved'), 'success', 1500);
+        } catch (e) {
+          showToast(`${i18n.t('toast.save_error')}: ${e}`, 'error', 3000);
+        }
+      });
 
       async function loadHistory() {
         const sinceSecs = parseInt(hPeriod.dataset.value);
@@ -2406,14 +2453,38 @@
         renderHistory(result.entries, result.total);
       }
 
+      // Восстановить язык интерфейса и период фильтра истории из конфига
+      async function restoreUiState() {
+        try {
+          const cfg = await invoke('load_config');
+          if (cfg.language) {
+            i18n.setLanguage(cfg.language);
+          } else {
+            i18n.applyI18n();
+          }
+          const savedSecs = cfg.history_filter_secs;
+          if (savedSecs !== undefined && savedSecs !== null) {
+            const opt = hPeriod.querySelector(`[data-value="${savedSecs}"]`);
+            if (opt) setCustomSelect('h-period', String(savedSecs));
+          }
+        } catch (_) {
+          i18n.applyI18n();
+        }
+      }
+      restoreUiState();
+
       function fmtDate(ts) {
         const d = new Date(ts * 1000);
-        return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const locale = i18n.getLanguage() === 'en' ? 'en-US' : 'ru-RU';
+        return d.toLocaleString(locale, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
       }
 
       function fmtDuration(secs) {
         const m = Math.floor(secs / 60);
         const s = secs % 60;
+        if (i18n.getLanguage() === 'en') {
+          return m > 0 ? `${m}m ${s}s` : `${s}s`;
+        }
         return m > 0 ? `${m}м ${s}с` : `${s}с`;
       }
 
@@ -2452,7 +2523,7 @@
           // Добавляем вариант "нераспознано" для типов, которых ещё нет
           for (const m of MODEL_TYPES) {
             if (!seenTypes.has(m.type)) {
-              modelOptions.push({ label: m.label + ' (не распознано)', text: null, type: m.type, hasText: false });
+              modelOptions.push({ label: m.label + ' ' + i18n.t('history.not_recognized'), text: null, type: m.type, hasText: false });
             }
           }
 
@@ -2469,13 +2540,13 @@
           const actionsDiv = document.createElement('div');
           actionsDiv.className = 'hist-actions';
           actionsDiv.innerHTML = `
-            ${entry.audio_exists ? `<button class="hist-btn play" title="Воспроизвести" data-rid="${r.id}">
+            ${entry.audio_exists ? `<button class="hist-btn play" data-i18n-title="history.play" title="${i18n.t('history.play')}" data-rid="${r.id}">
               <svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
             </button>` : ''}
-            <button class="hist-btn copy" title="Копировать">
+            <button class="hist-btn copy" data-i18n-title="history.copy" title="${i18n.t('history.copy')}">
               <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
             </button>
-            <button class="hist-btn delete" title="Удалить">
+            <button class="hist-btn delete" data-i18n-title="history.delete" title="${i18n.t('history.delete')}">
               <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
             </button>
           `;
@@ -2504,9 +2575,9 @@
             contentDiv.className = 'hist-text';
             contentDiv.textContent = defaultOpt.text;
           } else if (entry.audio_exists) {
-            contentDiv.innerHTML = `<button class="hist-retranscribe-btn" data-rid="${r.id}" data-type="${defaultOpt ? defaultOpt.type : 'whisper'}">Распознать этой моделью</button>`;
+            contentDiv.innerHTML = `<button class="hist-retranscribe-btn" data-rid="${r.id}" data-type="${defaultOpt ? defaultOpt.type : 'whisper'}" data-i18n="history.recognize_btn">${i18n.t('history.recognize_btn')}</button>`;
           } else {
-            contentDiv.innerHTML = `<span style="color:#565f89;font-size:0.8rem;font-style:italic;">Аудиофайл удалён</span>`;
+            contentDiv.innerHTML = `<span style="color:#565f89;font-size:0.8rem;font-style:italic;" data-i18n="history.audio_deleted">${i18n.t('history.audio_deleted')}</span>`;
           }
           div.appendChild(contentDiv);
 
@@ -2526,10 +2597,10 @@
               contentDiv.className = 'hist-text';
               contentDiv.textContent = opt.text;
             } else if (entry.audio_exists) {
-              contentDiv.innerHTML = `<button class="hist-retranscribe-btn" data-rid="${r.id}" data-type="${opt ? opt.type : 'whisper'}">Распознать этой моделью</button>`;
+              contentDiv.innerHTML = `<button class="hist-retranscribe-btn" data-rid="${r.id}" data-type="${opt ? opt.type : 'whisper'}" data-i18n="history.recognize_btn">${i18n.t('history.recognize_btn')}</button>`;
               contentDiv.querySelector('.hist-retranscribe-btn').addEventListener('click', doRetranscribe);
             } else {
-              contentDiv.innerHTML = `<span style="color:#565f89;font-size:0.8rem;font-style:italic;">Аудиофайл удалён</span>`;
+              contentDiv.innerHTML = `<span style="color:#565f89;font-size:0.8rem;font-style:italic;" data-i18n="history.audio_deleted">${i18n.t('history.audio_deleted')}</span>`;
             }
           });
 
@@ -2541,14 +2612,16 @@
             const btn = e.target;
             const rid = parseInt(btn.dataset.rid);
             const ttype = btn.dataset.type;
-            btn.textContent = 'Распознавание...';
+            btn.textContent = i18n.t('history.recognizing');
+            btn.dataset.i18n = 'history.recognizing';
             btn.disabled = true;
             try {
               await invoke('retranscribe', { recordingId: rid, transcriberType: ttype });
               loadHistory();
             } catch (err) {
-              alert('Ошибка: ' + err);
-              btn.textContent = 'Распознать этой моделью';
+              alert(i18n.t('toast.error') + ': ' + err);
+              btn.textContent = i18n.t('history.recognize_btn');
+              btn.dataset.i18n = 'history.recognize_btn';
               btn.disabled = false;
             }
           }
@@ -2580,7 +2653,7 @@
           histPagination.classList.add('visible');
           histPrev.disabled = histPage === 0;
           histNext.disabled = histPage >= totalPages - 1;
-          histPageInfo.textContent = `Стр. ${histPage + 1} из ${totalPages}`;
+          histPageInfo.textContent = i18n.t('history.page', { current: histPage + 1, total: totalPages });
         } else {
           histPagination.classList.remove('visible');
         }
@@ -2638,7 +2711,8 @@
           // Кнопка паузы — вставляем перед play/stop
           const pauseBtn = document.createElement('button');
           pauseBtn.className = 'hist-btn play';
-          pauseBtn.title = 'Пауза';
+          pauseBtn.title = i18n.t('mic.pause');
+          pauseBtn.dataset.i18nTitle = 'mic.pause';
           pauseBtn.innerHTML = SVG_PAUSE;
           playBtn.parentNode.insertBefore(pauseBtn, playBtn);
 
@@ -2648,12 +2722,14 @@
             if (paused) {
               audioCtx.resume();
               pauseBtn.innerHTML = SVG_PAUSE;
-              pauseBtn.title = 'Пауза';
+              pauseBtn.title = i18n.t('mic.pause');
+              pauseBtn.dataset.i18nTitle = 'mic.pause';
               paused = false;
             } else {
               audioCtx.suspend();
               pauseBtn.innerHTML = SVG_RESUME;
-              pauseBtn.title = 'Продолжить';
+              pauseBtn.title = i18n.t('mic.resume');
+              pauseBtn.dataset.i18nTitle = 'mic.resume';
               paused = true;
             }
           });
@@ -2708,9 +2784,9 @@
         exportMenu.classList.remove('visible');
         try {
           const path = await invoke('export_history', { format });
-          showToast('Файл сохранён в папку Загрузки', 'success', 5000);
+          showToast(i18n.t('toast.file_saved'), 'success', 5000);
         } catch (e) {
-          showToast(`Ошибка: ${e}`, 'error', 3000);
+          showToast(`${i18n.t('toast.error')}: ${e}`, 'error', 3000);
         }
       }
       document.querySelectorAll('.export-dropdown-item').forEach(item => {
@@ -2718,7 +2794,7 @@
       });
 
       document.getElementById('h-clear-btn').addEventListener('click', async () => {
-        if (await showConfirm('Удалить всю историю транскрибаций?')) {
+        if (await showConfirm(i18n.t('history.confirm_clear'))) {
           await invoke('clear_history');
           loadHistory();
         }

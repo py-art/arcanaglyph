@@ -4,8 +4,8 @@
 // Параметры: 16kHz, 64 mel bins, n_fft=320, hop=160, HTK scale, center=false.
 
 use ndarray::{Array2, Array3};
-use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
+use rustfft::num_complex::Complex;
 
 /// Параметры препроцессинга GigaAM v3
 const SAMPLE_RATE: u32 = 16000;
@@ -151,10 +151,17 @@ mod tests {
         // Все значения в [0, 1]
         assert!(w.iter().all(|&v| v >= 0.0 && v <= 1.0));
         // Максимум около середины
-        let max_idx = w.iter().enumerate()
+        let max_idx = w
+            .iter()
+            .enumerate()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-            .unwrap().0;
-        assert!((max_idx as i32 - 160).abs() <= 1, "Максимум на позиции {}, ожидалось ~160", max_idx);
+            .unwrap()
+            .0;
+        assert!(
+            (max_idx as i32 - 160).abs() <= 1,
+            "Максимум на позиции {}, ожидалось ~160",
+            max_idx
+        );
     }
 
     #[test]
@@ -218,6 +225,10 @@ mod tests {
             }
         }
         // 1kHz должна быть примерно в 15-25 mel-бине (не на краях)
-        assert!(max_mel > 5 && max_mel < 50, "1kHz в mel-бине {}, ожидалось 10-40", max_mel);
+        assert!(
+            max_mel > 5 && max_mel < 50,
+            "1kHz в mel-бине {}, ожидалось 10-40",
+            max_mel
+        );
     }
 }

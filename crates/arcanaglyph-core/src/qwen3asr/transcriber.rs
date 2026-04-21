@@ -10,8 +10,8 @@ use std::sync::Mutex;
 use ndarray::{Array2, Array4};
 #[cfg(feature = "cuda")]
 use ort::execution_providers::CUDAExecutionProvider;
-use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
+use ort::session::builder::GraphOptimizationLevel;
 use ort::value::TensorRef;
 
 use crate::error::ArcanaError;
@@ -39,7 +39,7 @@ pub struct Qwen3AsrTranscriber {
     encoder_transformer: Mutex<Session>,
     decoder_init: Mutex<Session>,
     decoder_step: Mutex<Session>,
-    embed_tokens: Vec<f32>,             // [VOCAB_SIZE * HIDDEN_SIZE]
+    embed_tokens: Vec<f32>, // [VOCAB_SIZE * HIDDEN_SIZE]
     tokenizer: tokenizers::Tokenizer,
     // Закэшированные ID токенов "system", "user", "assistant"
     system_ids: Vec<i64>,
@@ -58,8 +58,10 @@ impl Qwen3AsrTranscriber {
 
         // Проверяем наличие файлов
         let required = [
-            "encoder_conv.onnx", "encoder_transformer.onnx",
-            "decoder_init.int8.onnx", "decoder_step.int8.onnx",
+            "encoder_conv.onnx",
+            "encoder_transformer.onnx",
+            "decoder_init.int8.onnx",
+            "decoder_step.int8.onnx",
             "embed_tokens.bin",
         ];
         for f in &required {
@@ -70,19 +72,20 @@ impl Qwen3AsrTranscriber {
         }
         let tokenizer_path = model_dir.join("tokenizer.json");
         if !tokenizer_path.exists() {
-            return Err(ArcanaError::ModelLoad(format!("tokenizer.json не найден: {}", tokenizer_path.display())));
+            return Err(ArcanaError::ModelLoad(format!(
+                "tokenizer.json не найден: {}",
+                tokenizer_path.display()
+            )));
         }
 
         tracing::info!("Загрузка Qwen3-ASR из: {:?}", model_dir);
 
-        let n_threads = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4);
+        let n_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
 
         let load_session = |name: &str| -> Result<Session, ArcanaError> {
             #[allow(unused_mut)]
-            let mut builder = Session::builder()
-                .map_err(|e| ArcanaError::ModelLoad(format!("Session builder: {}", e)))?;
+            let mut builder =
+                Session::builder().map_err(|e| ArcanaError::ModelLoad(format!("Session builder: {}", e)))?;
             #[cfg(feature = "cuda")]
             {
                 builder = builder
@@ -105,13 +108,14 @@ impl Qwen3AsrTranscriber {
 
         // Загрузка эмбеддингов [151936, 1024] float32
         let embed_path = onnx_dir.join("embed_tokens.bin");
-        let embed_bytes = std::fs::read(&embed_path)
-            .map_err(|e| ArcanaError::ModelLoad(format!("embed_tokens.bin: {}", e)))?;
+        let embed_bytes =
+            std::fs::read(&embed_path).map_err(|e| ArcanaError::ModelLoad(format!("embed_tokens.bin: {}", e)))?;
         let expected_size = VOCAB_SIZE * HIDDEN_SIZE * 4;
         if embed_bytes.len() != expected_size {
             return Err(ArcanaError::ModelLoad(format!(
                 "embed_tokens.bin: ожидается {} байт, получено {}",
-                expected_size, embed_bytes.len()
+                expected_size,
+                embed_bytes.len()
             )));
         }
         // Безопасно конвертируем байты в f32
@@ -196,7 +200,9 @@ impl Qwen3AsrTranscriber {
         let padded_tensor = TensorRef::from_array_view(padded_contiguous.view())
             .map_err(|e| ArcanaError::Recognizer(format!("Conv tensor: {}", e)))?;
 
-        let mut conv_session = self.encoder_conv.lock()
+        let mut conv_session = self
+            .encoder_conv
+            .lock()
             .map_err(|e| ArcanaError::Internal(format!("Mutex: {}", e)))?;
         let conv_outputs = conv_session
             .run(ort::inputs!["padded_mel_chunks" => padded_tensor])
@@ -237,7 +243,9 @@ impl Qwen3AsrTranscriber {
         let mask_tensor = TensorRef::from_array_view(mask_contiguous.view())
             .map_err(|e| ArcanaError::Recognizer(format!("Mask tensor: {}", e)))?;
 
-        let mut enc_session = self.encoder_transformer.lock()
+        let mut enc_session = self
+            .encoder_transformer
+            .lock()
             .map_err(|e| ArcanaError::Internal(format!("Mutex: {}", e)))?;
         let enc_outputs = enc_session
             .run(ort::inputs![
@@ -252,10 +260,8 @@ impl Qwen3AsrTranscriber {
 
         let enc_tokens = enc_shape[0] as usize;
         let enc_dim = enc_shape[1] as usize; // 1024
-        let audio_features = Array2::from_shape_vec(
-            (enc_tokens, enc_dim),
-            enc_data.to_vec(),
-        ).map_err(|e| ArcanaError::Recognizer(format!("Array reshape: {}", e)))?;
+        let audio_features = Array2::from_shape_vec((enc_tokens, enc_dim), enc_data.to_vec())
+            .map_err(|e| ArcanaError::Recognizer(format!("Array reshape: {}", e)))?;
 
         Ok(audio_features)
     }
@@ -339,15 +345,11 @@ impl Transcriber for Qwen3AsrTranscriber {
         let embeds_flat = self.embed_and_fuse(&token_ids, &audio_features);
 
         // Reshape: [1, seq_len, 1024]
-        let input_embeds = ndarray::Array3::from_shape_vec(
-            (1, seq_len, HIDDEN_SIZE),
-            embeds_flat,
-        ).map_err(|e| ArcanaError::Recognizer(format!("Embeds reshape: {}", e)))?;
+        let input_embeds = ndarray::Array3::from_shape_vec((1, seq_len, HIDDEN_SIZE), embeds_flat)
+            .map_err(|e| ArcanaError::Recognizer(format!("Embeds reshape: {}", e)))?;
 
-        let position_ids = ndarray::Array2::from_shape_vec(
-            (1, seq_len),
-            (0..seq_len as i64).collect(),
-        ).map_err(|e| ArcanaError::Recognizer(format!("Pos IDs: {}", e)))?;
+        let position_ids = ndarray::Array2::from_shape_vec((1, seq_len), (0..seq_len as i64).collect())
+            .map_err(|e| ArcanaError::Recognizer(format!("Pos IDs: {}", e)))?;
 
         // 4. Decoder init (prefill)
         let embeds_contiguous = input_embeds.as_standard_layout();
@@ -357,7 +359,9 @@ impl Transcriber for Qwen3AsrTranscriber {
         let pos_tensor = TensorRef::from_array_view(pos_contiguous.view())
             .map_err(|e| ArcanaError::Recognizer(format!("Pos tensor: {}", e)))?;
 
-        let mut init_session = self.decoder_init.lock()
+        let mut init_session = self
+            .decoder_init
+            .lock()
             .map_err(|e| ArcanaError::Internal(format!("Mutex: {}", e)))?;
         let init_outputs = init_session
             .run(ort::inputs![
@@ -391,7 +395,10 @@ impl Transcriber for Qwen3AsrTranscriber {
         let mut keys_shape: Vec<usize> = init_outputs[1]
             .try_extract_tensor::<f32>()
             .map_err(|e| ArcanaError::Recognizer(format!("Keys shape: {}", e)))?
-            .0.iter().map(|&d| d as usize).collect();
+            .0
+            .iter()
+            .map(|&d| d as usize)
+            .collect();
 
         let (_, values_data) = init_outputs[2]
             .try_extract_tensor::<f32>()
@@ -410,25 +417,17 @@ impl Transcriber for Qwen3AsrTranscriber {
 
             // Embed одного токена: [1, 1, 1024]
             let emb = self.get_embedding(last_token);
-            let token_embed = ndarray::Array3::from_shape_vec(
-                (1, 1, HIDDEN_SIZE),
-                emb.to_vec(),
-            ).map_err(|e| ArcanaError::Recognizer(format!("Token embed: {}", e)))?;
+            let token_embed = ndarray::Array3::from_shape_vec((1, 1, HIDDEN_SIZE), emb.to_vec())
+                .map_err(|e| ArcanaError::Recognizer(format!("Token embed: {}", e)))?;
 
-            let pos = ndarray::Array2::from_shape_vec(
-                (1, 1),
-                vec![cur_pos],
-            ).map_err(|e| ArcanaError::Recognizer(format!("Step pos: {}", e)))?;
+            let pos = ndarray::Array2::from_shape_vec((1, 1), vec![cur_pos])
+                .map_err(|e| ArcanaError::Recognizer(format!("Step pos: {}", e)))?;
 
             // KV cache tensors
-            let keys_nd = ndarray::ArrayD::from_shape_vec(
-                ndarray::IxDyn(&keys_shape),
-                present_keys.clone(),
-            ).map_err(|e| ArcanaError::Recognizer(format!("Keys nd: {}", e)))?;
-            let values_nd = ndarray::ArrayD::from_shape_vec(
-                ndarray::IxDyn(&keys_shape),
-                present_values.clone(),
-            ).map_err(|e| ArcanaError::Recognizer(format!("Values nd: {}", e)))?;
+            let keys_nd = ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&keys_shape), present_keys.clone())
+                .map_err(|e| ArcanaError::Recognizer(format!("Keys nd: {}", e)))?;
+            let values_nd = ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&keys_shape), present_values.clone())
+                .map_err(|e| ArcanaError::Recognizer(format!("Values nd: {}", e)))?;
 
             let te_contiguous = token_embed.as_standard_layout();
             let te_tensor = TensorRef::from_array_view(te_contiguous.view())
@@ -443,7 +442,9 @@ impl Transcriber for Qwen3AsrTranscriber {
             let values_t = TensorRef::from_array_view(values_c.view())
                 .map_err(|e| ArcanaError::Recognizer(format!("Values tensor: {}", e)))?;
 
-            let mut step_session = self.decoder_step.lock()
+            let mut step_session = self
+                .decoder_step
+                .lock()
                 .map_err(|e| ArcanaError::Internal(format!("Mutex: {}", e)))?;
             let step_outputs = step_session
                 .run(ort::inputs![
@@ -478,7 +479,8 @@ impl Transcriber for Qwen3AsrTranscriber {
             present_values = step_outputs[2]
                 .try_extract_tensor::<f32>()
                 .map_err(|e| ArcanaError::Recognizer(format!("New values: {}", e)))?
-                .1.to_vec();
+                .1
+                .to_vec();
         }
 
         // Убираем EOS
@@ -490,7 +492,9 @@ impl Transcriber for Qwen3AsrTranscriber {
 
         // Декодируем токены в текст
         let token_ids_u32: Vec<u32> = generated.iter().map(|&id| id as u32).collect();
-        let text = self.tokenizer.decode(&token_ids_u32, true)
+        let text = self
+            .tokenizer
+            .decode(&token_ids_u32, true)
             .map_err(|e| ArcanaError::Recognizer(format!("Decode: {}", e)))?;
 
         // Убираем служебные части (language tag, <asr_text>)

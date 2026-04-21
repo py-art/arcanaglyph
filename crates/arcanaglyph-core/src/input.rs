@@ -119,13 +119,21 @@ async fn simulate_paste(rd: &RdSession) -> Result<(), ArcanaError> {
     const SHIFT: i32 = 42;
     const INSERT: i32 = 110;
 
-    rd.proxy.notify_keyboard_keycode(&rd.session, SHIFT, KeyState::Pressed, Default::default()).await
+    rd.proxy
+        .notify_keyboard_keycode(&rd.session, SHIFT, KeyState::Pressed, Default::default())
+        .await
         .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка нажатия Shift: {}", e)))?;
-    rd.proxy.notify_keyboard_keycode(&rd.session, INSERT, KeyState::Pressed, Default::default()).await
+    rd.proxy
+        .notify_keyboard_keycode(&rd.session, INSERT, KeyState::Pressed, Default::default())
+        .await
         .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка нажатия Insert: {}", e)))?;
-    rd.proxy.notify_keyboard_keycode(&rd.session, INSERT, KeyState::Released, Default::default()).await
+    rd.proxy
+        .notify_keyboard_keycode(&rd.session, INSERT, KeyState::Released, Default::default())
+        .await
         .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка отпускания Insert: {}", e)))?;
-    rd.proxy.notify_keyboard_keycode(&rd.session, SHIFT, KeyState::Released, Default::default()).await
+    rd.proxy
+        .notify_keyboard_keycode(&rd.session, SHIFT, KeyState::Released, Default::default())
+        .await
         .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка отпускания Shift: {}", e)))?;
 
     Ok(())
@@ -140,14 +148,19 @@ fn copy_to_clipboard(text: &str) -> Result<(), ArcanaError> {
     let mut child = Command::new("wl-copy")
         .stdin(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| ArcanaError::InputSimulation(format!(
-            "Не удалось запустить wl-copy: {} (установите: sudo apt install wl-clipboard)", e
-        )))?;
+        .map_err(|e| {
+            ArcanaError::InputSimulation(format!(
+                "Не удалось запустить wl-copy: {} (установите: sudo apt install wl-clipboard)",
+                e
+            ))
+        })?;
     if let Some(stdin) = child.stdin.as_mut() {
-        stdin.write_all(text.as_bytes())
+        stdin
+            .write_all(text.as_bytes())
             .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось передать текст в wl-copy: {}", e)))?;
     }
-    child.wait()
+    child
+        .wait()
         .map_err(|e| ArcanaError::InputSimulation(format!("wl-copy завершился с ошибкой: {}", e)))?;
 
     // PRIMARY selection (буфер выделения, используется Shift+Insert в некоторых терминалах)
@@ -157,10 +170,12 @@ fn copy_to_clipboard(text: &str) -> Result<(), ArcanaError> {
         .spawn()
         .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось запустить wl-copy --primary: {}", e)))?;
     if let Some(stdin) = child_primary.stdin.as_mut() {
-        stdin.write_all(text.as_bytes())
-            .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось передать текст в wl-copy --primary: {}", e)))?;
+        stdin.write_all(text.as_bytes()).map_err(|e| {
+            ArcanaError::InputSimulation(format!("Не удалось передать текст в wl-copy --primary: {}", e))
+        })?;
     }
-    child_primary.wait()
+    child_primary
+        .wait()
         .map_err(|e| ArcanaError::InputSimulation(format!("wl-copy --primary завершился с ошибкой: {}", e)))?;
 
     Ok(())
@@ -183,7 +198,10 @@ async fn type_text_wayland(text: &str) -> Result<(), ArcanaError> {
         match init_rd_session().await {
             Ok(session) => *guard = Some(session),
             Err(e) => {
-                tracing::warn!("RemoteDesktop недоступен: {}. Текст скопирован в буфер — нажмите Ctrl+V.", e);
+                tracing::warn!(
+                    "RemoteDesktop недоступен: {}. Текст скопирован в буфер — нажмите Ctrl+V.",
+                    e
+                );
                 return Ok(());
             }
         }
