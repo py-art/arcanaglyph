@@ -4,8 +4,8 @@
 // Параметры: 16kHz, 128 mel bins, n_fft=400, hop=160, Slaney norm, center=true.
 
 use ndarray::{Array1, Array2};
-use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
+use rustfft::num_complex::Complex;
 
 const SAMPLE_RATE: u32 = 16000;
 const N_FFT: usize = 400;

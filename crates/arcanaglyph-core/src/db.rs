@@ -12,8 +12,14 @@ use rusqlite::Connection;
 
 /// SQL миграции, встроенные при компиляции
 const MIGRATIONS: &[(&str, &str)] = &[
-    ("v001_initial_schema", include_str!("../../../migrations/v001_initial_schema.sql")),
-    ("v002_settings_table", include_str!("../../../migrations/v002_settings_table.sql")),
+    (
+        "v001_initial_schema",
+        include_str!("../../../migrations/v001_initial_schema.sql"),
+    ),
+    (
+        "v002_settings_table",
+        include_str!("../../../migrations/v002_settings_table.sql"),
+    ),
 ];
 
 /// Текущая версия схемы = количество миграций
@@ -43,8 +49,11 @@ fn set_version(conn: &Connection, version: u32) -> Result<(), ArcanaError> {
         .map_err(|e| ArcanaError::Database(format!("schema_version: {}", e)))?;
     conn.execute("DELETE FROM schema_version", [])
         .map_err(|e| ArcanaError::Database(format!("schema_version clear: {}", e)))?;
-    conn.execute("INSERT INTO schema_version (version) VALUES (?1)", rusqlite::params![version])
-        .map_err(|e| ArcanaError::Database(format!("schema_version set: {}", e)))?;
+    conn.execute(
+        "INSERT INTO schema_version (version) VALUES (?1)",
+        rusqlite::params![version],
+    )
+    .map_err(|e| ArcanaError::Database(format!("schema_version set: {}", e)))?;
     Ok(())
 }
 

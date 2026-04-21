@@ -1,9 +1,9 @@
 // crates/arcanaglyph-core/src/engine.rs
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc as std_mpsc;
-use std::sync::Arc;
 use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 use tracing::info;
@@ -11,8 +11,8 @@ use tracing::info;
 use crate::audio::{self, AudioCommand};
 use crate::config::{CoreConfig, TranscriberType};
 use crate::error::ArcanaError;
-use crate::history::HistoryDB;
 use crate::gigaam::transcriber::GigaAmTranscriber;
+use crate::history::HistoryDB;
 use crate::qwen3asr::transcriber::Qwen3AsrTranscriber;
 use crate::transcriber::{Transcriber, VoskTranscriber, WhisperTranscriber};
 
@@ -104,32 +104,43 @@ impl ArcanaEngine {
     }
 
     /// Создаёт транскрайбер по типу, возвращает (model_name, Arc<dyn Transcriber>)
-    fn create_transcriber(config: &CoreConfig, t_type: &TranscriberType) -> Result<(String, Arc<dyn Transcriber>), ArcanaError> {
+    fn create_transcriber(
+        config: &CoreConfig,
+        t_type: &TranscriberType,
+    ) -> Result<(String, Arc<dyn Transcriber>), ArcanaError> {
         match t_type {
             TranscriberType::Vosk => {
                 let t = VoskTranscriber::new(&config.model_path, config.sample_rate as f32)?;
-                let name = config.model_path.file_name()
+                let name = config
+                    .model_path
+                    .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "vosk".to_string());
                 Ok((name, Arc::new(t)))
             }
             TranscriberType::Whisper => {
                 let t = WhisperTranscriber::new(&config.whisper_model_path)?;
-                let name = config.whisper_model_path.file_name()
+                let name = config
+                    .whisper_model_path
+                    .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "whisper".to_string());
                 Ok((name, Arc::new(t)))
             }
             TranscriberType::GigaAm => {
                 let t = GigaAmTranscriber::new(&config.gigaam_model_path)?;
-                let name = config.gigaam_model_path.file_name()
+                let name = config
+                    .gigaam_model_path
+                    .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "gigaam".to_string());
                 Ok((name, Arc::new(t)))
             }
             TranscriberType::Qwen3Asr => {
                 let t = Qwen3AsrTranscriber::new(&config.qwen3asr_model_path)?;
-                let name = config.qwen3asr_model_path.file_name()
+                let name = config
+                    .qwen3asr_model_path
+                    .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "qwen3asr".to_string());
                 Ok((name, Arc::new(t)))
@@ -140,26 +151,39 @@ impl ArcanaEngine {
     /// Предзагрузить модель в пул (вызывать из фонового потока).
     /// Пропускает загрузку если модель уже в пуле.
     pub fn preload_model(&self, t_type: &TranscriberType) -> Result<String, ArcanaError> {
-        let config = self.config.read().map_err(|e| ArcanaError::Internal(format!("RwLock: {}", e)))?;
+        let config = self
+            .config
+            .read()
+            .map_err(|e| ArcanaError::Internal(format!("RwLock: {}", e)))?;
 
         // Определяем имя модели без загрузки — чтобы проверить пул
         let expected_name = match t_type {
-            TranscriberType::Vosk => config.model_path.file_name()
+            TranscriberType::Vosk => config
+                .model_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "vosk".to_string()),
-            TranscriberType::Whisper => config.whisper_model_path.file_name()
+            TranscriberType::Whisper => config
+                .whisper_model_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "whisper".to_string()),
-            TranscriberType::GigaAm => config.gigaam_model_path.file_name()
+            TranscriberType::GigaAm => config
+                .gigaam_model_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "gigaam".to_string()),
-            TranscriberType::Qwen3Asr => config.qwen3asr_model_path.file_name()
+            TranscriberType::Qwen3Asr => config
+                .qwen3asr_model_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "qwen3asr".to_string()),
         };
 
         // Если модель уже в пуле — пропускаем загрузку
-        let already_loaded = self.transcribers.read()
+        let already_loaded = self
+            .transcribers
+            .read()
             .map(|pool| pool.contains_key(&expected_name))
             .unwrap_or(false);
         if already_loaded {
@@ -167,7 +191,10 @@ impl ArcanaEngine {
         }
 
         let (name, transcriber) = Self::create_transcriber(&config, t_type)?;
-        let mut pool = self.transcribers.write().map_err(|e| ArcanaError::Internal(format!("RwLock: {}", e)))?;
+        let mut pool = self
+            .transcribers
+            .write()
+            .map_err(|e| ArcanaError::Internal(format!("RwLock: {}", e)))?;
         pool.insert(name.clone(), transcriber);
         info!("Модель '{}' предзагружена в пул", name);
         Ok(name)
@@ -175,7 +202,10 @@ impl ArcanaEngine {
 
     /// Список загруженных моделей
     pub fn loaded_models(&self) -> Vec<String> {
-        self.transcribers.read().map(|pool| pool.keys().cloned().collect()).unwrap_or_default()
+        self.transcribers
+            .read()
+            .map(|pool| pool.keys().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Имя активной модели
@@ -187,22 +217,32 @@ impl ArcanaEngine {
     pub fn update_config(&self, new_config: CoreConfig) {
         // Определяем имя модели для нового конфига
         let new_model_name = match new_config.transcriber {
-            TranscriberType::Vosk => new_config.model_path.file_name()
+            TranscriberType::Vosk => new_config
+                .model_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "vosk".to_string()),
-            TranscriberType::Whisper => new_config.whisper_model_path.file_name()
+            TranscriberType::Whisper => new_config
+                .whisper_model_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "whisper".to_string()),
-            TranscriberType::GigaAm => new_config.gigaam_model_path.file_name()
+            TranscriberType::GigaAm => new_config
+                .gigaam_model_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "gigaam".to_string()),
-            TranscriberType::Qwen3Asr => new_config.qwen3asr_model_path.file_name()
+            TranscriberType::Qwen3Asr => new_config
+                .qwen3asr_model_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "qwen3asr".to_string()),
         };
 
         // Если модель уже в пуле — мгновенное переключение
-        let already_loaded = self.transcribers.read()
+        let already_loaded = self
+            .transcribers
+            .read()
             .map(|pool| pool.contains_key(&new_model_name))
             .unwrap_or(false);
 
@@ -213,7 +253,10 @@ impl ArcanaEngine {
             info!("Модель '{}' уже загружена — мгновенное переключение", new_model_name);
         } else {
             self.config_changed.store(true, Ordering::Relaxed);
-            info!("Модель '{}' не в пуле — загрузится при следующей записи", new_model_name);
+            info!(
+                "Модель '{}' не в пуле — загрузится при следующей записи",
+                new_model_name
+            );
         }
 
         if let Ok(mut cfg) = self.config.write() {
@@ -258,8 +301,12 @@ impl ArcanaEngine {
         let current_cmd_tx = Arc::clone(&self.current_cmd_tx);
         let event_tx = self.event_tx.clone();
         let active_name = self.active_model.read().unwrap().clone();
-        let mut transcriber = self.transcribers.read().unwrap()
-            .get(&active_name).cloned()
+        let mut transcriber = self
+            .transcribers
+            .read()
+            .unwrap()
+            .get(&active_name)
+            .cloned()
             .unwrap_or_else(|| self.transcribers.read().unwrap().values().next().unwrap().clone());
         let need_reload = self.config_changed.swap(false, Ordering::Relaxed);
         let config = self.config.read().unwrap().clone();

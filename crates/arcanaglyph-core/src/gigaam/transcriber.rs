@@ -8,8 +8,8 @@ use std::sync::Mutex;
 
 #[cfg(feature = "cuda")]
 use ort::execution_providers::CUDAExecutionProvider;
-use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
+use ort::session::builder::GraphOptimizationLevel;
 use ort::value::TensorRef;
 
 use crate::error::ArcanaError;
@@ -45,9 +45,7 @@ impl GigaAmTranscriber {
 
         tracing::info!("Загрузка GigaAM v3 из: {:?}", model_dir);
 
-        let n_threads = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4);
+        let n_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
 
         #[allow(unused_mut)]
         let mut builder = Session::builder()
@@ -124,7 +122,9 @@ impl Transcriber for GigaAmTranscriber {
         let length_tensor = TensorRef::from_array_view(length.view())
             .map_err(|e| ArcanaError::Recognizer(format!("Ошибка создания length тензора: {}", e)))?;
 
-        let mut session = self.session.lock()
+        let mut session = self
+            .session
+            .lock()
             .map_err(|e| ArcanaError::Internal(format!("Mutex отравлен: {}", e)))?;
 
         let outputs = session
@@ -202,10 +202,10 @@ mod tests {
     #[test]
     fn test_ctc_greedy_decode_basic() {
         let vocab: Vec<String> = vec![
-            "\u{2581}при".to_string(),  // 0
-            "вет".to_string(),           // 1
-            "\u{2581}мир".to_string(),   // 2
-            "<blk>".to_string(),         // 3 (blank)
+            "\u{2581}при".to_string(), // 0
+            "вет".to_string(),         // 1
+            "\u{2581}мир".to_string(), // 2
+            "<blk>".to_string(),       // 3 (blank)
         ];
         // blank_id = 3 (токен "<blk>"), vocab_size = 4
 
@@ -229,10 +229,7 @@ mod tests {
     fn test_ctc_greedy_decode_empty() {
         let vocab: Vec<String> = vec!["а".to_string(), "<blk>".to_string()];
         // Все кадры = blank (индекс 1)
-        let logits: Vec<f32> = vec![
-            0.0, 10.0,
-            0.0, 10.0,
-        ];
+        let logits: Vec<f32> = vec![0.0, 10.0, 0.0, 10.0];
         let result = ctc_greedy_decode(&logits, 2, 2, &vocab);
         assert_eq!(result, "");
     }

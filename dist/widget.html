@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="color-scheme" content="dark" />
     <title>ArcanaGlyph Widget</title>
+    <script src="i18n.js"></script>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -122,10 +123,10 @@
         <div class="level-fill" id="level-fill"></div>
       </div>
       <div class="controls">
-        <button class="ctrl-btn pause-btn" id="pause-btn" title="Пауза">
+        <button class="ctrl-btn pause-btn" id="pause-btn" data-i18n-title="mic.pause" title="Пауза">
           <svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
         </button>
-        <button class="ctrl-btn stop-btn" id="stop-btn" title="Остановить">
+        <button class="ctrl-btn stop-btn" id="stop-btn" data-i18n-title="mic.stop" title="Остановить">
           <div class="stop-icon"></div>
         </button>
       </div>
@@ -135,6 +136,12 @@
       const { invoke } = window.__TAURI__.core;
       const { listen } = window.__TAURI__.event;
       const { getCurrentWindow } = window.__TAURI__.window;
+
+      // Применяем сохранённый язык
+      invoke('load_config').then(cfg => {
+        if (cfg.language) i18n.setLanguage(cfg.language);
+        else i18n.applyI18n();
+      }).catch(() => i18n.applyI18n());
 
       const timerEl   = document.getElementById('timer');
       const levelFill = document.getElementById('level-fill');
@@ -176,7 +183,8 @@
       function resetPauseBtn() {
         pauseBtn.innerHTML = '<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
         pauseBtn.classList.remove('resume');
-        pauseBtn.title = 'Пауза';
+        pauseBtn.title = i18n.t('mic.pause');
+        pauseBtn.dataset.i18nTitle = 'mic.pause';
         recDot.classList.remove('paused');
       }
 
@@ -191,7 +199,8 @@
         stopPolling();
         pauseBtn.innerHTML = '<svg viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20"/></svg>';
         pauseBtn.classList.add('resume');
-        pauseBtn.title = 'Продолжить';
+        pauseBtn.title = i18n.t('mic.resume');
+        pauseBtn.dataset.i18nTitle = 'mic.resume';
         recDot.classList.add('paused');
       });
 
