@@ -19,22 +19,29 @@ make fmt           # cargo fmt
 make lint          # cargo clippy -- -D warnings
 make test          # cargo test (требует LIBRARY_PATH=/usr/local/lib)
 make build         # Release-сборка
-make dist          # cargo tauri build (.deb, .AppImage)
+make dist          # self-contained .deb (двойной бинарь avx/noavx + bundled libs, см. ниже)
 make clean         # Полная очистка
 ```
 
 ## Сборка и установка .deb пакета
 
+`make dist` запускает `scripts/build-deb.sh` — один self-contained `.deb` работает на любом
+x86_64 Linux (AVX и без AVX) без ручной настройки. Внутри: два бинаря (avx/noavx),
+`libonnxruntime-avx2.so` (Microsoft), `libonnxruntime-noavx.so` (наш self-build),
+`libvosk.so` (alphacep). Wrapper `/usr/bin/arcanaglyph` выбирает бинарь по `/proc/cpuinfo`.
+
+Требует cargo-tauri-cli (`cargo install tauri-cli --version "^2.0"`), `cmake`, `dpkg-deb`.
+Скачивает Microsoft ORT и vosk при первой сборке (см. `scripts/prepare-bundled-libs.sh`).
+
 ```bash
-# 1. Сборка (несколько минут)
+# 1. Сборка (~25-40 мин на N5095, ~10-15 мин на современном CPU)
 make dist
 
 # 2. Результат
 ls target/release/bundle/deb/arcanaglyph_*.deb
 
-# 3. Установка
-sudo dpkg -i target/release/bundle/deb/ArcanaGlyph_1.0.0_amd64.deb
-sudo apt-get install -f   # если не хватает зависимостей
+# 3. Установка (apt сам подтянет зависимости — wl-clipboard и др.)
+sudo apt install ./target/release/bundle/deb/ArcanaGlyph_1.6.0_amd64.deb
 
 # 4. Запуск
 arcanaglyph                # из терминала
@@ -43,6 +50,9 @@ arcanaglyph                # из терминала
 # 5. Удаление
 sudo dpkg -r arcanaglyph
 ```
+
+После установки в логах `arcanaglyph 2>&1` ищите строку `ORT_DYLIB_PATH = ...` —
+показывает какая ORT-либа выбрана (bundled .deb / self-build override / dev env).
 
 ## XDG-пути (после установки)
 

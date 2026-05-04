@@ -468,6 +468,20 @@
       }
       .custom-select-option:hover { background: #292e42; }
       .custom-select-option.selected { background: #292e42; color: #7aa2f7; }
+      /* Опция движка, не включённого в текущую сборку: серая, некликабельная,
+         с пометкой «не собрано» (через ::after, текст из i18n). */
+      .custom-select-option.option--disabled {
+        color: #565f89;
+        cursor: not-allowed;
+        pointer-events: none;
+        font-style: italic;
+      }
+      .custom-select-option.option--disabled::after {
+        content: attr(data-disabled-label);
+        margin-left: 0.5rem;
+        opacity: 0.7;
+        font-size: 0.75rem;
+      }
 
       .setting-row {
         display: flex;
@@ -581,6 +595,7 @@
       .toast.visible { opacity: 1; }
       .toast--success { background: #1a2e1a; border: 1px solid #9ece6a; color: #9ece6a; }
       .toast--error { background: #2e1a1a; border: 1px solid #f7768e; color: #f7768e; }
+      .toast--warning { background: #2e2918; border: 1px solid #e0af68; color: #e0af68; }
 
       .export-dropdown {
         position: relative;
@@ -825,6 +840,17 @@
       }
       .model-card-status.found { color: #9ece6a; }
       .model-card-status.missing { color: #f7768e; }
+      .model-card-status.unavailable { color: #565f89; }
+      /* Карточка модели, чей backend не включён в текущей сборке (cargo feature off).
+         Серее, чтобы не путалась с установленной/неустановленной — поля и кнопки
+         блокируются на JS-стороне (renderModelCards). */
+      .model-card.unavailable { opacity: 0.55; }
+      .model-card.unavailable .model-card-name::after {
+        content: ' · ' attr(data-unavailable-label);
+        font-size: 0.7rem;
+        color: #565f89;
+        font-weight: 400;
+      }
       .model-download-btn {
         padding: 0.3rem 0.7rem;
         background: #292e42;
@@ -837,6 +863,18 @@
       }
       .model-download-btn:hover { background: rgba(122, 162, 247, 0.15); }
       .model-download-btn:disabled { color: #565f89; border-color: #292e42; cursor: default; }
+      .model-delete-btn {
+        padding: 0.3rem 0.7rem;
+        background: #292e42;
+        border: 1px solid #f7768e;
+        border-radius: 6px;
+        color: #f7768e;
+        font-size: 0.75rem;
+        cursor: pointer;
+        margin-left: 0.4rem;
+        transition: background 0.15s;
+      }
+      .model-delete-btn:hover { background: rgba(247, 118, 142, 0.15); }
       .model-progress {
         display: flex;
         align-items: center;
@@ -1095,20 +1133,25 @@
   </head>
   <body>
 
-    <!-- Кастомный titlebar -->
-    <div class="titlebar">
-      <button class="menu-btn" id="menu-btn" data-i18n-title="menu.title">
+    <!-- Кастомный titlebar.
+         data-tauri-drag-region на родителе — нативный Tauri-drag через X11 _NET_WM_MOVERESIZE
+         (без global input grab, в отличие от ручного startDragging() который ломал
+         последующие click events на webkit2gtk-4.1).
+         data-tauri-drag-region="false" на кнопках — обязательно, иначе на webkit2gtk
+         кнопки могут "съедаться" drag-region и click до handler'а не доходит. -->
+    <div class="titlebar" data-tauri-drag-region>
+      <button class="menu-btn" id="menu-btn" data-tauri-drag-region="false" data-i18n-title="menu.title">
         <svg viewBox="0 0 16 16"><line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="14" y2="8"/><line x1="2" y1="12" x2="14" y2="12"/></svg>
         <span class="back-text" data-i18n="titlebar.back">← Назад</span>
       </button>
-      <div class="titlebar-btns">
-        <button class="titlebar-btn btn-minimize" id="tb-min" data-i18n-title="titlebar.minimize">
+      <div class="titlebar-btns" data-tauri-drag-region="false">
+        <button class="titlebar-btn btn-minimize" id="tb-min" data-tauri-drag-region="false" data-i18n-title="titlebar.minimize">
           <svg viewBox="0 0 12 12"><line x1="2" y1="6" x2="10" y2="6"/></svg>
         </button>
-        <button class="titlebar-btn btn-maximize" id="tb-max" data-i18n-title="titlebar.maximize">
+        <button class="titlebar-btn btn-maximize" id="tb-max" data-tauri-drag-region="false" data-i18n-title="titlebar.maximize">
           <svg viewBox="0 0 12 12"><rect x="2" y="2" width="8" height="8" rx="1"/></svg>
         </button>
-        <button class="titlebar-btn btn-close" id="tb-close" data-i18n-title="titlebar.close">
+        <button class="titlebar-btn btn-close" id="tb-close" data-tauri-drag-region="false" data-i18n-title="titlebar.close">
           <svg viewBox="0 0 12 12"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
         </button>
       </div>
@@ -1280,7 +1323,8 @@
             <div class="custom-select-trigger"></div>
             <div class="custom-select-options">
               <div class="custom-select-option" data-value="vosk" data-i18n="settings.t_vosk">Vosk — быстрый, менее точный</div>
-              <div class="custom-select-option" data-value="whisper" data-i18n="settings.t_whisper">Whisper — точный, медленнее</div>
+              <div class="custom-select-option" data-value="whisper-tiny" data-i18n="settings.t_whisper_tiny">Whisper Tiny — для слабых CPU</div>
+              <div class="custom-select-option" data-value="whisper-large" data-i18n="settings.t_whisper_large">Whisper Large V3 Turbo — точнее, нужен AVX2</div>
               <div class="custom-select-option" data-value="gigaam" data-i18n="settings.t_gigaam">GigaAM v3 — лучший для русского</div>
               <div class="custom-select-option" data-value="qwen3asr" data-i18n="settings.t_qwen3asr">Qwen3-ASR — мультиязычный</div>
             </div>
@@ -1373,6 +1417,21 @@
         <div class="setting-row">
           <label data-i18n="settings.remove_fillers">Удалять слова-паразиты</label>
           <div class="toggle" id="s-remove-fillers"></div>
+        </div>
+
+        <div class="setting-group">
+          <label data-i18n="settings.mic_gain" data-i18n-title="settings.mic_gain_hint" title="1.0 = без усиления, 2.0 = +6 дБ, 5.0 = +14 дБ">Усиление микрофона</label>
+          <div class="number-input-wrap">
+            <input type="number" id="s-mic-gain" min="0.5" max="10" step="0.5" />
+            <div class="number-input-arrows">
+              <div class="arrow-up"></div>
+              <div class="arrow-down"></div>
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 0.78em; color: #7a8099;">
+            <span id="s-mic-active-device" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;" title="">—</span>
+            <button type="button" id="s-mic-refresh" data-i18n-title="settings.mic_refresh" title="Обновить активный микрофон" style="background: none; border: none; color: #7aa2f7; cursor: pointer; padding: 0; font-size: 1em; line-height: 1;">↻</button>
+          </div>
         </div>
 
         <div class="setting-row">
@@ -1495,19 +1554,27 @@
         toastTimer = setTimeout(() => toastEl.classList.remove('visible'), ms);
       }
 
-      /* --- Кнопки titlebar --- */
-      document.getElementById('tb-min').addEventListener('click', () => invoke('hide_window'));
+      /* --- Кнопки titlebar.
+             Failsafe: если invoke() сломан (баг IPC) — пытаемся напрямую через webview API,
+             чтобы пользователь всегда мог свернуть/закрыть окно. --- */
+      document.getElementById('tb-min').addEventListener('click', async () => {
+        try { await invoke('hide_window'); }
+        catch (_) { try { await appWindow.minimize(); } catch (_) {} }
+      });
       document.getElementById('tb-max').addEventListener('click', async () => {
-        (await appWindow.isMaximized()) ? appWindow.unmaximize() : appWindow.maximize();
+        try {
+          (await appWindow.isMaximized()) ? appWindow.unmaximize() : appWindow.maximize();
+        } catch (_) {}
       });
-      document.getElementById('tb-close').addEventListener('click', () => invoke('hide_window'));
+      document.getElementById('tb-close').addEventListener('click', async () => {
+        try { await invoke('hide_window'); }
+        catch (_) { try { await appWindow.close(); } catch (_) {} }
+      });
 
-      /* --- Перетаскивание окна за titlebar (Wayland: -webkit-app-region: drag не работает) --- */
-      document.querySelector('.titlebar').addEventListener('mousedown', (e) => {
-        // Не перетаскивать если клик по кнопке или no-drag элементу
-        if (e.target.closest('.titlebar-btns') || e.target.closest('.menu-btn')) return;
-        appWindow.startDragging();
-      });
+      // Перетаскивание окна — теперь через нативный data-tauri-drag-region на .titlebar
+      // (см. HTML). Старый ручной mousedown→startDragging() удалён: он делал X11
+      // global input grab, который не отпускался корректно на webkit2gtk-4.1, что
+      // ломало все subsequent click events (включая X крестика и кнопку микрофона).
 
       const statusEl  = document.getElementById('status');
       const resultWrap = document.getElementById('result-wrap');
@@ -1523,6 +1590,10 @@
       const pauseBtn  = document.getElementById('pause-btn');
 
       let recording = false;
+      // true пока идёт транскрибация (от 'engine://transcribing' до 'finished-processing').
+      // Во время транскрибации stopBtn отправляет cancel_transcription вместо trigger.
+      // Кнопка показана только если активный движок поддерживает cancel (Whisper).
+      let transcribing = false;
       let timerMs = 0;
       let timerId = null;
       let levelId = null;
@@ -1544,9 +1615,14 @@
         if (!recording && modelReady) invoke('trigger');
       });
 
-      /* --- Клик по стопу = остановить --- */
+      /* --- Клик по стопу = остановить запись --- */
+      // Замечание: во время транскрибации кнопка скрыта. abort_callback whisper.cpp
+      // вызывается только между decode-сегментами, а encoder Whisper Large на безAVX2-CPU
+      // занимает десятки секунд непрерывно — кнопка дала бы ложное ожидание мгновенного
+      // прерывания. Если когда-нибудь сделаем process-isolated whisper (отдельный
+      // процесс, который можно SIGKILL'ить) — вернём отдельную кнопку для transcribing.
       stopBtn.addEventListener('click', () => {
-        if (recording) invoke('trigger');
+        if (recording && !transcribing) invoke('trigger');
       });
 
       /* --- Клик по паузе = приостановить/возобновить --- */
@@ -1564,14 +1640,46 @@
       /* --- События engine --- */
       listen('engine://model-loaded', onModelReady);
 
-      // Поллинг на случай если event пришёл до подписки
+      // Auto-fallback: backend подменил недоступный движок (например Vosk не в сборке)
+      // на дефолтный (GigaAM). Показываем пользователю короткий toast.
+      listen('engine://fallback', (ev) => {
+        const original = (ev?.payload?.original) || '';
+        const fallback = (ev?.payload?.fallback) || '';
+        const msg = i18n.t('toast.engine_fallback')
+          .replace('{original}', original)
+          .replace('{fallback}', fallback);
+        showToast(msg, 'error', 5000);
+      });
+
+      // Прогресс скачивания основной модели (auto-download активного движка при первом запуске).
+      // Тот же event эмитится и при ручной загрузке через Settings → Models —
+      // там его обрабатывает отдельный listener для карточек, не мешает.
+      // (statusEl уже объявлен выше на ~1586 — повторное `const` ломает webkit2gtk-4.1
+      // SyntaxError'ом, что блокирует весь inline-скрипт.)
+      listen('download://progress', (ev) => {
+        if (modelReady) return; // engine уже создан — игнорируем (downloads из Settings)
+        const pct = ev?.payload?.percent ?? 0;
+        if (statusEl) {
+          statusEl.textContent = i18n.t('status.downloading_model').replace('{percent}', pct);
+        }
+      });
+      listen('download://complete', () => {
+        if (modelReady) return;
+        if (statusEl) {
+          statusEl.textContent = i18n.t('status.loading');
+        }
+      });
+
+      // Поллинг на случай если event пришёл до подписки.
+      // Первая проверка — сразу, без задержки: если engine готов к моменту загрузки UI,
+      // статус обновится мгновенно. Дальше каждые 200мс.
       (async function pollModelReady() {
         while (!modelReady) {
-          await new Promise(r => setTimeout(r, 500));
           try {
             const loaded = await invoke('is_model_loaded');
             if (loaded) { onModelReady(); break; }
-          } catch(_) {}
+          } catch (_) {}
+          await new Promise(r => setTimeout(r, 200));
         }
       })();
 
@@ -1666,8 +1774,9 @@
         pauseBtn.dataset.i18nTitle = 'mic.pause';
       });
 
-      listen('engine://transcribing', () => {
+      listen('engine://transcribing', async () => {
         // Запись окончена, идёт распознавание — обновляем UI
+        transcribing = true;
         statusEl.textContent = i18n.t('status.transcribing');
         statusEl.dataset.i18n = 'status.transcribing';
         statusEl.className = 'recording';
@@ -1676,6 +1785,12 @@
         levelFill.style.width = '0%';
         levelBar.classList.remove('active');
         controlsEl.classList.remove('active');
+        // Если активный движок поддерживает cancel (сейчас только Whisper) —
+        // показываем кнопку Стоп для прерывания тяжёлого инференса.
+        try {
+          const canCancel = await invoke('active_supports_cancel');
+          if (canCancel) controlsEl.classList.add('transcribing');
+        } catch (_) { /* пропускаем */ }
       });
 
       listen('engine://transcription-result', (ev) => {
@@ -1694,6 +1809,7 @@
 
       listen('engine://finished-processing', () => {
         recording = false;
+        transcribing = false;
         updateModelBadge();
 
         micBtn.classList.remove('recording');
@@ -1703,6 +1819,7 @@
         statusEl.className = '';
 
         controlsEl.classList.remove('active');
+        controlsEl.classList.remove('transcribing');
         levelBar.classList.remove('active');
         timerEl.classList.remove('active');
 
@@ -1728,6 +1845,10 @@
 
       let currentPage = 'main'; // main | menu | settings
       let originalConfig = null;
+      // CPU SIMD-фичи (AVX, AVX2, FMA). Заполняется один раз через `get_cpu_features`
+      // при загрузке настроек, используется для warning-toast'а при выборе тяжёлой
+      // модели на безAVX2-CPU.
+      let cpuFeatures = null;
 
       function showPage(page) {
         contentEl.style.display = page === 'main' ? '' : 'none';
@@ -1765,7 +1886,15 @@
       }
 
       // Блокировка toggle предзагрузки для модели по умолчанию
+      // Маппит расщеплённое значение dropdown'a ('whisper-tiny' / 'whisper-large')
+      // в обобщённый тип движка для логики, которая не различает варианты модели.
+      function normalizeTranscriber(v) {
+        if (v === 'whisper-tiny' || v === 'whisper-large') return 'whisper';
+        return v;
+      }
+
       function updatePreloadLocks(transcriber) {
+        transcriber = normalizeTranscriber(transcriber);
         const voskToggle = document.getElementById('s-preload-vosk');
         const whisperToggle = document.getElementById('s-preload-whisper');
         const gigaamToggle = document.getElementById('s-preload-gigaam');
@@ -1781,11 +1910,71 @@
         if (transcriber === 'qwen3asr') qwen3asrToggle.classList.add('on');
       }
 
+      // Помечает опции в dropdown'е «Движок транскрибации» как disabled при двух условиях:
+      //   (1) движок не включён в cargo-сборку — лейбл «(не собрано)»
+      //   (2) движок собран, но соответствующей модели нет на диске — лейбл «(нет модели)»
+      // Опция остаётся видна (для информирования), но click не реагирует благодаря
+      // CSS pointer-events: none + JS-проверке в опции (см. initCustomSelects).
+      async function applyEngineAvailability() {
+        let compiled = [];
+        let models = [];
+        try {
+          compiled = await invoke('get_compiled_engines') || [];
+          models = await invoke('get_models') || [];
+        } catch (_) { /* старая сборка без команды — все опции активны */ }
+        if (!Array.isArray(compiled) || compiled.length === 0) return;
+        const sel = document.getElementById('s-transcriber');
+        if (!sel) return;
+        const notBuiltLabel = i18n.t('settings.engine_unavailable');
+        const noModelLabel = i18n.t('settings.model_not_installed');
+
+        // Карта dropdown-value → id модели в реестре. Whisper-варианты явные.
+        // Для остальных движков — id первой найденной модели этого transcriber_type.
+        const valueToModelId = (value) => {
+          if (value === 'whisper-tiny') return 'whisper-tiny';
+          if (value === 'whisper-large') return 'whisper-large-v3-turbo';
+          // Для vosk/gigaam/qwen3asr берём первую модель с подходящим transcriber_type.
+          const m = models.find(mm => mm.transcriber_type === value);
+          return m ? m.id : null;
+        };
+        const isInstalled = (modelId) => {
+          if (!modelId) return false;
+          const m = models.find(mm => mm.id === modelId);
+          return !!(m && m.installed);
+        };
+
+        sel.querySelectorAll('.custom-select-option').forEach(opt => {
+          const dropdownValue = opt.dataset.value;
+          const engine = normalizeTranscriber(dropdownValue);
+          if (!compiled.includes(engine)) {
+            // (1) движок не собран
+            opt.classList.add('option--disabled');
+            opt.setAttribute('data-disabled-label', `(${notBuiltLabel})`);
+            return;
+          }
+          // (2) движок собран — проверяем что модель скачана
+          const modelId = valueToModelId(dropdownValue);
+          if (isInstalled(modelId)) {
+            opt.classList.remove('option--disabled');
+            opt.removeAttribute('data-disabled-label');
+          } else {
+            opt.classList.add('option--disabled');
+            opt.setAttribute('data-disabled-label', `(${noModelLabel})`);
+          }
+        });
+      }
+
       // Загрузка настроек из бэкенда
       async function loadSettings() {
         const cfg = await invoke('load_config');
         const lang = cfg.language || i18n.getLanguage();
         setCustomSelect('s-language', lang);
+        await applyEngineAvailability();
+        // CPU-фичи нужны для warning-toast'а при выборе тяжёлой модели; берём один раз.
+        if (!cpuFeatures) {
+          try { cpuFeatures = await invoke('get_cpu_features'); }
+          catch (e) { cpuFeatures = { avx: true, avx2: true, fma: true }; }
+        }
         // Нормализуем типы чтобы совпадали с getFormConfig()
         originalConfig = {
           transcriber: cfg.transcriber,
@@ -1802,6 +1991,8 @@
           vad_enabled: cfg.vad_enabled !== false,
           vad_silence_secs: cfg.vad_silence_secs || 7,
           remove_fillers: cfg.remove_fillers !== false,
+          mic_gain: typeof cfg.mic_gain === 'number' ? cfg.mic_gain : 1.0,
+          mic_gain_per_device: cfg.mic_gain_per_device && typeof cfg.mic_gain_per_device === 'object' ? { ...cfg.mic_gain_per_device } : {},
           retention_hours: cfg.retention_hours || 0,
           autostart: cfg.autostart || false,
           start_minimized: cfg.start_minimized || false,
@@ -1811,7 +2002,15 @@
           preload_models: normalizePreload(cfg.preload_models || [], cfg.transcriber),
         };
 
-        setCustomSelect('s-transcriber', cfg.transcriber);
+        // Whisper расщеплён в dropdown'e на Tiny / Large V3 Turbo. Конфиг хранит
+        // обобщённый transcriber="whisper" + whisper_model_path, поэтому при загрузке
+        // определяем нужный пункт по имени файла модели.
+        let dropdownValue = cfg.transcriber;
+        if (cfg.transcriber === 'whisper') {
+          const path = (cfg.whisper_model_path || '').toLowerCase();
+          dropdownValue = path.includes('tiny') ? 'whisper-tiny' : 'whisper-large';
+        }
+        setCustomSelect('s-transcriber', dropdownValue);
         document.getElementById('s-models-base-dir').value = cfg.models_base_dir || '';
         setCustomSelect('s-sample-rate', String(cfg.sample_rate));
         document.getElementById('s-max-record').value = cfg.max_record_secs;
@@ -1822,6 +2021,8 @@
         document.getElementById('s-vad-enabled').classList.toggle('on', cfg.vad_enabled !== false);
         document.getElementById('s-vad-silence').value = cfg.vad_silence_secs || 3;
         document.getElementById('s-remove-fillers').classList.toggle('on', cfg.remove_fillers !== false);
+        // Заполнение mic_gain через async refresh (берёт активное устройство и его override)
+        refreshMicDevice(cfg);
         setCustomSelect('s-retention', String(cfg.retention_hours || 0));
         document.getElementById('s-autostart').classList.toggle('on', cfg.autostart || false);
         document.getElementById('s-start-minimized').classList.toggle('on', cfg.start_minimized || false);
@@ -1848,23 +2049,41 @@
           container.innerHTML = '';
           for (const m of models) {
             const card = document.createElement('div');
-            card.className = 'model-card';
+            card.className = 'model-card' + (m.available === false ? ' unavailable' : '');
             card.dataset.modelId = m.id;
+            // Для недоступных движков в шапке через ::after подставляется метка.
+            const unavailLabel = m.available === false ? i18n.t('model.not_available') : '';
+            // Статус карточки: установлена / не установлена / не доступна (backend не собран)
+            let statusCls, statusKey, statusText;
+            if (m.available === false) {
+              statusCls = 'unavailable'; statusKey = 'model.not_available'; statusText = unavailLabel;
+            } else if (m.installed) {
+              statusCls = 'found'; statusKey = 'model.installed'; statusText = i18n.t('model.installed');
+            } else {
+              statusCls = 'missing'; statusKey = 'model.missing'; statusText = i18n.t('model.missing');
+            }
+            const showDownload = m.available !== false && !m.installed;
+            const nameAttr = m.available === false ? ` data-unavailable-label="${unavailLabel}"` : '';
+            const inputDisabled = m.available === false ? 'disabled' : 'readonly';
+            const pickDisabled = m.available === false ? 'disabled' : '';
             card.innerHTML = `
               <div class="model-card-header">
-                <span class="model-card-name">${m.display_name}</span>
+                <span class="model-card-name"${nameAttr}>${m.display_name}</span>
                 <span class="model-card-size">${m.size}</span>
               </div>
               <div class="model-card-desc">${m.description}</div>
               <div class="model-card-path">
-                <input type="text" class="model-path-input" data-type="${m.transcriber_type}" value="${m.path || ''}" readonly data-i18n-placeholder="model.pick_placeholder" placeholder="${i18n.t('model.pick_placeholder')}" title="${m.path || ''}" />
-                <button class="path-pick-btn model-path-pick" data-type="${m.transcriber_type}" data-i18n-title="model.pick_dir_title" title="${i18n.t('model.pick_dir_title')}">📁</button>
+                <input type="text" class="model-path-input" data-type="${m.transcriber_type}" value="${m.path || ''}" ${inputDisabled} data-i18n-placeholder="model.pick_placeholder" placeholder="${i18n.t('model.pick_placeholder')}" title="${m.path || ''}" />
+                <button class="path-pick-btn model-path-pick" data-type="${m.transcriber_type}" data-i18n-title="model.pick_dir_title" title="${i18n.t('model.pick_dir_title')}" ${pickDisabled}>📁</button>
               </div>
               <div class="model-card-footer">
-                <span class="model-card-status ${m.installed ? 'found' : 'missing'}" data-i18n="${m.installed ? 'model.installed' : 'model.missing'}">
-                  ${m.installed ? i18n.t('model.installed') : i18n.t('model.missing')}
+                <span class="model-card-status ${statusCls}" data-i18n="${statusKey}">
+                  ${statusText}
                 </span>
-                ${!m.installed ? `<button class="model-download-btn" data-id="${m.id}" data-url="${m.download_url}" data-filename="${m.default_filename}" data-type="${m.transcriber_type}" data-i18n="model.download">${i18n.t('model.download')}</button>` : ''}
+                <div class="model-card-actions">
+                  ${showDownload ? `<button class="model-download-btn" data-id="${m.id}" data-url="${m.download_url}" data-filename="${m.default_filename}" data-type="${m.transcriber_type}" data-i18n="model.download">${i18n.t('model.download')}</button>` : ''}
+                  ${m.installed ? `<button class="model-delete-btn" data-id="${m.id}" data-name="${m.display_name}" data-size="${m.size}" data-path="${m.path || ''}" data-i18n="model.delete">${i18n.t('model.delete')}</button>` : ''}
+                </div>
               </div>
               <div class="model-progress" style="display:none;">
                 <div class="model-progress-bar"><div class="model-progress-fill"></div></div>
@@ -1928,55 +2147,181 @@
               }
             });
           });
+          // Обработчики кнопок «Удалить» — удаляют файлы модели физически.
+          // Конфиг при этом не трогаем (whisper_model_path и т.п. остаются),
+          // но статус в карточке обновится на «Не найдена», и UI предложит скачать заново.
+          container.querySelectorAll('.model-delete-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+              const modelId = btn.dataset.id;
+              const path = btn.dataset.path;
+              const name = btn.dataset.name;
+              const size = btn.dataset.size;
+              if (!path) return;
+              const confirmMsg = i18n.t('model.delete_confirm')
+                .replace('{name}', name)
+                .replace('{size}', size);
+              if (!confirm(confirmMsg)) return;
+              btn.disabled = true;
+              try {
+                await invoke('delete_model', { modelId, path });
+                showToast(i18n.t('model.deleted'), 'success', 1500);
+                // Backend очистил config-путь если он совпадал с удалённым → переподтянем
+                // originalConfig и dropdown'ы (иначе fallback в getModelPathFromCard
+                // вернёт старый путь и save восстановит). Полный loadSettings также
+                // перерисовывает model-cards с пустым input для удалённой.
+                await loadSettings();
+              } catch (e) {
+                btn.disabled = false;
+                showToast(i18n.t('model.delete_error') + ': ' + e, 'error', 3000);
+              }
+            });
+          });
+          // Re-render может произойти посреди активной загрузки (например, юзер
+          // нажал «Удалить» на одной модели пока другая качается). Восстанавливаем
+          // прогресс-бары для всех всё-ещё-активных загрузок — они нашлись в свежей
+          // DOM по data-model-id и получают актуальный процент из activeDownloads.
+          for (const [modelId] of activeDownloads) applyProgressToCard(modelId);
         } catch (e) {
           container.innerHTML = `<div style="color:#565f89;font-size:0.8rem;">${i18n.t('model.load_error')}</div>`;
         }
       }
 
-      // Прогресс скачивания модели
+      // Активные загрузки моделей. Хранятся вне DOM, чтобы пережить re-render
+      // при `loadSettings()` (например, после удаления другой модели). Без этого
+      // прогресс-бар Large пропадал когда юзер удалял Tiny во время скачивания Large.
+      // Ключ — model_id, значение — последний снимок прогресса.
+      const activeDownloads = new Map();
+
+      // Применить состояние прогресса к карточке (после re-render или нового события).
+      function applyProgressToCard(modelId) {
+        const card = document.querySelector(`.model-card[data-model-id="${modelId}"]`);
+        if (!card) return;
+        const prog = activeDownloads.get(modelId);
+        if (!prog) return;
+        const wrap = card.querySelector('.model-progress');
+        const fill = card.querySelector('.model-progress-fill');
+        const text = card.querySelector('.model-progress-text');
+        if (wrap) wrap.style.display = 'flex';
+        if (fill) fill.style.width = prog.percent + '%';
+        if (text) {
+          text.textContent = prog.total_files > 1
+            ? `[${prog.file_idx + 1}/${prog.total_files}] ${prog.percent}%`
+            : `${prog.percent}%`;
+        }
+        // На время загрузки прячем кнопку «Скачать» (если в свежем рендере она есть).
+        const btn = card.querySelector('.model-download-btn');
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = i18n.t('model.downloading');
+        }
+      }
+
+      // Прогресс скачивания модели — обновляем глобальный state + DOM.
       listen('download://progress', (ev) => {
         const { model_id, percent, file_idx, total_files, file } = ev.payload;
-        const card = document.querySelector(`.model-card[data-model-id="${model_id}"]`);
-        if (card) {
-          const fill = card.querySelector('.model-progress-fill');
-          const text = card.querySelector('.model-progress-text');
-          if (fill) fill.style.width = percent + '%';
-          if (text) {
-            if (total_files > 1) {
-              text.textContent = `[${file_idx + 1}/${total_files}] ${percent}%`;
-            } else {
-              text.textContent = percent + '%';
-            }
-          }
-        }
+        activeDownloads.set(model_id, { percent, file_idx, total_files, file });
+        applyProgressToCard(model_id);
       });
 
-      // Завершение скачивания
+      // Завершение скачивания. Backend сам обновляет config-путь (см. download_model
+      // в Rust), поэтому делаем полный loadSettings — он перерисует карточки (с актуальным
+      // путем в input'е), пере-применит availability к dropdown'у (Whisper Tiny больше
+      // не «(нет модели)»), обновит originalConfig для save-логики.
       listen('download://complete', (ev) => {
-        const { model_id } = ev.payload;
-        const card = document.querySelector(`.model-card[data-model-id="${model_id}"]`);
-        if (card) {
-          const status = card.querySelector('.model-card-status');
-          if (status) { status.className = 'model-card-status found'; status.dataset.i18n = 'model.installed'; status.textContent = i18n.t('model.installed'); }
-          const btn = card.querySelector('.model-download-btn');
-          if (btn) btn.remove();
-          const progress = card.querySelector('.model-progress');
-          if (progress) progress.style.display = 'none';
+        if (ev && ev.payload && ev.payload.model_id) {
+          activeDownloads.delete(ev.payload.model_id);
         }
+        loadSettings().catch(() => {});
       });
 
       // Собираем текущие значения из формы
-      // Получить путь модели из карточки по типу транскрайбера
+      // Получить путь модели из карточки по типу транскрайбера. Если карточка не
+      // отрендерилась или input пустой — НЕ возвращаем '', а откатываемся в
+      // originalConfig (тот, который только что прислал backend). Иначе одно
+      // несвоевременное Save обнулит whisper_model_path / model_path / qwen3asr_*
+      // и engine упадёт с ошибкой "из :".
       function getModelPathFromCard(ttype) {
         const input = document.querySelector(`.model-path-input[data-type="${ttype}"]`);
-        return input ? input.value : '';
+        const fromCard = input ? input.value.trim() : '';
+        if (fromCard) return fromCard;
+        const fieldByType = {
+          vosk: 'model_path',
+          whisper: 'whisper_model_path',
+          gigaam: 'gigaam_model_path',
+          qwen3asr: 'qwen3asr_model_path',
+        };
+        const field = fieldByType[ttype];
+        return (originalConfig && field && originalConfig[field]) || '';
+      }
+
+      // Текущее активное устройство ввода (имя из cpal). Хранится локально, чтоб
+      // collectMicGainOverrides знал ключ, под которым обновлять mic_gain_per_device.
+      let activeMicDevice = '';
+
+      // Запрашивает у backend имя default-микрофона, обновляет UI ("Активный микрофон: ...")
+      // и подставляет в ползунок gain текущий override (или global mic_gain как fallback).
+      // Вызывается при загрузке Settings и по кнопке ↻ Обновить.
+      async function refreshMicDevice(cfg) {
+        try {
+          activeMicDevice = await invoke('get_default_input_device_name');
+        } catch (_) { activeMicDevice = ''; }
+        const labelEl = document.getElementById('s-mic-active-device');
+        if (labelEl) {
+          labelEl.textContent = activeMicDevice || '—';
+          labelEl.title = activeMicDevice || '';  // полное имя в tooltip если обрезалось
+        }
+        const gainEl = document.getElementById('s-mic-gain');
+        if (!gainEl) return;
+        const overrides = (cfg && cfg.mic_gain_per_device) || {};
+        const fallback = (cfg && typeof cfg.mic_gain === 'number') ? cfg.mic_gain : 1.0;
+        const current = activeMicDevice && overrides[activeMicDevice] != null
+          ? overrides[activeMicDevice]
+          : fallback;
+        gainEl.value = current.toFixed(1);
+      }
+
+      // Берёт map из originalConfig и обновляет в нём gain для активного устройства
+      // текущим значением ползунка. Возвращает обновлённую копию для save_config.
+      // Важно: если новое значение совпадает с тем, что показывалось при загрузке
+      // (override либо global fallback) — НЕ создаём override-запись. Иначе
+      // change-detection видит diff даже когда пользователь ничего не менял
+      // (или вернул значение обратно).
+      function collectMicGainOverrides() {
+        const base = (originalConfig && originalConfig.mic_gain_per_device) || {};
+        const result = { ...base };
+        if (!activeMicDevice) return result;
+        const v = Math.max(0.5, Math.min(10, parseFloat(document.getElementById('s-mic-gain').value) || 1.0));
+        const displayedAtLoad = base[activeMicDevice] != null
+          ? base[activeMicDevice]
+          : ((originalConfig && originalConfig.mic_gain) || 1.0);
+        if (Math.abs(v - displayedAtLoad) < 0.01) {
+          // Значение не изменилось от загрузки — оставляем map как есть.
+          // Если override уже был — он сохраняется. Если не было — не создаём.
+          return result;
+        }
+        // Реальное изменение — записываем override для активного устройства.
+        result[activeMicDevice] = v;
+        return result;
       }
 
       function getFormConfig() {
+        // Dropdown даёт расщеплённое значение для whisper ('whisper-tiny' / 'whisper-large');
+        // backend хранит просто transcriber="whisper" + whisper_model_path. Мапим обратно.
+        const dropdownValue = document.getElementById('s-transcriber').dataset.value;
+        let transcriber = dropdownValue;
+        let whisperPathOverride = null;
+        if (dropdownValue === 'whisper-tiny' || dropdownValue === 'whisper-large') {
+          transcriber = 'whisper';
+          const baseDir = document.getElementById('s-models-base-dir').value || '';
+          const sep = baseDir.endsWith('/') ? '' : '/';
+          whisperPathOverride = baseDir + sep + (dropdownValue === 'whisper-tiny'
+            ? 'ggml-tiny.bin'
+            : 'ggml-large-v3-turbo.bin');
+        }
         return {
-          transcriber: document.getElementById('s-transcriber').dataset.value,
+          transcriber,
           model_path: getModelPathFromCard('vosk'),
-          whisper_model_path: getModelPathFromCard('whisper'),
+          whisper_model_path: whisperPathOverride || getModelPathFromCard('whisper'),
           gigaam_model_path: getModelPathFromCard('gigaam'),
           qwen3asr_model_path: getModelPathFromCard('qwen3asr'),
           models_base_dir: document.getElementById('s-models-base-dir').value,
@@ -1989,6 +2334,11 @@
           vad_enabled: document.getElementById('s-vad-enabled').classList.contains('on'),
           vad_silence_secs: parseInt(document.getElementById('s-vad-silence').value) || 3,
           remove_fillers: document.getElementById('s-remove-fillers').classList.contains('on'),
+          // mic_gain (глобальный fallback) и mic_gain_per_device (per-device override).
+          // Глобальный mic_gain не редактируется через UI — это просто запоминание
+          // последнего значения. Per-device map обновляется в refreshMicDevice/save.
+          mic_gain: originalConfig && typeof originalConfig.mic_gain === 'number' ? originalConfig.mic_gain : 1.0,
+          mic_gain_per_device: collectMicGainOverrides(),
           retention_hours: parseInt(document.getElementById('s-retention').dataset.value) || 0,
           autostart: document.getElementById('s-autostart').classList.contains('on'),
           start_minimized: document.getElementById('s-start-minimized').classList.contains('on'),
@@ -1999,7 +2349,7 @@
             ...(document.getElementById('s-preload-whisper').classList.contains('on') ? ['whisper'] : []),
             ...(document.getElementById('s-preload-gigaam').classList.contains('on') ? ['gigaam'] : []),
             ...(document.getElementById('s-preload-qwen3asr').classList.contains('on') ? ['qwen3asr'] : []),
-          ], document.getElementById('s-transcriber').dataset.value),
+          ], normalizeTranscriber(document.getElementById('s-transcriber').dataset.value)),
           language: document.getElementById('s-language').dataset.value || i18n.getLanguage(),
           history_filter_secs: parseInt(document.getElementById('h-period').dataset.value) || 0,
         };
@@ -2018,6 +2368,9 @@
         vad_enabled:       { el: 's-vad-enabled',    type: 'row' },
         vad_silence_secs:  { el: 's-vad-silence',    type: 'group' },
         remove_fillers:    { el: 's-remove-fillers',  type: 'row' },
+        // Изменения gain пишутся в mic_gain_per_device (не в global mic_gain).
+        // Подсвечивается визуально на ползунке s-mic-gain.
+        mic_gain_per_device: { el: 's-mic-gain',       type: 'group' },
         retention_hours:   { el: 's-retention',       type: 'group' },
         autostart:         { el: 's-autostart',        type: 'row' },
         start_minimized:   { el: 's-start-minimized', type: 'row' },
@@ -2095,6 +2448,10 @@
           options.forEach(opt => {
             opt.addEventListener('click', (e) => {
               e.stopPropagation();
+              // Опция помечена disabled (движок не включён в текущую сборку,
+              // см. applyEngineAvailability). Игнорируем клик, dropdown остаётся открытым,
+              // чтобы пользователь увидел доступные пункты.
+              if (opt.classList.contains('option--disabled')) return;
               sel.dataset.value = opt.dataset.value;
               trigger.textContent = opt.textContent;
               options.forEach(o => o.classList.remove('selected'));
@@ -2117,8 +2474,16 @@
       initCustomSelects();
 
       // Навешиваем обработчики изменений
-      ['s-models-base-dir', 's-max-record', 's-vad-silence']
+      ['s-models-base-dir', 's-max-record', 's-vad-silence', 's-mic-gain']
         .forEach(id => document.getElementById(id).addEventListener('input', checkChanges));
+
+      // Кнопка ↻ Обновить — пере-запрашивает активный микрофон у backend и
+      // подставляет соответствующий override в ползунок. Полезно когда пользователь
+      // переключает мик в системе (Bluetooth headset, USB, встроенный) без перезапуска UI.
+      document.getElementById('s-mic-refresh').addEventListener('click', async () => {
+        await refreshMicDevice(originalConfig);
+        checkChanges();  // ползунок мог поменять значение → обновить dirty-state
+      });
       // Кастомные стрелки для number-input
       document.querySelectorAll('.number-input-wrap').forEach(wrap => {
         const input = wrap.querySelector('input[type="number"]');
@@ -2140,9 +2505,17 @@
       });
       ['s-transcriber', 's-sample-rate', 's-retention']
         .forEach(id => document.getElementById(id).addEventListener('change', checkChanges));
-      // При смене модели по умолчанию — обновить блокировки предзагрузки
+      // При смене модели по умолчанию — обновить блокировки предзагрузки + предупредить
+      // если выбрана тяжёлая модель и у CPU нет AVX2 (Whisper Large без AVX2 крайне медленный).
       document.getElementById('s-transcriber').addEventListener('change', () => {
-        updatePreloadLocks(document.getElementById('s-transcriber').dataset.value);
+        const v = document.getElementById('s-transcriber').dataset.value;
+        updatePreloadLocks(v);
+        const heavyOnNoAvx2 =
+          (v === 'whisper-large' || v === 'qwen3asr') &&
+          cpuFeatures && cpuFeatures.avx2 === false;
+        if (heavyOnNoAvx2) {
+          showToast(i18n.t('settings.slow_model_warning'), 'warning', 7000);
+        }
       });
 
       // Смена языка — применяется сразу и сохраняется автоматически
@@ -2318,8 +2691,11 @@
         });
       });
 
-      // Отмена изменений — восстанавливаем оригинальные значения
-      cancelBtn.addEventListener('click', () => {
+      // Отмена изменений — восстанавливаем оригинальные значения.
+      // Async чтобы дождаться refreshMicDevice (он делает invoke get_default_input_device_name).
+      // Без await checkChanges() видел старое значение ползунка и не сбрасывал dirty-state
+      // с первого клика — приходилось жать дважды.
+      cancelBtn.addEventListener('click', async () => {
         if (!originalConfig) return;
         setCustomSelect('s-transcriber', originalConfig.transcriber);
         document.getElementById('s-models-base-dir').value = originalConfig.models_base_dir || '';
@@ -2333,6 +2709,8 @@
         document.getElementById('s-vad-enabled').classList.toggle('on', originalConfig.vad_enabled !== false);
         document.getElementById('s-vad-silence').value = originalConfig.vad_silence_secs || 7;
         document.getElementById('s-remove-fillers').classList.toggle('on', originalConfig.remove_fillers !== false);
+        // Ждём пока refreshMicDevice реально обновит ползунок ДО checkChanges.
+        await refreshMicDevice(originalConfig);
         setCustomSelect('s-retention', String(originalConfig.retention_hours || 0));
         document.getElementById('s-autostart').classList.toggle('on', originalConfig.autostart || false);
         document.getElementById('s-start-minimized').classList.toggle('on', originalConfig.start_minimized || false);

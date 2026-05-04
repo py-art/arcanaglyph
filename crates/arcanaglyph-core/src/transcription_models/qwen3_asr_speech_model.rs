@@ -49,4 +49,8 @@ pub static MODEL: SpeechModelInfo = SpeechModelInfo {
             "onnx_models/embed_tokens.bin",
         ),
     ]),
+    // Главный файл — `tokenizer.json` (~10 МБ), порог 2 МБ.
+    // Большая часть объёма (~2.5 ГБ) лежит в extra_files; для них целостность
+    // в текущей реализации проверяется только наличием файла.
+    expected_min_size_bytes: Some(2_000_000),
 };

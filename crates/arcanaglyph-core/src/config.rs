@@ -3,21 +3,63 @@
 use crate::error::ArcanaError;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Движок транскрибации
+/// Движок транскрибации.
+///
+/// Все варианты присутствуют всегда — это нужно, чтобы persisted JSON в SQLite
+/// не ломался у пользователей, которые ранее выбирали Vosk/Whisper, при последующей
+/// сборке без соответствующего cargo feature. Доступность движка в текущей сборке
+/// проверяется через [`TranscriberType::is_compiled_in`].
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum TranscriberType {
     /// Vosk — быстрый, потоковый, менее точный
-    #[default]
     Vosk,
     /// Whisper — медленнее, значительно точнее
     Whisper,
-    /// GigaAM v3 — лучший для русского (ONNX, SberDevices)
+    /// GigaAM v3 — лучший для русского (ONNX, SberDevices). Дефолтный движок.
+    #[default]
     GigaAm,
     /// Qwen3-ASR — мультиязычный (ONNX, Alibaba)
     Qwen3Asr,
+}
+
+impl TranscriberType {
+    /// Включён ли этот движок в текущую сборку через cargo feature.
+    /// GigaAM считается включённым при ЛЮБОМ из двух backend'ов (`gigaam` через ort
+    /// или `gigaam-tract` через pure-Rust tract) — для UI и fallback-логики
+    /// различие между бэкендами не важно, важен только сам движок GigaAM.
+    pub const fn is_compiled_in(&self) -> bool {
+        match self {
+            Self::Vosk => cfg!(feature = "vosk"),
+            Self::Whisper => cfg!(feature = "whisper"),
+            Self::GigaAm => {
+                cfg!(feature = "gigaam") || cfg!(feature = "gigaam-system-ort") || cfg!(feature = "gigaam-tract")
+            }
+            Self::Qwen3Asr => cfg!(feature = "qwen3asr"),
+        }
+    }
+
+    /// Список движков, скомпилированных в текущую сборку.
+    /// Используется фронтендом для отрисовки disabled-пунктов в dropdown'е.
+    pub fn compiled_engines() -> Vec<TranscriberType> {
+        [Self::Vosk, Self::Whisper, Self::GigaAm, Self::Qwen3Asr]
+            .into_iter()
+            .filter(Self::is_compiled_in)
+            .collect()
+    }
+
+    /// Строковое представление для UI / persistence.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Vosk => "vosk",
+            Self::Whisper => "whisper",
+            Self::GigaAm => "gigaam",
+            Self::Qwen3Asr => "qwen3asr",
+        }
+    }
 }
 
 /// Конфигурация ядра ArcanaGlyph
@@ -66,6 +108,19 @@ pub struct CoreConfig {
     /// Удалять слова-паразиты из транскрибации (э, э-э, ээ, эм, мм)
     #[serde(default = "default_true")]
     pub remove_fillers: bool,
+    /// Программное усиление микрофона (fallback для устройств без override).
+    /// 1.0 = без усиления, 2.0 = +6 дБ, 5.0 = +14 дБ.
+    /// Применяется к сэмплам с saturation (clip на ±32767). Работает на любой ОС.
+    #[serde(default = "default_mic_gain")]
+    pub mic_gain: f32,
+    /// Per-device override для усиления микрофона.
+    /// Ключ — имя устройства как возвращает `cpal::Device::name()` (например "default",
+    /// "Anker SoundCore Headset Mono", "HDA Intel PCH ALC269VC Analog Mono").
+    /// Значение — gain для этого устройства. Если устройства нет в map — берётся
+    /// глобальный `mic_gain` (выше). Пользователь настраивает gain для текущего
+    /// активного микрофона; смена мика в системе → подхватывается соответствующий gain.
+    #[serde(default)]
+    pub mic_gain_per_device: HashMap<String, f32>,
     /// Срок хранения записей в часах (0 = хранить вечно)
     #[serde(default = "default_retention_hours")]
     pub retention_hours: u64,
@@ -131,6 +186,10 @@ fn default_history_filter_secs() -> u64 {
     86400
 }
 
+fn default_mic_gain() -> f32 {
+    1.0
+}
+
 impl Default for CoreConfig {
     fn default() -> Self {
         let models = default_models_dir();
@@ -154,6 +213,8 @@ impl Default for CoreConfig {
             vad_enabled: true,
             vad_silence_secs: 7,
             remove_fillers: true,
+            mic_gain: 1.0,
+            mic_gain_per_device: HashMap::new(),
             retention_hours: 24,
             autostart: false,
             start_minimized: false,
@@ -168,6 +229,17 @@ impl Default for CoreConfig {
 }
 
 impl CoreConfig {
+    /// Возвращает effective mic_gain для конкретного устройства.
+    /// Если в `mic_gain_per_device` есть override для `device_name` — он используется,
+    /// иначе возвращается глобальный `mic_gain`. Это позволяет настроить разное
+    /// усиление для встроенного мика и подключаемых наушников.
+    pub fn effective_gain(&self, device_name: &str) -> f32 {
+        self.mic_gain_per_device
+            .get(device_name)
+            .copied()
+            .unwrap_or(self.mic_gain)
+    }
+
     /// Дефолтный конфиг с GigaAM по умолчанию (для новых пользователей)
     pub fn default_gigaam() -> Self {
         Self {
@@ -363,6 +435,8 @@ auto_type = false
             vad_enabled: true,
             vad_silence_secs: 7,
             remove_fillers: true,
+            mic_gain: 1.0,
+            mic_gain_per_device: HashMap::new(),
             retention_hours: 24,
             autostart: false,
             start_minimized: false,

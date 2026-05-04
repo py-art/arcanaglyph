@@ -11,10 +11,24 @@ use tracing::info;
 use crate::audio::{self, AudioCommand};
 use crate::config::{CoreConfig, TranscriberType};
 use crate::error::ArcanaError;
+// Параллельные backend'ы GigaAM с одинаковым именем GigaAmTranscriber:
+// - feature `gigaam` → ort + Microsoft pre-built ONNX (требует AVX)
+// - feature `gigaam-system-ort` → ort + локально собранная libonnxruntime (без AVX)
+// - feature `gigaam-tract` → tract pure-Rust (заготовка)
+// Mutually-exclusive (cargo features), поэтому код ниже видит ровно один тип.
+// `gigaam` и `gigaam-system-ort` используют один и тот же transcriber.rs (через ort).
+#[cfg(any(feature = "gigaam", feature = "gigaam-system-ort"))]
 use crate::gigaam::transcriber::GigaAmTranscriber;
+#[cfg(feature = "gigaam-tract")]
+use crate::gigaam::transcriber_tract::GigaAmTranscriber;
 use crate::history::HistoryDB;
+#[cfg(feature = "qwen3asr")]
 use crate::qwen3asr::transcriber::Qwen3AsrTranscriber;
-use crate::transcriber::{Transcriber, VoskTranscriber, WhisperTranscriber};
+use crate::transcriber::Transcriber;
+#[cfg(feature = "vosk")]
+use crate::transcriber::VoskTranscriber;
+#[cfg(feature = "whisper")]
+use crate::transcriber::WhisperTranscriber;
 
 /// События движка, рассылаемые подписчикам
 #[derive(Debug, Clone)]
@@ -63,11 +77,8 @@ impl ArcanaEngine {
     /// Создаёт новый экземпляр движка: загружает модель, инициализирует каналы.
     /// Должен вызываться из контекста Tokio runtime (сохраняет Handle для spawn).
     pub fn new(config: CoreConfig, window_visible: Arc<AtomicBool>) -> Result<Self, ArcanaError> {
-        // Подавляем verbose-логи ONNX Runtime (до создания первой сессии)
-        if let Ok(env) = ort::environment::Environment::current() {
-            env.set_log_level(ort::logging::LogLevel::Warning);
-        }
-
+        // ort инициализируется лениво в `create_transcriber` под плечом ONNX-движка —
+        // чтобы не дёргать AVX-инструкции, если активный движок не GigaAM/Qwen3-ASR.
         // Загружаем основную модель
         let (model_name, transcriber) = Self::create_transcriber(&config, &config.transcriber)?;
 
@@ -103,12 +114,28 @@ impl ArcanaEngine {
         })
     }
 
-    /// Создаёт транскрайбер по типу, возвращает (model_name, Arc<dyn Transcriber>)
+    /// Подавляет verbose-логи ONNX Runtime до создания первой сессии.
+    /// Вызывается лениво — только когда реально создаётся ONNX-транскрайбер.
+    /// Не активна для `gigaam-system-ort`: там `Environment::current()` до создания
+    /// сессии может зависнуть в load-dynamic пути (см. transcriber инициализацию).
+    #[cfg(any(feature = "gigaam", feature = "qwen3asr"))]
+    fn init_ort_logging() {
+        if let Ok(env) = ort::environment::Environment::current() {
+            env.set_log_level(ort::logging::LogLevel::Warning);
+        }
+    }
+
+    /// Создаёт транскрайбер по типу, возвращает (model_name, Arc<dyn Transcriber>).
+    ///
+    /// `allow(unused_variables)` — для сборок без ни одного движка все плечи `match` стираются,
+    /// и параметр `config` становится формально неиспользуемым.
+    #[allow(unused_variables)]
     fn create_transcriber(
         config: &CoreConfig,
         t_type: &TranscriberType,
     ) -> Result<(String, Arc<dyn Transcriber>), ArcanaError> {
         match t_type {
+            #[cfg(feature = "vosk")]
             TranscriberType::Vosk => {
                 let t = VoskTranscriber::new(&config.model_path, config.sample_rate as f32)?;
                 let name = config
@@ -118,6 +145,7 @@ impl ArcanaEngine {
                     .unwrap_or_else(|| "vosk".to_string());
                 Ok((name, Arc::new(t)))
             }
+            #[cfg(feature = "whisper")]
             TranscriberType::Whisper => {
                 let t = WhisperTranscriber::new(&config.whisper_model_path)?;
                 let name = config
@@ -127,7 +155,13 @@ impl ArcanaEngine {
                     .unwrap_or_else(|| "whisper".to_string());
                 Ok((name, Arc::new(t)))
             }
+            #[cfg(any(feature = "gigaam", feature = "gigaam-system-ort", feature = "gigaam-tract"))]
             TranscriberType::GigaAm => {
+                // init_ort_logging() ВРЕМЕННО только для feature `gigaam` (статически
+                // линкованный ORT). Для `gigaam-system-ort` (load-dynamic) вызов
+                // Environment::current() до dlopen сессии может зависнуть — пропускаем.
+                #[cfg(feature = "gigaam")]
+                Self::init_ort_logging();
                 let t = GigaAmTranscriber::new(&config.gigaam_model_path)?;
                 let name = config
                     .gigaam_model_path
@@ -136,7 +170,9 @@ impl ArcanaEngine {
                     .unwrap_or_else(|| "gigaam".to_string());
                 Ok((name, Arc::new(t)))
             }
+            #[cfg(feature = "qwen3asr")]
             TranscriberType::Qwen3Asr => {
+                Self::init_ort_logging();
                 let t = Qwen3AsrTranscriber::new(&config.qwen3asr_model_path)?;
                 let name = config
                     .qwen3asr_model_path
@@ -145,6 +181,9 @@ impl ArcanaEngine {
                     .unwrap_or_else(|| "qwen3asr".to_string());
                 Ok((name, Arc::new(t)))
             }
+            // Любая ветка без своего feature: сообщаем, что движок недоступен.
+            #[allow(unreachable_patterns)]
+            other => Err(ArcanaError::EngineNotAvailable(other.as_str().to_string())),
         }
     }
 
@@ -319,6 +358,11 @@ impl ArcanaEngine {
         let vad_enabled = config.vad_enabled;
         let vad_silence_secs = config.vad_silence_secs;
         let debug = config.debug;
+        // Effective gain зависит от **текущего активного** микрофона: если в БД есть
+        // override для этого устройства — берём его, иначе глобальный mic_gain.
+        // Это позволяет одной настройке работать со встроенным миком и наушниками.
+        let device_name = audio::default_input_device_name().unwrap_or_default();
+        let mic_gain = config.effective_gain(&device_name);
         let audio_level = Arc::clone(&self.audio_level);
         let handle = self.rt_handle.clone();
         let window_visible = Arc::clone(&self.window_visible);
@@ -435,6 +479,7 @@ impl ArcanaEngine {
                             silence_timeout_secs,
                             vad_enabled,
                             vad_silence_secs,
+                            mic_gain,
                             audio_level,
                             event_tx_audio,
                             &audio_cache,
@@ -483,6 +528,11 @@ impl ArcanaEngine {
                                 }
                             }
                         }
+                        Ok(Err(crate::error::ArcanaError::Cancelled)) => {
+                            // Пользователь нажал «Стоп» во время инференса —
+                            // не ошибка, тихо завершаем без error-toast.
+                            tracing::info!("Транскрибация отменена пользователем");
+                        }
                         Ok(Err(e)) => {
                             tracing::error!("Ошибка транскрибации: {}", e);
                             let _ = event_tx_clone.send(EngineEvent::Error(format!("Ошибка транскрибации: {}", e)));
@@ -529,5 +579,37 @@ impl ArcanaEngine {
                 }
             }
         });
+    }
+
+    /// Прерывает текущую транскрибацию (только если активный движок поддерживает —
+    /// сейчас Whisper через `whisper_full_params.abort_callback`). Для остальных
+    /// движков no-op. Вызывается с UI thread'а в любой момент; если не транскрибация
+    /// сейчас идёт — флаг просто будет проигнорирован при следующем transcribe().
+    pub fn cancel_transcription(&self) -> bool {
+        let active_name = self.active_model.read().unwrap().clone();
+        let transcriber = self
+            .transcribers
+            .read()
+            .unwrap()
+            .get(&active_name)
+            .cloned();
+        if let Some(t) = transcriber {
+            if t.supports_cancel() {
+                t.cancel();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Поддерживает ли активный движок отмену транскрибации.
+    pub fn active_supports_cancel(&self) -> bool {
+        let active_name = self.active_model.read().unwrap().clone();
+        self.transcribers
+            .read()
+            .unwrap()
+            .get(&active_name)
+            .map(|t| t.supports_cancel())
+            .unwrap_or(false)
     }
 }

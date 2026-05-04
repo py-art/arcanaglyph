@@ -12,6 +12,53 @@ use crate::engine::EngineEvent;
 use crate::error::ArcanaError;
 use crate::transcriber::Transcriber;
 
+/// Возвращает user-friendly имя текущего default-микрофона.
+///
+/// На Linux с PipeWire (через wpctl) — `node.description` от @DEFAULT_AUDIO_SOURCE@.
+/// Это даёт реальные имена ("Built-in Audio Аналоговый стерео", "Anker SoundCore
+/// Headset") которые **меняются** при подключении/отключении наушников.
+/// cpal на PipeWire всегда показывает только "default" — поэтому per-device
+/// usage gain на cpal name не работает (один и тот же ключ для всех мик).
+///
+/// Fallback (если wpctl нет / не PipeWire / не Linux) — cpal `Device::name()`.
+pub fn default_input_device_name() -> Option<String> {
+    // Linux + wpctl: реальное имя через PipeWire
+    #[cfg(target_os = "linux")]
+    if let Some(name) = wpctl_default_source_description() {
+        return Some(name);
+    }
+    // Fallback на cpal
+    let host = cpal::default_host();
+    host.default_input_device().and_then(|d| d.name().ok())
+}
+
+/// Парсит вывод `wpctl inspect @DEFAULT_AUDIO_SOURCE@` и возвращает `node.description`.
+/// Возвращает None если wpctl не установлен / нет PipeWire / не нашлось description.
+#[cfg(target_os = "linux")]
+fn wpctl_default_source_description() -> Option<String> {
+    let output = std::process::Command::new("wpctl")
+        .args(["inspect", "@DEFAULT_AUDIO_SOURCE@"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        // Формат: `  * node.description = "Built-in Audio Аналоговый стерео"`
+        // Также бывает без `*` (если не помечено): `  node.description = "..."`
+        let trimmed = line.trim_start_matches(['*', ' ', '\t']);
+        if let Some(rest) = trimmed.strip_prefix("node.description") {
+            // rest = ` = "Built-in Audio Аналоговый стерео"`
+            let value = rest.trim().trim_start_matches('=').trim().trim_matches('"');
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Команды управления записью
 pub enum AudioCommand {
     /// Остановить запись и получить результат
@@ -73,8 +120,14 @@ pub fn check_microphone(sample_rate: u32) -> Result<(), ArcanaError> {
     drop(stream);
 
     if !got_audio.load(Ordering::Relaxed) {
+        // Самая частая причина на голом ALSA (без PulseAudio/PipeWire) — Capture switch
+        // в микшере замьючен. Подсказываем команду размьюта прямо в сообщении.
         return Err(ArcanaError::AudioDevice(format!(
-            "Микрофон '{}' не передаёт звук. Возможно, он отключён или выбрано неверное устройство.",
+            "Микрофон '{}' не передаёт звук (только тишина за 1с). \
+             Возможные причины: микрофон замьючен в ALSA-микшере, выбрано неверное устройство, \
+             или микрофон физически отключён. Проверьте: `amixer -c 0 sget Capture` — если стоит \
+             [off], размьютьте: `amixer -c 0 sset Capture cap` и поднимите усиление: \
+             `amixer -c 0 sset 'Internal Mic Boost' 100%`.",
             device_name
         )));
     }
@@ -105,6 +158,7 @@ pub fn record_and_transcribe(
     silence_timeout_secs: u64,
     vad_enabled: bool,
     vad_silence_secs: u64,
+    mic_gain: f32,
     audio_level: Arc<AtomicU32>,
     event_tx: tokio::sync::broadcast::Sender<EngineEvent>,
     audio_cache_dir: &std::path::Path,
@@ -142,10 +196,30 @@ pub fn record_and_transcribe(
         (None, None)
     };
 
+    // Применяем mic_gain если задано (>0 и не ровно 1.0). Saturation на ±32767.
+    // Делаем ОДНИМ buffer-clone в callback, всё последующее (RMS, all_samples,
+    // vosk_tx) использует уже усиленные данные. На gain=1.0 — pass-through,
+    // лишняя аллокация: чтоб не платить когда не нужно — выбираем путь по флагу.
+    let apply_gain = mic_gain > 0.0 && (mic_gain - 1.0).abs() > f32::EPSILON;
+    if apply_gain {
+        info!("Программное усиление микрофона: x{:.2}", mic_gain);
+    }
     let stream = device
         .build_input_stream(
             &config,
-            move |data: &[i16], _: &cpal::InputCallbackInfo| {
+            move |raw: &[i16], _: &cpal::InputCallbackInfo| {
+                // Локальный буфер с применённым gain (или borrow от raw на gain=1.0)
+                let amplified: Vec<i16>;
+                let data: &[i16] = if apply_gain {
+                    amplified = raw
+                        .iter()
+                        .map(|&s| ((s as f32) * mic_gain).clamp(i16::MIN as f32, i16::MAX as f32) as i16)
+                        .collect();
+                    &amplified
+                } else {
+                    raw
+                };
+
                 // Считаем RMS (уровень громкости) и сохраняем в atomic (0-100)
                 if !data.is_empty() {
                     let sum_sq: f64 = data.iter().map(|&s| (s as f64) * (s as f64)).sum();

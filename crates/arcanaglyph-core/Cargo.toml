@@ -2,7 +2,7 @@
 
 [package]
 name = "arcanaglyph-core"
-version = "1.5.0"
+version = "1.6.0"
 edition = "2024"
 
 [lib]
@@ -15,7 +15,6 @@ path = "src/main.rs"
 
 [dependencies]
 cpal = "0.16.0"
-vosk = "0.3.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2"
@@ -26,17 +25,72 @@ tungstenite = "0.27.0"
 futures-util = "0.3.31"
 tokio-tungstenite = "0.27.0"
 enigo = "0.3"
-whisper-rs = { version = "0.13", features = ["whisper-cpp-log"] }
-ashpd = { version = "0.13", features = ["remote_desktop", "screencast"] }
 toml = "0.8"
 directories = "6"
 rusqlite = { version = "0.32", features = ["bundled"] }
 chrono = { version = "0.4", features = ["serde"] }
-ort = { version = "2.0.0-rc.12", features = ["download-binaries"] }
-ndarray = "0.17"
-rustfft = "6"
-tokenizers = "0.21"
+
+# Опциональные зависимости движков (включаются через [features] ниже).
+# Это позволяет приложению собираться без нативных библиотек конкретного движка
+# (libvosk.so, whisper.cpp toolchain) и оставаться готовым к Windows/macOS портированию.
+vosk = { version = "0.3.1", optional = true }
+whisper-rs = { version = "0.16", features = ["tracing_backend"], optional = true }
+# ort: default-features ОТКЛЮЧЕНЫ — иначе включается `download-binaries` (default),
+# которое конфликтует с `load-dynamic` (gigaam-system-ort). При обоих активных ort
+# может попытаться использовать вшитую AVX-версию ORT поверх load-dynamic, что
+# приводит к зависанию или SIGILL. Включаем только минимум необходимых features:
+# - `std`, `ndarray`, `half` — типы и обмен тензорами
+# - `api-24` — версия ORT C API для генерации bindings (это нужно для компиляции,
+#   соответствует ORT 1.20.x)
+# Backend-features (`download-binaries` / `load-dynamic`) включаются ниже на уровне
+# cargo-feature `gigaam` / `gigaam-system-ort` — там же добавляется и `tracing` если нужно.
+# default-features=false + явный api-20 — критично для load-dynamic с локально
+# собранной libonnxruntime 1.20.x. Без api-XX feature ort крейт зависает на init
+# из-за version mismatch с ORT C API. api-20 соответствует ORT 1.20.x (наша сборка).
+ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "half", "api-20"], optional = true }
+# tract-onnx — pure-Rust ONNX inference. Используется gigaam-tract feature как замена
+# ort'у на CPU без AVX (ort качает Microsoft pre-built ORT, требующий AVX → SIGILL
+# до main() на бюджетных CPU вроде Intel Celeron N5095). tract работает на любом x86_64/aarch64.
+tract-onnx = { version = "0.21", optional = true }
+ndarray = { version = "0.17", optional = true }
+rustfft = { version = "6", optional = true }
+tokenizers = { version = "0.21", optional = true }
 
 [features]
-default = []
-cuda = ["ort/cuda"]
+# По умолчанию — GigaAM v3 через ort (Microsoft pre-built ONNX Runtime, INT8). Быстро
+# на современных AVX-CPU. Сборка self-contained: ort качает binaries сам, никаких
+# системных libvosk/whisper.cpp не нужно.
+default = ["gigaam"]
+vosk = ["dep:vosk"]
+whisper = ["dep:whisper-rs"]
+# GigaAM через ort с готовыми Microsoft pre-built binaries (требуют AVX SIMD).
+# Дефолт для современных x86_64 — быстрый INT8 inference.
+# `tls-native` нужна, чтобы build-script ort-sys мог скачать pre-built binaries.
+gigaam = ["dep:ort", "ort/download-binaries", "ort/tls-native", "dep:ndarray", "dep:rustfft"]
+# Альтернативный backend GigaAM на pure-Rust tract — заготовка для будущих моделей
+# без оператора Range (текущая GigaAM v3 его использует и tract translate'ить
+# не умеет, см. transcriber_tract.rs). Не активен на N5095 в текущем make run.
+gigaam-tract = ["dep:tract-onnx", "dep:ndarray", "dep:rustfft"]
+# GigaAM через ort с динамической загрузкой libonnxruntime.so (через dlopen).
+# Используется на CPU без AVX (N5095): локально собранная без-AVX libonnxruntime
+# берётся из ORT_DYLIB_PATH или стандартных путей (~/.local/lib и т.п.).
+# Тот же transcriber, что и для `gigaam` — отличается только способ линковки ORT.
+gigaam-system-ort = ["dep:ort", "ort/load-dynamic", "dep:ndarray", "dep:rustfft"]
+# qwen3asr использует тот же ort-крейт, что и gigaam, поэтому ort backend-features
+# (download-binaries vs load-dynamic) включаются через gigaam/gigaam-system-ort.
+# qwen3asr feature просто добавляет tokenizers и decoder. Чтобы он собрался, в наборе
+# фичей должна быть ровно одна из: gigaam (для AVX-сборок) или gigaam-system-ort
+# (для self-contained .deb с bundled libonnxruntime.so). Раньше qwen3asr принудительно
+# тянул download-binaries и конфликтовал с gigaam-system-ort.
+qwen3asr = ["dep:ort", "dep:ndarray", "dep:rustfft", "dep:tokenizers"]
+all-engines = ["vosk", "whisper", "gigaam", "qwen3asr"]
+cuda = ["ort?/cuda"]
+
+# XDG-portal API нужен только под Linux Wayland (RemoteDesktop). На Windows/macOS
+# это не собирается (zbus/D-Bus). Изоляция здесь даёт зелёный `cargo check` под Win/macOS.
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.13", features = ["remote_desktop", "screencast"] }
+# arboard — кроссплатформенный clipboard (pure-Rust, x11rb на X11). Используется
+# на Linux X11 для вставки через clipboard + Shift+Insert вместо enigo.text(),
+# который посимвольно ремаппит XKB и зависает на слабых CPU без AVX (N5095).
+arboard = { version = "3", default-features = false }

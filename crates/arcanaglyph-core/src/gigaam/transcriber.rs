@@ -50,6 +50,7 @@ impl GigaAmTranscriber {
         #[allow(unused_mut)]
         let mut builder = Session::builder()
             .map_err(|e| ArcanaError::ModelLoad(format!("Ошибка создания ONNX Session builder: {}", e)))?;
+
         #[cfg(feature = "cuda")]
         {
             builder = builder
@@ -57,8 +58,18 @@ impl GigaAmTranscriber {
                 .map_err(|e| ArcanaError::ModelLoad(format!("Ошибка настройки CUDA EP: {}", e)))?;
             tracing::info!("CUDA ExecutionProvider запрошен для GigaAM");
         }
+
+        // Уровень graph optimization выбираем по backend:
+        // - `gigaam` (Microsoft pre-built ORT, AVX): Level3 — full optimization, быстро.
+        // - `gigaam-system-ort` (локально собранный ORT, без AVX): Disable — на slow CPU
+        //   оптимизация даёт малый выигрыш, и модель уже квантизована (INT8).
+        #[cfg(feature = "gigaam-system-ort")]
+        let opt_level = GraphOptimizationLevel::Disable;
+        #[cfg(all(feature = "gigaam", not(feature = "gigaam-system-ort")))]
+        let opt_level = GraphOptimizationLevel::Level3;
+
         let session = builder
-            .with_optimization_level(GraphOptimizationLevel::Level3)
+            .with_optimization_level(opt_level)
             .map_err(|e| ArcanaError::ModelLoad(format!("Ошибка установки уровня оптимизации: {}", e)))?
             .with_intra_threads(n_threads)
             .map_err(|e| ArcanaError::ModelLoad(format!("Ошибка установки потоков: {}", e)))?
