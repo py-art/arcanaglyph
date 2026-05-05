@@ -10,6 +10,7 @@
     ru: {
       status: {
         loading: 'Загрузка модели...',
+        loading_model: 'Загрузка модели {model}…',
         downloading_model: 'Скачивается модель: {percent}%',
         ready: 'Готов к записи',
         recording: 'Запись...',
@@ -135,6 +136,7 @@
         not_available: 'Недоступна в этой сборке',
         download: 'Скачать',
         downloading: 'Скачивание...',
+        extracting: 'Распаковка...',
         delete: 'Удалить',
         delete_confirm: 'Удалить модель {name} с диска? ({size})',
         deleted: 'Модель удалена',
@@ -169,6 +171,7 @@
     en: {
       status: {
         loading: 'Loading model...',
+        loading_model: 'Loading model {model}…',
         downloading_model: 'Downloading model: {percent}%',
         ready: 'Ready to record',
         recording: 'Recording...',
@@ -294,6 +297,7 @@
         not_available: 'Not available in this build',
         download: 'Download',
         downloading: 'Downloading...',
+        extracting: 'Extracting...',
         delete: 'Delete',
         delete_confirm: 'Delete model {name} from disk? ({size})',
         deleted: 'Model deleted',

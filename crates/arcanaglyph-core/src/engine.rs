@@ -47,6 +47,9 @@ pub enum EngineEvent {
     FinishedProcessing,
     /// Запрос на вывод окна на передний план (когда окно видимо)
     RequestFocus,
+    /// Начата загрузка модели в память (eager-preload из save_config или lazy-fallback в trigger).
+    /// Payload — отображаемое имя модели для UI ("Vosk Russian 0.42").
+    ModelLoading(String),
     /// Модель загружена, приложение готово к работе
     ModelLoaded,
     /// Ошибка, которую нужно показать пользователю
@@ -229,6 +232,10 @@ impl ArcanaEngine {
             return Ok(expected_name);
         }
 
+        // Эмитим событие "началась загрузка" — UI заменит top-status на «Загрузка модели N…»
+        // и заблокирует mic-btn.
+        let _ = self.event_tx.send(EngineEvent::ModelLoading(expected_name.clone()));
+
         let (name, transcriber) = Self::create_transcriber(&config, t_type)?;
         let mut pool = self
             .transcribers
@@ -236,6 +243,8 @@ impl ArcanaEngine {
             .map_err(|e| ArcanaError::Internal(format!("RwLock: {}", e)))?;
         pool.insert(name.clone(), transcriber);
         info!("Модель '{}' предзагружена в пул", name);
+        // Возвращаем UI в «готов»-состояние.
+        let _ = self.event_tx.send(EngineEvent::ModelLoaded);
         Ok(name)
     }
 
@@ -245,6 +254,13 @@ impl ArcanaEngine {
             .read()
             .map(|pool| pool.keys().cloned().collect())
             .unwrap_or_default()
+    }
+
+    /// Текущий активный тип транскрайбера (по конфигу).
+    /// Используется снаружи (Tauri save_config) чтобы понять, нужна ли eager-preload
+    /// после смены движка.
+    pub fn active_transcriber_type(&self) -> crate::config::TranscriberType {
+        self.config.read().map(|c| c.transcriber.clone()).unwrap_or_default()
     }
 
     /// Имя активной модели
@@ -397,7 +413,10 @@ impl ArcanaEngine {
                         }
                         info!("Модель '{}' взята из пула (была предзагружена)", target_name);
                     } else {
-                    let _ = event_tx.send(EngineEvent::Error("Загрузка модели...".to_string()));
+                    // Lazy-fallback: модели ещё нет в пуле (eager preload в save_config
+                    // не успел или конфиг был изменён внешне). Эмитим тот же loading-event,
+                    // что и preload_model — UI отработает одинаково.
+                    let _ = event_tx.send(EngineEvent::ModelLoading(target_name.clone()));
                     let cfg = config.clone();
                     let transcribers_pool = Arc::clone(&transcribers_rw);
                     let reload_result = tokio::task::spawn_blocking(move || {
@@ -415,6 +434,8 @@ impl ArcanaEngine {
                                 *active = name.clone();
                             }
                             info!("Модель '{}' загружена и добавлена в пул", name);
+                            // Возвращаем UI в «готов»-состояние перед стартом записи.
+                            let _ = event_tx.send(EngineEvent::ModelLoaded);
                         }
                         Ok(Err(e)) => {
                             tracing::error!("Не удалось пересоздать транскрайбер: {}", e);
@@ -587,17 +608,12 @@ impl ArcanaEngine {
     /// сейчас идёт — флаг просто будет проигнорирован при следующем transcribe().
     pub fn cancel_transcription(&self) -> bool {
         let active_name = self.active_model.read().unwrap().clone();
-        let transcriber = self
-            .transcribers
-            .read()
-            .unwrap()
-            .get(&active_name)
-            .cloned();
-        if let Some(t) = transcriber {
-            if t.supports_cancel() {
-                t.cancel();
-                return true;
-            }
+        let transcriber = self.transcribers.read().unwrap().get(&active_name).cloned();
+        if let Some(t) = transcriber
+            && t.supports_cancel()
+        {
+            t.cancel();
+            return true;
         }
         false
     }

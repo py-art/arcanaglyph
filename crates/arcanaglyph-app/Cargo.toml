@@ -29,6 +29,10 @@ tauri-plugin-dialog = "2"
 reqwest = { version = "0.12", features = ["stream"] }
 futures-util = "0.3"
 dirs = "6"
+# Распаковка .zip-архивов моделей (Vosk качается одним архивом). default-features = false
+# отключает bzip2/zstd/aes — Vosk-zip использует только deflate; экономит размер бинаря
+# и убирает нативные deps.
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [features]
 # default включает app-feature "gigaam", которая каскадно включает core/gigaam.

@@ -1226,7 +1226,7 @@
           </svg>
         </div>
         <div class="about-title">ArcanaGlyph</div>
-        <div class="about-version">v1.5.0</div>
+        <div class="about-version">v1.6.0</div>
         <div class="about-divider"></div>
         <div class="about-desc" data-i18n="about.desc">
           Голосовой ввод текста
@@ -1639,6 +1639,20 @@
 
       /* --- События engine --- */
       listen('engine://model-loaded', onModelReady);
+
+      // Backend начал загрузку новой модели в память (eager preload после смены движка
+      // в Settings, либо lazy-fallback в trigger()). Без этого top-status горел бы
+      // «Готов» пока модель на самом деле ещё грузится 10-20с — пользователь жмёт
+      // mic, ничего не происходит, кажется что приложение зависло.
+      listen('engine://model-loading', (ev) => {
+        const modelName = ev?.payload?.model || '';
+        modelReady = false;
+        statusEl.textContent = i18n.t('status.loading_model').replace('{model}', modelName);
+        statusEl.dataset.i18n = 'status.loading_model';
+        statusEl.className = '';
+        micBtn.style.opacity = '0.4';
+        micBtn.style.cursor = 'default';
+      });
 
       // Auto-fallback: backend подменил недоступный движок (например Vosk не в сборке)
       // на дефолтный (GigaAM). Показываем пользователю короткий toast.
@@ -2221,6 +2235,21 @@
         const { model_id, percent, file_idx, total_files, file } = ev.payload;
         activeDownloads.set(model_id, { percent, file_idx, total_files, file });
         applyProgressToCard(model_id);
+      });
+
+      // Backend начал распаковку архива (Vosk качается одним .zip ~1.8 ГБ → 2.6 ГБ).
+      // Без этого события UI бы видел застывший 100% на 30-90с — выглядит как зависание.
+      // Меняем текст кнопки и прогресс-метку на «Распаковка…»; `loadSettings()` в
+      // download://complete потом перерисует карточку начисто.
+      listen('download://extracting', (ev) => {
+        const model_id = ev?.payload?.model_id;
+        if (!model_id) return;
+        const card = document.querySelector(`.model-card[data-model-id="${model_id}"]`);
+        if (!card) return;
+        const btn = card.querySelector('.model-download-btn');
+        if (btn) btn.textContent = i18n.t('model.extracting');
+        const text = card.querySelector('.model-progress-text');
+        if (text) text.textContent = i18n.t('model.extracting');
       });
 
       // Завершение скачивания. Backend сам обновляет config-путь (см. download_model

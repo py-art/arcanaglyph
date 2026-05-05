@@ -8,6 +8,55 @@
 
 ## [Unreleased]
 
+### Добавлено
+
+- Авто-распаковка `.zip`-архивов моделей при скачивании через UI. Сейчас касается Vosk
+  (vosk-model-ru-0.42 распространяется единым архивом ~1.8 ГБ); для будущих архивных
+  моделей сработает автоматически по расширению `.zip`. Реализовано через крейт
+  `zip = "8"` (default-features=false, только deflate — pure-Rust, без нативных deps).
+  При ошибке распаковки `.zip` остаётся на диске — на retry перекачивать 1.8 ГБ не нужно,
+  скрипт пробует распаковку повторно.
+- Новое событие `engine://model-loading` (Tauri) и core-вариант `EngineEvent::ModelLoading(String)`.
+  Frontend заменяет top-status на «Загрузка модели X…» и блокирует mic-btn до прихода
+  `engine://model-loaded`. Эмитится из `preload_model` (eager) и из lazy-fallback в `trigger()`.
+- Eager-preload модели в `save_config`: при смене движка в Settings новая модель грузится
+  в фоне сразу, а не лениво при первом нажатии Ctrl+Ё. Когда пользователь возвращается на
+  главный экран — модель уже в памяти, запись стартует мгновенно.
+- Событие `download://extracting` для индикации фазы распаковки в карточке модели
+  (frontend меняет текст кнопки на «Распаковка…»).
+- Guard в `download_model`: если модель уже установлена и валидна (`is_model_installed`
+  возвращает true), весь download+extract skip'аются, обновляется только config-путь и
+  эмитится `download://complete`.
+- `make run` на ноутбуках без AVX теперь подхватывает `libvosk.so` из
+  `/usr/lib/arcanaglyph/` (если установлен self-contained `.deb`) — `make install` больше
+  не обязательно делать перед `make run`.
+
+### Исправлено
+
+- В `scripts/build-deb.sh` выбор пути `.deb` для post-process: раньше использовался
+  `ls *.deb | head -1`, который при наличии старых `.deb` в `target/release/bundle/deb/`
+  возвращал алфавитно первый файл (например `1.5.0.deb` при пересборке `1.6.0`). Post-process
+  применялся к старому файлу, свежий оставался без bundled libs и wrapper'а, после
+  `apt install` ставился broken пакет (`libvosk.so: cannot open shared object file`).
+  Теперь файл вычисляется по точной версии из `tauri.conf.json`.
+- `make install` теперь **всегда** пересобирает `.deb` и переустанавливает с
+  `apt install --reinstall` (раньше пропускал сборку если файл `.deb` уже был, и
+  не переустанавливал если та же версия уже стоит).
+- Top-status «Готов к записи» больше не врёт во время фоновой загрузки модели:
+  при `engine://model-loading` сбрасывается флаг `modelReady` и показывается
+  «Загрузка модели X…». Заодно ушёл косяк с «непослушными» pause/stop-кнопками после
+  переключения движка — корневая причина была в lazy-reload транскрайбера внутри
+  `trigger()`, теперь устранена eager-preload'ом (см. Добавлено).
+- Метаданные Vosk-модели в `vosk_russian_speech_model.rs`: `size: "~42 МБ"` →
+  `"~1.8 ГБ"`, `expected_min_size_bytes` 40 МБ → 1.5 ГБ. Раньше описывали small-модель
+  при URL большой модели — UI вводил в заблуждение.
+- Версия на странице «О приложении» (UI): была захардкожена `v1.5.0` в `dist/index.html`
+  при актуальной версии 1.6.0. Добавлена в memory-чек-лист `version-bump.md` пятым
+  обязательным местом.
+- Pre-existing clippy warnings (`collapsible_if`, появились после обновления Rust 1.95):
+  `crates/arcanaglyph-core/src/transcriber.rs:276` и `engine.rs:591` — заменены на
+  `if let ... && ...` форму. `make all` снова проходит чисто.
+
 ## [1.6.0] - 2026-05-04
 
 ### Добавлено

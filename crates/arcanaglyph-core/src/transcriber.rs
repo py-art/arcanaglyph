@@ -273,10 +273,10 @@ impl Transcriber for WhisperTranscriber {
 
         let mut text = String::new();
         for i in 0..num_segments {
-            if let Some(segment) = state.get_segment(i) {
-                if let Ok(s) = segment.to_str_lossy() {
-                    text.push_str(&s);
-                }
+            if let Some(segment) = state.get_segment(i)
+                && let Ok(s) = segment.to_str_lossy()
+            {
+                text.push_str(&s);
             }
         }
 

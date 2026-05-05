@@ -25,7 +25,7 @@ export LD_LIBRARY_PATH := /usr/local/lib:$(LD_LIBRARY_PATH)
 # Dependencies
 ##############################################################################
 
-.PHONY: install  ## Build (if needed) and install .deb package locally
+.PHONY: install  ## Always rebuild .deb and reinstall (dev-only: проверка пути установки)
 install:
 	@if pgrep -x arcanaglyph >/dev/null 2>&1; then \
 		echo "${YELLOW}INFO : ${RESET}ArcanaGlyph запущен — останавливаю...${RESET}"; \
@@ -33,12 +33,11 @@ install:
 	fi; \
 	VERSION=$$(grep '"version"' crates/arcanaglyph-app/tauri.conf.json | head -1 | sed 's/.*"version": *"//;s/".*//');\
 	DEB="target/release/bundle/deb/ArcanaGlyph_$${VERSION}_amd64.deb"; \
-	if [ ! -f "$$DEB" ]; then \
-		echo "${YELLOW}INFO : ${RESET}.deb v$${VERSION} не найден — собираю...${RESET}"; \
-		bash scripts/build-deb.sh || exit 1; \
-	fi; \
+	echo "${YELLOW}INFO : ${RESET}Пересобираю .deb v$${VERSION} (dev-режим — всегда пересобирать)${RESET}"; \
+	rm -f "$$DEB"; \
+	bash scripts/build-deb.sh || exit 1; \
 	echo "${GREEN}INFO : ${AZURE}Устанавливаю $$DEB (apt сам подтянет deps)${RESET}"; \
-	sudo apt install -y "./$$DEB"; \
+	sudo apt install --reinstall -y "./$$DEB"; \
 	echo "${GREEN}INFO : ${AZURE}Запускаю ArcanaGlyph...${RESET}"; \
 	nohup arcanaglyph >/dev/null 2>&1 &
 
@@ -72,12 +71,18 @@ run:
 		if [ -f "$$LIBORT" ]; then \
 			FEATURES="gigaam-system-ort"; \
 			echo "${GREEN}INFO : ${AZURE}CPU без AVX — GigaAM через локально собранный onnxruntime: $$LIBORT${RESET}"; \
+			LIBVOSK_DIR=""; \
 			if [ -f /usr/local/lib/libvosk.so ]; then \
 				FEATURES="$$FEATURES,vosk"; \
-				echo "${GREEN}INFO : ${AZURE}+ vosk (libvosk.so найдена)${RESET}"; \
+				echo "${GREEN}INFO : ${AZURE}+ vosk (/usr/local/lib/libvosk.so)${RESET}"; \
+			elif [ -f /usr/lib/arcanaglyph/libvosk.so ]; then \
+				FEATURES="$$FEATURES,vosk"; \
+				LIBVOSK_DIR="/usr/lib/arcanaglyph"; \
+				echo "${GREEN}INFO : ${AZURE}+ vosk (/usr/lib/arcanaglyph/libvosk.so из установленного .deb)${RESET}"; \
 			else \
-				echo "${YELLOW}INFO : ${RESET}- vosk пропущен: нет /usr/local/lib/libvosk.so${RESET}"; \
+				echo "${YELLOW}INFO : ${RESET}- vosk пропущен: нет libvosk.so ни в /usr/local/lib, ни в /usr/lib/arcanaglyph${RESET}"; \
 				echo "${YELLOW}        скачать: https://github.com/alphacep/vosk-api/releases (vosk-linux-x86_64-*.zip)${RESET}"; \
+				echo "${YELLOW}        или: make install (поставит .deb с bundled libvosk.so)${RESET}"; \
 			fi; \
 			if command -v cmake >/dev/null 2>&1; then \
 				FEATURES="$$FEATURES,whisper"; \
@@ -86,7 +91,8 @@ run:
 				echo "${YELLOW}INFO : ${RESET}- whisper пропущен: нет CMake (sudo apt install cmake)${RESET}"; \
 			fi; \
 			echo "${GREEN}INFO : ${AZURE}features: $$FEATURES${RESET}"; \
-			ORT_DYLIB_PATH="$$LIBORT" cargo run -p arcanaglyph-app --bin arcanaglyph --no-default-features --features "$$FEATURES"; \
+			ORT_DYLIB_PATH="$$LIBORT" LIBRARY_PATH="$$LIBVOSK_DIR:$${LIBRARY_PATH:-}" \
+			cargo run -p arcanaglyph-app --bin arcanaglyph --no-default-features --features "$$FEATURES"; \
 		else \
 			echo "${RED}ERROR: $$LIBORT не найден. Соберите onnxruntime без AVX:${RESET}"; \
 			echo "${YELLOW}  cd ~/projects/onnxruntime-build/onnxruntime && \\${RESET}"; \

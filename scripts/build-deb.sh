@@ -136,8 +136,16 @@ env "${NOAVX_WHISPER_ENV[@]}" \
 # ----- 4. Локализуем сгенерированный .deb ---------------------------------------------
 
 DEB_DIR="${REPO_ROOT}/target/release/bundle/deb"
-DEB_FILE="$(ls "${DEB_DIR}"/*.deb 2>/dev/null | head -1)" || true
-[[ -n "${DEB_FILE}" && -f "${DEB_FILE}" ]] || err "Не нашёл .deb в ${DEB_DIR}"
+# Точное имя по версии из tauri.conf.json. Раньше брали `ls *.deb | head -1`,
+# но это даёт неверный файл если в директории остался .deb старой версии:
+# `ls` возвращает алфавитно отсортированный список → первой попадается старая
+# версия (например 1.5.0 при пересборке 1.6.0), post-process залезает в неё,
+# а свежесобранный .deb для текущей версии остаётся без обработки и потом
+# apt install ставит broken пакет (без bundled libs и wrapper'а).
+VERSION="$(grep '"version"' "${REPO_ROOT}/crates/arcanaglyph-app/tauri.conf.json" | head -1 | sed 's/.*"version": *"//;s/".*//')"
+[[ -n "${VERSION}" ]] || err "Не удалось вычитать версию из tauri.conf.json"
+DEB_FILE="${DEB_DIR}/ArcanaGlyph_${VERSION}_amd64.deb"
+[[ -f "${DEB_FILE}" ]] || err "Не нашёл .deb по ожидаемому пути: ${DEB_FILE}"
 log "Phase 4/5: post-process ${DEB_FILE}"
 
 # ----- 5. Расширяем .deb: добавляем avx-бинарь, либы, wrapper -------------------------

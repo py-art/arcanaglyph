@@ -321,6 +321,112 @@ async fn download_file(
     Ok(())
 }
 
+/// Распаковывает `.zip`, рассчитывая что архив имеет top-level директорию с именем,
+/// совпадающим с `expected_dir` (стандарт alphacephei для Vosk-моделей:
+/// `vosk-model-ru-0.42.zip` → `vosk-model-ru-0.42/{am,conf,graph,...}`).
+///
+/// Распаковка идёт в **родителя `expected_dir`**, чтобы top-level dir архива создал
+/// сам `expected_dir`. ВНИМАНИЕ: `zip_path.parent()` для нашей раскладки совпадает с
+/// `expected_dir` (zip лежит ВНУТРИ него), так что extract'ить туда нельзя — получится
+/// вложенность `expected_dir/expected_dir_name/...` и sanity-check не пройдёт.
+///
+/// После успешной распаковки сам `.zip` удаляется (~1.8 ГБ места).
+///
+/// Эмитит `download://extracting` сразу после старта чтобы UI заменил текст с
+/// «Скачивание…» на «Распаковка…» — фронтенд иначе видит застывший 100% прогресс
+/// на 30-90с (на N5095).
+///
+/// При ошибке распаковки **архив не удаляется** — пользователю нет смысла перекачивать
+/// 1.8 ГБ если zip целый, проблема в чём-то другом (диск, права, нестандартная структура).
+/// Удаляются только частично распакованные артефакты (всё в `expected_dir` КРОМЕ самого
+/// архива). На следующий клик «Скачать» вызывающий код пропустит download_file
+/// (увидит валидный zip на диске) и сразу попробует распаковать заново.
+async fn extract_zip_into_model_dir(
+    zip_path: &std::path::Path,
+    expected_dir: &std::path::Path,
+    model_id: &str,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    use tauri::Emitter;
+
+    let _ = app.emit("download://extracting", serde_json::json!({ "model_id": model_id }));
+
+    // Распаковка идёт в РОДИТЕЛЯ expected_dir, не в родителя zip_path. Подробности — в
+    // doc-комментарии выше.
+    let extract_target = expected_dir
+        .parent()
+        .ok_or_else(|| format!("у {} нет родителя", expected_dir.display()))?
+        .to_path_buf();
+    let zip_path_owned = zip_path.to_path_buf();
+
+    tracing::info!(
+        "Распаковка {} → {} (ожидается top-level дир {} в архиве)",
+        zip_path_owned.display(),
+        extract_target.display(),
+        expected_dir.file_name().and_then(|s| s.to_str()).unwrap_or("?")
+    );
+
+    // zip-крейт синхронный; распаковка ~1.8 ГБ → 2.6 ГБ на N5095 ~30-90с,
+    // нельзя блокировать async runtime — поэтому через spawn_blocking.
+    let extract_res = tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let f =
+            std::fs::File::open(&zip_path_owned).map_err(|e| format!("открыть {}: {}", zip_path_owned.display(), e))?;
+        let mut archive = zip::ZipArchive::new(f).map_err(|e| format!("zip read: {}", e))?;
+        archive
+            .extract(&extract_target)
+            .map_err(|e| format!("zip extract: {}", e))
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {}", e))?;
+
+    if let Err(e) = extract_res {
+        cleanup_extraction_artifacts(zip_path, expected_dir);
+        return Err(e);
+    }
+
+    // Sanity-check: alphacephei Vosk-zip кладёт `conf/` рядом с `am/graph/...`.
+    // Тот же чек используется в is_model_installed для vosk.
+    if !expected_dir.join("conf").exists() {
+        cleanup_extraction_artifacts(zip_path, expected_dir);
+        return Err(format!(
+            "после распаковки нет {}/conf — структура архива не та, что ожидалась",
+            expected_dir.display()
+        ));
+    }
+
+    if let Err(e) = std::fs::remove_file(zip_path) {
+        tracing::warn!(
+            "Не удалось удалить архив {} после распаковки: {}",
+            zip_path.display(),
+            e
+        );
+    }
+
+    Ok(())
+}
+
+/// Удаляет содержимое `model_dir` КРОМЕ самого `zip_path` — после неудачной распаковки
+/// частично созданные подпапки/файлы убираются, а архив сохраняется для retry без
+/// повторной загрузки 1.8 ГБ. zip_path в нашей раскладке всегда лежит ВНУТРИ model_dir,
+/// так что итерируем содержимое и пропускаем zip по имени файла.
+fn cleanup_extraction_artifacts(zip_path: &std::path::Path, model_dir: &std::path::Path) {
+    let zip_name = zip_path.file_name();
+    let Ok(entries) = std::fs::read_dir(model_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if Some(entry.file_name().as_os_str()) == zip_name {
+            continue; // не трогаем сам архив
+        }
+        let path = entry.path();
+        let _ = if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+    }
+}
+
 /// Проверяет наличие модели для активного транскрайбера и при необходимости
 /// скачивает её через `download_file()`. Прогресс эмитится через `download://progress`,
 /// после завершения — `download://complete`. Возвращает Ok(()) когда модель установлена
@@ -394,7 +500,26 @@ async fn ensure_active_model(transcriber_type: &str, app: &tauri::AppHandle) -> 
 
     let extras = model.extra_files.unwrap_or(&[]);
     let total_files = 1 + extras.len();
-    download_file(model.download_url, &main_dest, model.id, 0, total_files, min_size, app).await?;
+    // Тот же skip как в download_model: если zip уже скачан и валиден по размеру,
+    // не перекачиваем 1.8 ГБ ради повторной попытки распаковки.
+    let zip_already_downloaded = main_dest.extension().and_then(|s| s.to_str()) == Some("zip")
+        && match (min_size, std::fs::metadata(&main_dest)) {
+            (Some(min), Ok(m)) if m.is_file() => m.len() >= min,
+            _ => false,
+        };
+    if zip_already_downloaded {
+        tracing::info!(
+            "zip-архив {} уже на диске и валидного размера — пропускаем загрузку",
+            main_dest.display()
+        );
+    } else {
+        download_file(model.download_url, &main_dest, model.id, 0, total_files, min_size, app).await?;
+    }
+    // Если основной файл — .zip-архив, распаковываем сразу после скачивания.
+    // Сейчас касается только Vosk; для будущих архивных моделей сработает автоматом.
+    if main_dest.extension().and_then(|s| s.to_str()) == Some("zip") {
+        extract_zip_into_model_dir(&main_dest, &path, model.id, app).await?;
+    }
     for (idx, (url, rel)) in extras.iter().enumerate() {
         let extra_dest = path.join(rel);
         // Для extra-файлов size-проверка не задаётся: размеры варьируются и порог в реестре пока один общий.
@@ -425,16 +550,13 @@ async fn delete_model(model_id: String, path: String) -> Result<(), String> {
     // Удаление файлов с диска (idempotent: если уже нет — продолжаем чистить config)
     if pb.exists() {
         if model_info.transcriber_type == "whisper" {
-            std::fs::remove_file(&pb)
-                .map_err(|e| format!("Не удалось удалить файл {}: {}", path, e))?;
+            std::fs::remove_file(&pb).map_err(|e| format!("Не удалось удалить файл {}: {}", path, e))?;
             tracing::info!("Удалён файл модели: {}", path);
         } else if pb.is_dir() {
-            std::fs::remove_dir_all(&pb)
-                .map_err(|e| format!("Не удалось удалить директорию {}: {}", path, e))?;
+            std::fs::remove_dir_all(&pb).map_err(|e| format!("Не удалось удалить директорию {}: {}", path, e))?;
             tracing::info!("Удалена директория модели: {}", path);
         } else {
-            std::fs::remove_file(&pb)
-                .map_err(|e| format!("Не удалось удалить {}: {}", path, e))?;
+            std::fs::remove_file(&pb).map_err(|e| format!("Не удалось удалить {}: {}", path, e))?;
             tracing::info!("Удалён файл модели: {}", path);
         }
     }
@@ -491,12 +613,60 @@ async fn download_model(model_id: String, url: String, dest_dir: String, app: ta
     let main_filename = url.rsplit('/').next().unwrap_or("model");
     let main_dest = dest_path.join(main_filename);
     let min_size = model_info.and_then(|m| m.expected_min_size_bytes);
-    download_file(&url, &main_dest, &model_id, 0, total_files, min_size, &app).await?;
 
-    // Скачиваем дополнительные файлы
-    for (idx, (extra_url, rel_path)) in extra_files.iter().enumerate() {
-        let extra_dest = dest_path.join(rel_path);
-        download_file(extra_url, &extra_dest, &model_id, idx + 1, total_files, None, &app).await?;
+    // Guard: если модель уже установлена и валидна — не качаем заново. Это защищает от
+    // двойного клика, ре-нажатия после ошибки в другой части flow и от ситуации
+    // «config пустой, но файлы на диске лежат» (ручная подкладка). Config-путь обновим
+    // ниже как обычно, чтобы карточка перерисовалась корректно.
+    let already_installed = match model_info {
+        Some(m) => {
+            // Whisper хранит сам файл .bin как путь модели; остальные движки — директорию.
+            let install_path: std::path::PathBuf = if m.transcriber_type == "whisper" {
+                main_dest.clone()
+            } else {
+                dest_path.clone()
+            };
+            is_model_installed(&install_path, m.transcriber_type, m.expected_min_size_bytes)
+        }
+        None => false,
+    };
+    if already_installed {
+        tracing::info!(
+            "Модель '{}' уже установлена в {} — пропускаем скачивание",
+            model_id,
+            dest_path.display()
+        );
+    } else {
+        // Если zip-архив уже скачан и не повреждён по размеру — пропускаем download_file,
+        // сразу распаковываем. Это нужно когда прошлая попытка распаковки упала
+        // (extract_zip_into_model_dir на ошибке оставляет zip нетронутым), и пользователь
+        // повторно нажал «Скачать» — перекачивать 1.8 ГБ не нужно.
+        let zip_already_downloaded = main_dest.extension().and_then(|s| s.to_str()) == Some("zip")
+            && match (min_size, std::fs::metadata(&main_dest)) {
+                (Some(min), Ok(m)) if m.is_file() => m.len() >= min,
+                _ => false,
+            };
+        if zip_already_downloaded {
+            tracing::info!(
+                "zip-архив {} уже на диске и валидного размера — пропускаем загрузку, иду в распаковку",
+                main_dest.display()
+            );
+        } else {
+            download_file(&url, &main_dest, &model_id, 0, total_files, min_size, &app).await?;
+        }
+
+        // Если основной файл — .zip-архив, распаковываем сразу после скачивания.
+        // Сейчас касается только Vosk; для будущих архивных моделей сработает автоматом.
+        if main_dest.extension().and_then(|s| s.to_str()) == Some("zip") {
+            extract_zip_into_model_dir(&main_dest, &dest_path, &model_id, &app).await?;
+        }
+
+        // Скачиваем дополнительные файлы (внутри else — если модель уже установлена,
+        // is_model_installed проверил extras тоже, перекачивать их не нужно).
+        for (idx, (extra_url, rel_path)) in extra_files.iter().enumerate() {
+            let extra_dest = dest_path.join(rel_path);
+            download_file(extra_url, &extra_dest, &model_id, idx + 1, total_files, None, &app).await?;
+        }
     }
 
     // Авто-обновление config-пути для скачанной модели. Без этого:
@@ -954,8 +1124,8 @@ fn get_models() -> Result<serde_json::Value, String> {
             };
             // Файл «установлен» считаем только для доступных движков —
             // нет смысла показывать «зелёную галочку» для модели, которой backend нет.
-            let installed = *available
-                && is_model_installed(&resolved_path, m.transcriber_type, m.expected_min_size_bytes);
+            let installed =
+                *available && is_model_installed(&resolved_path, m.transcriber_type, m.expected_min_size_bytes);
             // Path для UI — если файла нет на диске, отдаём пустую строку. Иначе
             // path input в карточке заполнялся бы дефолтной локацией даже после
             // удаления, что вводит в заблуждение («путь есть, файла нет»).
@@ -1005,7 +1175,28 @@ fn save_config(
     tray::set_tray_visible(&app, config.show_tray);
 
     if let Some(e) = engine.get() {
+        let prev_transcriber = e.active_transcriber_type();
+        let new_transcriber = config.transcriber.clone();
         e.update_config(config);
+
+        // Eager-preload: если активный движок изменился — грузим новую модель в фоне
+        // СРАЗУ (не дожидаясь первого Ctrl+Ё). preload_model сам эмитит ModelLoading и
+        // ModelLoaded → frontend обновит top-status и блокирует mic-btn на время загрузки.
+        // Это убирает тот баг, когда top-status горел «Готов» пока на самом деле модель
+        // ещё не была в памяти и trigger() лениво её догружал на 10-20с.
+        if prev_transcriber != new_transcriber {
+            let engine_state: EngineState = engine.inner().clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = tokio::task::spawn_blocking(move || {
+                    if let Some(e) = engine_state.get()
+                        && let Err(err) = e.preload_model(&new_transcriber)
+                    {
+                        tracing::warn!("Eager preload '{:?}' не удалась: {}", new_transcriber, err);
+                    }
+                })
+                .await;
+            });
+        }
     }
     Ok(())
 }
@@ -1659,6 +1850,7 @@ fn main() {
                                             EngineEvent::TranscriptionResult(text) => ("engine://transcription-result", serde_json::json!({"text": text})),
                                             EngineEvent::Transcribing => ("engine://transcribing", serde_json::json!({})),
                                             EngineEvent::FinishedProcessing => ("engine://finished-processing", serde_json::json!({})),
+                                            EngineEvent::ModelLoading(name) => ("engine://model-loading", serde_json::json!({"model": name})),
                                             EngineEvent::ModelLoaded => ("engine://model-loaded", serde_json::json!({})),
                                             EngineEvent::RequestFocus => { tray::show_window(&app_handle_events); continue; }
                                             EngineEvent::Error(msg) => ("engine://error", serde_json::json!({"message": msg})),
