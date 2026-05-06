@@ -6,6 +6,18 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование следует [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [Unreleased]
+
+### Удалено
+
+- GitLab CI job `build-deb-and-upload` (stage `deb` в `.gitlab-ci.yml`).
+  Дублировал GitHub Actions workflow `release.yml`, который собирает `.deb`
+  и заливает в GitHub Release автоматически на event `release: published`.
+  GitLab job падал на base image `rust:1` из-за отсутствия libclang
+  (нужен `whisper-rs-sys` через `bindgen`) — на `ubuntu-24.04` в GitHub
+  Actions libclang ставится с dev-зависимостями. Вместо двух параллельных
+  путей к одному ассету оставлен один.
+
 ## [1.6.0] - 2026-05-06
 
 ### Добавлено

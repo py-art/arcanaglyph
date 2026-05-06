@@ -2,7 +2,6 @@ stages:
   - tag
   - mirror
   - release
-  - deb
 
 # Автоматическое создание тега при merge в main, если версия изменилась
 create-tag:
@@ -100,69 +99,3 @@ create-github-release:
         exit 1
       fi
 
-# Сборка self-contained .deb пакета (двойной бинарь avx/noavx + bundled libs) и
-# заливка как ассет к свежесозданному GitHub Release. Тяжёлый job (~30-50 мин),
-# выделен в отдельную stage чтобы не блокировать создание релиза.
-build-deb-and-upload:
-  stage: deb
-  # Минимальный rust 1.88 (whisper-rs-sys 0.15 требует), edition 2024 требует ≥1.85.
-  # `rust:1` — последний stable в семействе 1.x, на момент написания 1.92+.
-  image: rust:1
-  rules:
-    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
-  needs:
-    - create-github-release
-  timeout: 90m
-  variables:
-    # Кеш cargo-registry между прогонами — не качать deps каждый раз заново.
-    CARGO_HOME: "$CI_PROJECT_DIR/.cargo-cache"
-  cache:
-    key: cargo-registry-v1
-    paths:
-      - .cargo-cache/registry/cache
-      - .cargo-cache/registry/index
-      - .cargo-cache/git
-      - .cargo-cache/bin
-  before_script:
-    - apt-get update -qq
-    - apt-get install -y --no-install-recommends
-        build-essential cmake pkg-config curl unzip dpkg-dev jq ca-certificates
-        libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev
-        libayatana-appindicator3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
-    # tauri-cli кешируется через CARGO_HOME — после первого прогона будет в .cargo-cache/bin/
-    - command -v cargo-tauri >/dev/null || cargo install tauri-cli --version "^2.0" --locked
-    - export PATH="$CARGO_HOME/bin:$PATH"
-  script:
-    - VERSION=$(grep -m1 '"version"' crates/arcanaglyph-app/tauri.conf.json | sed 's/.*"version".*"\(.*\)".*/\1/')
-    - TAG="v$VERSION"
-    - echo "Сборка self-contained .deb для $TAG..."
-    - bash scripts/build-deb.sh
-    - DEB="target/release/bundle/deb/ArcanaGlyph_${VERSION}_amd64.deb"
-    - ls -lh "$DEB"
-    - echo "Заливка $DEB как ассет к релизу $TAG..."
-    - |
-      RELEASE_ID=$(curl -sS -H "Authorization: token $GITHUB_TOKEN" \
-        "https://api.github.com/repos/py-art/arcanaglyph/releases/tags/$TAG" | jq -r .id)
-      if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "null" ]; then
-        echo "Релиз $TAG не найден на GitHub — создавался ли create-github-release?"; exit 1
-      fi
-      ASSET_NAME="ArcanaGlyph_${VERSION}_amd64.deb"
-      HTTP_CODE=$(curl -sS -o /tmp/upload.json -w "%{http_code}" -X POST \
-        -H "Authorization: token $GITHUB_TOKEN" \
-        -H "Content-Type: application/vnd.debian.binary-package" \
-        --data-binary @"$DEB" \
-        "https://uploads.github.com/repos/py-art/arcanaglyph/releases/$RELEASE_ID/assets?name=$ASSET_NAME")
-      if [ "$HTTP_CODE" = "201" ]; then
-        echo "Ассет $ASSET_NAME загружен"
-      elif [ "$HTTP_CODE" = "422" ]; then
-        echo "Ассет $ASSET_NAME уже существует у релиза $TAG — пропускаем"
-      else
-        echo "Ошибка загрузки ассета: HTTP $HTTP_CODE"
-        cat /tmp/upload.json
-        exit 1
-      fi
-  artifacts:
-    paths:
-      - target/release/bundle/deb/*.deb
-    expire_in: 30 days
-    when: on_success
