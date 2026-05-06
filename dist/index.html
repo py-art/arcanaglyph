@@ -8,6 +8,11 @@
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html { overflow: hidden; }
+      /* Восстанавливаем поведение HTML-атрибута `hidden`: `display: flex/block`
+         в `.setting-row` / `.position-picker-hint` иначе перебивает user-agent
+         `[hidden] { display: none }` (одинаковая специфичность, выигрывает
+         объявленный позже класс). Без этого toggle/hint видны на X11. */
+      [hidden] { display: none !important; }
 
       body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;

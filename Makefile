@@ -27,15 +27,15 @@ export LD_LIBRARY_PATH := /usr/local/lib:$(LD_LIBRARY_PATH)
 
 .PHONY: install  ## Always rebuild .deb and reinstall (dev-only: проверка пути установки)
 install:
-	@if pgrep -x arcanaglyph >/dev/null 2>&1; then \
-		echo "${YELLOW}INFO : ${RESET}ArcanaGlyph запущен — останавливаю...${RESET}"; \
-		pkill -x arcanaglyph && sleep 1; \
-	fi; \
-	VERSION=$$(grep '"version"' crates/arcanaglyph-app/tauri.conf.json | head -1 | sed 's/.*"version": *"//;s/".*//');\
+	@VERSION=$$(grep '"version"' crates/arcanaglyph-app/tauri.conf.json | head -1 | sed 's/.*"version": *"//;s/".*//');\
 	DEB="target/release/bundle/deb/ArcanaGlyph_$${VERSION}_amd64.deb"; \
 	echo "${YELLOW}INFO : ${RESET}Пересобираю .deb v$${VERSION} (dev-режим — всегда пересобирать)${RESET}"; \
 	rm -f "$$DEB"; \
 	bash scripts/build-deb.sh || exit 1; \
+	if pgrep -f "/usr/lib/arcanaglyph/arcanaglyph-(avx|noavx)" >/dev/null 2>&1; then \
+		echo "${YELLOW}INFO : ${RESET}ArcanaGlyph запущен — останавливаю перед apt install...${RESET}"; \
+		pkill -f "/usr/lib/arcanaglyph/arcanaglyph-(avx|noavx)" && sleep 1; \
+	fi; \
 	echo "${GREEN}INFO : ${AZURE}Устанавливаю $$DEB (apt сам подтянет deps)${RESET}"; \
 	sudo apt install --reinstall -y "./$$DEB"; \
 	echo "${GREEN}INFO : ${AZURE}Запускаю ArcanaGlyph...${RESET}"; \
