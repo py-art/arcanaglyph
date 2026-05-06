@@ -529,6 +529,56 @@
         box-shadow: 0 0 0 2px #ff9e64;
       }
 
+      /* Picker позиции виджета записи: миниатюра экрана с 9 точками-якорями */
+      .position-picker {
+        margin-top: 4px;
+      }
+      .position-picker-screen {
+        position: relative;
+        width: 200px;
+        height: 120px;
+        background: #16161e;
+        border: 2px solid #292e42;
+        border-radius: 8px;
+      }
+      .position-picker-dot {
+        position: absolute;
+        width: 14px;
+        height: 14px;
+        margin: -7px 0 0 -7px;
+        border-radius: 50%;
+        background: transparent;
+        border: 2px solid #565f89;
+        cursor: pointer;
+        transition: background 0.15s, border-color 0.15s, transform 0.15s;
+      }
+      .position-picker-dot:hover {
+        border-color: #7aa2f7;
+        transform: scale(1.2);
+      }
+      .position-picker-dot.active {
+        background: #7aa2f7;
+        border-color: #7aa2f7;
+      }
+      .position-picker-dot[data-pos="top-left"]      { top: 14px; left: 14px; }
+      .position-picker-dot[data-pos="top-center"]    { top: 14px; left: 50%; }
+      .position-picker-dot[data-pos="top-right"]     { top: 14px; left: calc(100% - 14px); }
+      .position-picker-dot[data-pos="middle-left"]   { top: 50%;  left: 14px; }
+      .position-picker-dot[data-pos="middle-center"] { top: 50%;  left: 50%; }
+      .position-picker-dot[data-pos="middle-right"]  { top: 50%;  left: calc(100% - 14px); }
+      .position-picker-dot[data-pos="bottom-left"]   { top: calc(100% - 14px); left: 14px; }
+      .position-picker-dot[data-pos="bottom-center"] { top: calc(100% - 14px); left: 50%; }
+      .position-picker-dot[data-pos="bottom-right"]  { top: calc(100% - 14px); left: calc(100% - 14px); }
+      .position-picker-hint {
+        display: block;
+        margin-top: 6px;
+        color: #565f89;
+        font-size: 11px;
+      }
+      .setting-group.changed .position-picker-screen {
+        border-color: #ff9e64;
+      }
+
       /* Кнопки сохранения/отмены — фиксированы внизу */
       .save-area {
         position: sticky;
@@ -1453,6 +1503,24 @@
           <label data-i18n="settings.show_widget">Виджет записи</label>
           <div class="toggle" id="s-show-widget"></div>
         </div>
+
+        <div class="setting-group">
+          <label data-i18n="settings.widget_position">Расположение виджета</label>
+          <div class="position-picker" id="s-widget-position" data-value="bottom-center">
+            <div class="position-picker-screen">
+              <div class="position-picker-dot" data-pos="top-left"></div>
+              <div class="position-picker-dot" data-pos="top-center"></div>
+              <div class="position-picker-dot" data-pos="top-right"></div>
+              <div class="position-picker-dot" data-pos="middle-left"></div>
+              <div class="position-picker-dot" data-pos="middle-center"></div>
+              <div class="position-picker-dot" data-pos="middle-right"></div>
+              <div class="position-picker-dot" data-pos="bottom-left"></div>
+              <div class="position-picker-dot active" data-pos="bottom-center"></div>
+              <div class="position-picker-dot" data-pos="bottom-right"></div>
+            </div>
+            <small class="position-picker-hint" id="s-widget-position-hint" data-i18n="settings.widget_position_hint" hidden>На Wayland система может проигнорировать выбор</small>
+          </div>
+        </div>
       </div>
 
       <!-- Таб: Модели -->
@@ -1892,6 +1960,16 @@
         }
       }
 
+      // Picker позиции виджета: переставляет .active на нужную точку и обновляет data-value
+      function setWidgetPositionPicker(pos) {
+        const picker = document.getElementById('s-widget-position');
+        if (!picker) return;
+        picker.dataset.value = pos;
+        picker.querySelectorAll('.position-picker-dot').forEach(d => {
+          d.classList.toggle('active', d.dataset.pos === pos);
+        });
+      }
+
       // Нормализовать preload_models — модель по умолчанию всегда включена
       function normalizePreload(preload, transcriber) {
         const set = new Set(preload);
@@ -2011,6 +2089,7 @@
           autostart: cfg.autostart || false,
           start_minimized: cfg.start_minimized || false,
           show_widget: cfg.show_widget !== false,
+          widget_position: cfg.widget_position || 'bottom-center',
           show_tray: cfg.show_tray !== false,
           models_base_dir: cfg.models_base_dir || '',
           preload_models: normalizePreload(cfg.preload_models || [], cfg.transcriber),
@@ -2041,6 +2120,7 @@
         document.getElementById('s-autostart').classList.toggle('on', cfg.autostart || false);
         document.getElementById('s-start-minimized').classList.toggle('on', cfg.start_minimized || false);
         document.getElementById('s-show-widget').classList.toggle('on', cfg.show_widget !== false);
+        setWidgetPositionPicker(cfg.widget_position || 'bottom-center');
         document.getElementById('s-show-tray').classList.toggle('on', cfg.show_tray !== false);
         const preload = cfg.preload_models || [];
         document.getElementById('s-preload-vosk').classList.toggle('on', preload.includes('vosk') || cfg.transcriber === 'vosk');
@@ -2372,6 +2452,7 @@
           autostart: document.getElementById('s-autostart').classList.contains('on'),
           start_minimized: document.getElementById('s-start-minimized').classList.contains('on'),
           show_widget: document.getElementById('s-show-widget').classList.contains('on'),
+          widget_position: document.getElementById('s-widget-position').dataset.value || 'bottom-center',
           show_tray: document.getElementById('s-show-tray').classList.contains('on'),
           preload_models: normalizePreload([
             ...(document.getElementById('s-preload-vosk').classList.contains('on') ? ['vosk'] : []),
@@ -2404,6 +2485,7 @@
         autostart:         { el: 's-autostart',        type: 'row' },
         start_minimized:   { el: 's-start-minimized', type: 'row' },
         show_widget:       { el: 's-show-widget',     type: 'row' },
+        widget_position:   { el: 's-widget-position', type: 'group' },
         show_tray:         { el: 's-show-tray',       type: 'row' },
         preload_models:    { el: 's-preload-vosk',   type: 'row' },
       };
@@ -2698,7 +2780,18 @@
       invoke('is_wayland').then(wayland => {
         if (wayland) {
           document.getElementById('wayland-warning').style.display = 'block';
+          // Хинт под picker'ом — mutter может проигнорировать выбор позиции
+          const hint = document.getElementById('s-widget-position-hint');
+          if (hint) hint.hidden = false;
         }
+      });
+
+      // Picker позиции виджета: клик по точке выставляет её активной + триггерит changed
+      document.querySelectorAll('#s-widget-position .position-picker-dot').forEach(dot => {
+        dot.addEventListener('click', () => {
+          setWidgetPositionPicker(dot.dataset.pos);
+          checkChanges();
+        });
       });
 
       // Переключение табов настроек
@@ -2744,6 +2837,7 @@
         document.getElementById('s-autostart').classList.toggle('on', originalConfig.autostart || false);
         document.getElementById('s-start-minimized').classList.toggle('on', originalConfig.start_minimized || false);
         document.getElementById('s-show-widget').classList.toggle('on', originalConfig.show_widget !== false);
+        setWidgetPositionPicker(originalConfig.widget_position || 'bottom-center');
         document.getElementById('s-show-tray').classList.toggle('on', originalConfig.show_tray !== false);
         const preloadOrig = originalConfig.preload_models || [];
         document.getElementById('s-preload-vosk').classList.toggle('on', preloadOrig.includes('vosk'));

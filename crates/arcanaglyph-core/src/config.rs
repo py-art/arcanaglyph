@@ -134,6 +134,12 @@ pub struct CoreConfig {
     /// Показывать плавающий виджет записи поверх всех окон
     #[serde(default = "default_true")]
     pub show_widget: bool,
+    /// Логическая позиция виджета на экране: top-left/top-center/top-right,
+    /// middle-left/middle-center/middle-right, bottom-left/bottom-center/bottom-right.
+    /// Любое невалидное значение трактуется как `bottom-center`. На Wayland mutter
+    /// может проигнорировать выбор — это ожидаемое поведение протокола.
+    #[serde(default = "default_widget_position")]
+    pub widget_position: String,
     /// Показывать иконку в системном трее
     #[serde(default = "default_true")]
     pub show_tray: bool,
@@ -188,6 +194,40 @@ fn default_mic_gain() -> f32 {
     1.0
 }
 
+fn default_widget_position() -> String {
+    "bottom-center".to_string()
+}
+
+/// Вычисляет (x, y) позиции виджета записи на экране по логическому имени.
+///
+/// `screen_w`/`screen_h` и `widget_w`/`widget_h` — в логических пикселях
+/// (т.е. уже поделены на scale_factor). MARGIN/TOP_OFFSET/BOTTOM_OFFSET подобраны
+/// эмпирически: 24px от боковых краёв (визуально не «впритык»), 48px от верха
+/// (учитывает GNOME top-bar), 60px от низа (учитывает GNOME-Shell dock / taskbar).
+/// Любое невалидное значение `pos` → fallback на bottom-center.
+pub fn widget_position_xy(pos: &str, screen_w: f64, screen_h: f64, widget_w: f64, widget_h: f64) -> (f64, f64) {
+    const MARGIN: f64 = 24.0;
+    const TOP_OFFSET: f64 = 48.0;
+    const BOTTOM_OFFSET: f64 = 60.0;
+    let x_left = MARGIN;
+    let x_center = (screen_w - widget_w) / 2.0;
+    let x_right = screen_w - widget_w - MARGIN;
+    let y_top = TOP_OFFSET;
+    let y_mid = (screen_h - widget_h) / 2.0;
+    let y_bot = screen_h - widget_h - BOTTOM_OFFSET;
+    match pos {
+        "top-left" => (x_left, y_top),
+        "top-center" => (x_center, y_top),
+        "top-right" => (x_right, y_top),
+        "middle-left" => (x_left, y_mid),
+        "middle-center" => (x_center, y_mid),
+        "middle-right" => (x_right, y_mid),
+        "bottom-left" => (x_left, y_bot),
+        "bottom-right" => (x_right, y_bot),
+        _ => (x_center, y_bot),
+    }
+}
+
 impl Default for CoreConfig {
     fn default() -> Self {
         let models = default_models_dir();
@@ -218,6 +258,7 @@ impl Default for CoreConfig {
             start_minimized: false,
             preload_models: vec![],
             show_widget: true,
+            widget_position: "bottom-center".to_string(),
             show_tray: true,
             models_base_dir: models,
             history_filter_secs: 86400,
@@ -440,6 +481,7 @@ auto_type = false
             start_minimized: false,
             preload_models: vec![],
             show_widget: true,
+            widget_position: "bottom-center".to_string(),
             show_tray: true,
             models_base_dir: PathBuf::from("/tmp/test-models"),
             history_filter_secs: 86400,

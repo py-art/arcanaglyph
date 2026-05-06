@@ -1174,6 +1174,23 @@ fn save_config(
     // Управляем видимостью трея
     tray::set_tray_visible(&app, config.show_tray);
 
+    // Репозиционируем виджет если он создан — на лету, без рестарта приложения.
+    // На Wayland set_position может быть проигнорирован mutter'ом — это ожидаемо.
+    if let Some(w) = app.get_webview_window("widget")
+        && let Ok(Some(monitor)) = w.primary_monitor()
+    {
+        let screen = monitor.size();
+        let scale = monitor.scale_factor();
+        let (x, y) = arcanaglyph_core::config::widget_position_xy(
+            &config.widget_position,
+            screen.width as f64 / scale,
+            screen.height as f64 / scale,
+            220.0,
+            40.0,
+        );
+        let _ = w.set_position(tauri::LogicalPosition::new(x, y));
+    }
+
     if let Some(e) = engine.get() {
         let prev_transcriber = e.active_transcriber_type();
         let new_transcriber = config.transcriber.clone();
@@ -1742,6 +1759,8 @@ fn main() {
             let engine_state_load = engine_state.clone();
             let engine_fallback_evt = engine_fallback.clone();
             let active_transcriber = config.transcriber.as_str().to_string();
+            // Копию widget_position берём заранее — после spawn'а ниже config moves в engine
+            let widget_position = config.widget_position.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = ensure_active_model(&active_transcriber, &app_handle_load).await {
                     tracing::error!(
@@ -1903,12 +1922,20 @@ fn main() {
                 .visible(false)
                 .skip_taskbar(true);
 
-                // Позиционируем в правом верхнем углу экрана
+                // Позиционируем виджет по выбору пользователя (config.widget_position).
+                // На Wayland mutter может проигнорировать приложенческое позиционирование
+                // (security-model `xdg_toplevel`) — это ожидаемо, в UI показывается хинт.
                 if let Some(monitor) = app.primary_monitor().ok().flatten() {
                     let screen = monitor.size();
                     let scale = monitor.scale_factor();
-                    let x = (screen.width as f64 / scale) - widget_width - 24.0;
-                    builder = builder.position(x, 48.0);
+                    let (x, y) = arcanaglyph_core::config::widget_position_xy(
+                        &widget_position,
+                        screen.width as f64 / scale,
+                        screen.height as f64 / scale,
+                        widget_width,
+                        widget_height,
+                    );
+                    builder = builder.position(x, y);
                 }
 
                 if let Err(e) = builder.build() {
