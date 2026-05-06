@@ -3,21 +3,61 @@
 use crate::error::ArcanaError;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Движок транскрибации
+/// Движок транскрибации.
+///
+/// Все варианты присутствуют всегда — это нужно, чтобы persisted JSON в SQLite
+/// не ломался у пользователей, которые ранее выбирали Vosk/Whisper, при последующей
+/// сборке без соответствующего cargo feature. Доступность движка в текущей сборке
+/// проверяется через [`TranscriberType::is_compiled_in`].
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum TranscriberType {
     /// Vosk — быстрый, потоковый, менее точный
-    #[default]
     Vosk,
     /// Whisper — медленнее, значительно точнее
     Whisper,
-    /// GigaAM v3 — лучший для русского (ONNX, SberDevices)
+    /// GigaAM v3 — лучший для русского (ONNX, SberDevices). Дефолтный движок.
+    #[default]
     GigaAm,
     /// Qwen3-ASR — мультиязычный (ONNX, Alibaba)
     Qwen3Asr,
+}
+
+impl TranscriberType {
+    /// Включён ли этот движок в текущую сборку через cargo feature.
+    /// GigaAM считается включённым при ЛЮБОМ из двух ort-backend'ов (`gigaam` с
+    /// download-binaries или `gigaam-system-ort` с load-dynamic) — различие в способе
+    /// доставки libonnxruntime для UI не важно, важен только сам движок GigaAM.
+    pub const fn is_compiled_in(&self) -> bool {
+        match self {
+            Self::Vosk => cfg!(feature = "vosk"),
+            Self::Whisper => cfg!(feature = "whisper"),
+            Self::GigaAm => cfg!(feature = "gigaam") || cfg!(feature = "gigaam-system-ort"),
+            Self::Qwen3Asr => cfg!(feature = "qwen3asr"),
+        }
+    }
+
+    /// Список движков, скомпилированных в текущую сборку.
+    /// Используется фронтендом для отрисовки disabled-пунктов в dropdown'е.
+    pub fn compiled_engines() -> Vec<TranscriberType> {
+        [Self::Vosk, Self::Whisper, Self::GigaAm, Self::Qwen3Asr]
+            .into_iter()
+            .filter(Self::is_compiled_in)
+            .collect()
+    }
+
+    /// Строковое представление для UI / persistence.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Vosk => "vosk",
+            Self::Whisper => "whisper",
+            Self::GigaAm => "gigaam",
+            Self::Qwen3Asr => "qwen3asr",
+        }
+    }
 }
 
 /// Конфигурация ядра ArcanaGlyph
@@ -66,6 +106,19 @@ pub struct CoreConfig {
     /// Удалять слова-паразиты из транскрибации (э, э-э, ээ, эм, мм)
     #[serde(default = "default_true")]
     pub remove_fillers: bool,
+    /// Программное усиление микрофона (fallback для устройств без override).
+    /// 1.0 = без усиления, 2.0 = +6 дБ, 5.0 = +14 дБ.
+    /// Применяется к сэмплам с saturation (clip на ±32767). Работает на любой ОС.
+    #[serde(default = "default_mic_gain")]
+    pub mic_gain: f32,
+    /// Per-device override для усиления микрофона.
+    /// Ключ — имя устройства как возвращает `cpal::Device::name()` (например "default",
+    /// "Anker SoundCore Headset Mono", "HDA Intel PCH ALC269VC Analog Mono").
+    /// Значение — gain для этого устройства. Если устройства нет в map — берётся
+    /// глобальный `mic_gain` (выше). Пользователь настраивает gain для текущего
+    /// активного микрофона; смена мика в системе → подхватывается соответствующий gain.
+    #[serde(default)]
+    pub mic_gain_per_device: HashMap<String, f32>,
     /// Срок хранения записей в часах (0 = хранить вечно)
     #[serde(default = "default_retention_hours")]
     pub retention_hours: u64,
@@ -81,6 +134,12 @@ pub struct CoreConfig {
     /// Показывать плавающий виджет записи поверх всех окон
     #[serde(default = "default_true")]
     pub show_widget: bool,
+    /// Логическая позиция виджета на экране: top-left/top-center/top-right,
+    /// middle-left/middle-center/middle-right, bottom-left/bottom-center/bottom-right.
+    /// Любое невалидное значение трактуется как `bottom-center`. На Wayland mutter
+    /// может проигнорировать выбор — это ожидаемое поведение протокола.
+    #[serde(default = "default_widget_position")]
+    pub widget_position: String,
     /// Показывать иконку в системном трее
     #[serde(default = "default_true")]
     pub show_tray: bool,
@@ -131,6 +190,44 @@ fn default_history_filter_secs() -> u64 {
     86400
 }
 
+fn default_mic_gain() -> f32 {
+    1.0
+}
+
+fn default_widget_position() -> String {
+    "bottom-center".to_string()
+}
+
+/// Вычисляет (x, y) позиции виджета записи на экране по логическому имени.
+///
+/// `screen_w`/`screen_h` и `widget_w`/`widget_h` — в логических пикселях
+/// (т.е. уже поделены на scale_factor). MARGIN/TOP_OFFSET/BOTTOM_OFFSET подобраны
+/// эмпирически: 24px от боковых краёв (визуально не «впритык»), 48px от верха
+/// (учитывает GNOME top-bar), 60px от низа (учитывает GNOME-Shell dock / taskbar).
+/// Любое невалидное значение `pos` → fallback на bottom-center.
+pub fn widget_position_xy(pos: &str, screen_w: f64, screen_h: f64, widget_w: f64, widget_h: f64) -> (f64, f64) {
+    const MARGIN: f64 = 24.0;
+    const TOP_OFFSET: f64 = 48.0;
+    const BOTTOM_OFFSET: f64 = 60.0;
+    let x_left = MARGIN;
+    let x_center = (screen_w - widget_w) / 2.0;
+    let x_right = screen_w - widget_w - MARGIN;
+    let y_top = TOP_OFFSET;
+    let y_mid = (screen_h - widget_h) / 2.0;
+    let y_bot = screen_h - widget_h - BOTTOM_OFFSET;
+    match pos {
+        "top-left" => (x_left, y_top),
+        "top-center" => (x_center, y_top),
+        "top-right" => (x_right, y_top),
+        "middle-left" => (x_left, y_mid),
+        "middle-center" => (x_center, y_mid),
+        "middle-right" => (x_right, y_mid),
+        "bottom-left" => (x_left, y_bot),
+        "bottom-right" => (x_right, y_bot),
+        _ => (x_center, y_bot),
+    }
+}
+
 impl Default for CoreConfig {
     fn default() -> Self {
         let models = default_models_dir();
@@ -154,11 +251,14 @@ impl Default for CoreConfig {
             vad_enabled: true,
             vad_silence_secs: 7,
             remove_fillers: true,
+            mic_gain: 1.0,
+            mic_gain_per_device: HashMap::new(),
             retention_hours: 24,
             autostart: false,
             start_minimized: false,
             preload_models: vec![],
             show_widget: true,
+            widget_position: "bottom-center".to_string(),
             show_tray: true,
             models_base_dir: models,
             history_filter_secs: 86400,
@@ -168,6 +268,17 @@ impl Default for CoreConfig {
 }
 
 impl CoreConfig {
+    /// Возвращает effective mic_gain для конкретного устройства.
+    /// Если в `mic_gain_per_device` есть override для `device_name` — он используется,
+    /// иначе возвращается глобальный `mic_gain`. Это позволяет настроить разное
+    /// усиление для встроенного мика и подключаемых наушников.
+    pub fn effective_gain(&self, device_name: &str) -> f32 {
+        self.mic_gain_per_device
+            .get(device_name)
+            .copied()
+            .unwrap_or(self.mic_gain)
+    }
+
     /// Дефолтный конфиг с GigaAM по умолчанию (для новых пользователей)
     pub fn default_gigaam() -> Self {
         Self {
@@ -363,11 +474,14 @@ auto_type = false
             vad_enabled: true,
             vad_silence_secs: 7,
             remove_fillers: true,
+            mic_gain: 1.0,
+            mic_gain_per_device: HashMap::new(),
             retention_hours: 24,
             autostart: false,
             start_minimized: false,
             preload_models: vec![],
             show_widget: true,
+            widget_position: "bottom-center".to_string(),
             show_tray: true,
             models_base_dir: PathBuf::from("/tmp/test-models"),
             history_filter_secs: 86400,

@@ -50,6 +50,9 @@ async fn handle_connection(
                             EngineEvent::FinishedProcessing => {
                                 serde_json::json!({"type": "status", "status": "finished_processing"})
                             }
+                            EngineEvent::ModelLoading(name) => {
+                                serde_json::json!({"type": "status", "status": "model_loading", "model": name})
+                            }
                             EngineEvent::ModelLoaded => {
                                 serde_json::json!({"type": "status", "status": "model_loaded"})
                             }

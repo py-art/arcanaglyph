@@ -4,4 +4,9 @@
 // Содержит препроцессинг (mel-спектрограмма) и транскрайбер (ONNX inference + CTC decode).
 
 pub mod mel;
+
+// `transcriber` (через ort) активен и для `gigaam` (ort с download-binaries),
+// и для `gigaam-system-ort` (ort с load-dynamic). Реализация одна — отличается
+// только способ доставки libonnxruntime.so (см. core/Cargo.toml).
+#[cfg(any(feature = "gigaam", feature = "gigaam-system-ort"))]
 pub mod transcriber;

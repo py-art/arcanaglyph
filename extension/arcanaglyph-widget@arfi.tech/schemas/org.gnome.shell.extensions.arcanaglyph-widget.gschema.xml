@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.arcanaglyph-widget" path="/org/gnome/shell/extensions/arcanaglyph-widget/">
+    <key name="position" type="s">
+      <default>"bottom-center"</default>
+      <choices>
+        <choice value="top-left"/>
+        <choice value="top-center"/>
+        <choice value="top-right"/>
+        <choice value="middle-left"/>
+        <choice value="middle-center"/>
+        <choice value="middle-right"/>
+        <choice value="bottom-left"/>
+        <choice value="bottom-center"/>
+        <choice value="bottom-right"/>
+      </choices>
+      <summary>Widget anchor position</summary>
+      <description>Логическое имя позиции виджета записи на экране. Допустимые значения: top-left, top-center, top-right, middle-left, middle-center, middle-right, bottom-left, bottom-center, bottom-right.</description>
+    </key>
+  </schema>
+</schemalist>

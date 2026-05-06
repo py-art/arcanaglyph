@@ -4,6 +4,7 @@
 
 mod tray;
 
+use arcanaglyph_core::config::TranscriberType;
 use arcanaglyph_core::history::HistoryDB;
 use arcanaglyph_core::{ArcanaEngine, CoreConfig, EngineEvent};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,6 +32,21 @@ async fn trigger(engine: tauri::State<'_, EngineState>) -> Result<(), String> {
 async fn pause(engine: tauri::State<'_, EngineState>) -> Result<(), String> {
     get_engine(&engine)?.pause();
     Ok(())
+}
+
+/// Tauri-команда: отменить текущую транскрибацию (только Whisper). Возвращает
+/// `true` если активный движок поддерживает cancel и сигнал отправлен; `false`
+/// если нет (Vosk / GigaAM / Qwen3-ASR — там нет API для прерывания инференса).
+#[tauri::command]
+async fn cancel_transcription(engine: tauri::State<'_, EngineState>) -> Result<bool, String> {
+    Ok(get_engine(&engine)?.cancel_transcription())
+}
+
+/// Tauri-команда: поддерживает ли активный движок отмену. UI использует это,
+/// чтобы показывать / скрывать кнопку «Стоп» в transcribing-состоянии.
+#[tauri::command]
+async fn active_supports_cancel(engine: tauri::State<'_, EngineState>) -> Result<bool, String> {
+    Ok(get_engine(&engine)?.active_supports_cancel())
 }
 
 /// Tauri-команда: получить уровень громкости (0-100)
@@ -67,7 +83,50 @@ fn get_loaded_models(engine: tauri::State<'_, EngineState>) -> Result<serde_json
     }))
 }
 
+/// Tauri-команда: имя текущего активного default-микрофона (через cpal).
+/// Фронтенд использует для отображения "Активный микрофон: ..." в Settings и
+/// чтобы записать gain под правильный device-key в `mic_gain_per_device`.
+/// Возвращает пустую строку если устройства нет.
+#[tauri::command]
+fn get_default_input_device_name() -> String {
+    arcanaglyph_core::audio::default_input_device_name().unwrap_or_default()
+}
+
+/// Tauri-команда: список движков, включённых в текущую сборку (по cargo features).
+/// Фронтенд использует это, чтобы пометить недоступные пункты в dropdown'е как disabled.
+#[tauri::command]
+fn get_compiled_engines() -> Vec<&'static str> {
+    TranscriberType::compiled_engines()
+        .into_iter()
+        .map(|t| t.as_str())
+        .collect()
+}
+
+/// Tauri-команда: какие SIMD-фичи доступны на текущем CPU. Фронтенд использует это,
+/// чтобы предупредить пользователя при выборе тяжёлой модели (Whisper Large без AVX2
+/// — это 10-30× замедление).
+#[tauri::command]
+fn get_cpu_features() -> serde_json::Value {
+    #[cfg(target_arch = "x86_64")]
+    {
+        serde_json::json!({
+            "avx": std::is_x86_feature_detected!("avx"),
+            "avx2": std::is_x86_feature_detected!("avx2"),
+            "fma": std::is_x86_feature_detected!("fma"),
+        })
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        serde_json::json!({
+            "avx": false,
+            "avx2": false,
+            "fma": false,
+        })
+    }
+}
+
 /// Управляет автозапуском через .desktop файл в ~/.config/autostart/
+#[cfg(target_os = "linux")]
 fn set_autostart(enabled: bool) {
     let home = match std::env::var("HOME") {
         Ok(h) => std::path::PathBuf::from(h),
@@ -108,15 +167,19 @@ fn set_autostart(enabled: bool) {
     }
 }
 
-/// Устанавливает UDP-скрипты ag-trigger и ag-pause (для Wayland)
-fn install_wayland_scripts() {
-    let is_wayland = std::env::var("XDG_SESSION_TYPE")
-        .map(|v| v == "wayland")
-        .unwrap_or(false);
-    if !is_wayland {
-        return;
-    }
+// Заглушка автозапуска для Windows/macOS.
+// На Windows нужен HKCU\Software\Microsoft\Windows\CurrentVersion\Run,
+// на macOS — ~/Library/LaunchAgents/*.plist. Оставлено на следующий этап портирования.
+#[cfg(not(target_os = "linux"))]
+fn set_autostart(_enabled: bool) {}
 
+/// Устанавливает UDP-скрипты ag-trigger и ag-pause (для Wayland)
+#[cfg(target_os = "linux")]
+fn install_wayland_scripts() {
+    // Скрипты ставим на ЛЮБОМ Linux: на Wayland tauri-plugin-global-shortcut
+    // вообще не работает (нет X11 grab), на X11+GNOME он часто не доставляет
+    // event'ы (mutter перехватывает раньше). В обоих случаях нативные GNOME
+    // custom-keybindings → ag-trigger → UDP — единственное что работает надёжно.
     let bin_dir = match CoreConfig::scripts_dir() {
         Some(d) => d,
         None => return,
@@ -142,23 +205,34 @@ fn install_wayland_scripts() {
                 continue;
             }
             // chmod +x
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755));
-            }
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755));
             tracing::info!("Установлен скрипт: {}", path.display());
         }
     }
 }
 
-/// Скачивание одного файла с прогрессом
+// Заглушка установки Wayland-скриптов для Windows/macOS — там нет ни Wayland,
+// ни /usr/bin/nc; UDP-триггер всё ещё доступен через прямую отправку датаграмм.
+#[cfg(not(target_os = "linux"))]
+fn install_wayland_scripts() {}
+
+/// Скачивание одного файла с прогрессом.
+///
+/// Атомарность: пишем в `<dest>.partial` и переименовываем по успеху. Если процесс
+/// прервётся (Ctrl+C, обрыв сети, нехватка места) — целевой файл не появится,
+/// и следующий запуск перекачает с нуля. Это лечит «фантомно установленные» модели,
+/// которые потом валятся в whisper_model_load с «expected N tensors, got 5».
+///
+/// `min_size` — необязательный минимальный размер в байтах. Если задан и фактический
+/// размер меньше — возвращаем ошибку, файл `.partial` остаётся (перекачается заново).
 async fn download_file(
     url: &str,
     dest: &std::path::Path,
     model_id: &str,
     file_idx: usize,
     total_files: usize,
+    min_size: Option<u64>,
     app: &tauri::AppHandle,
 ) -> Result<(), String> {
     use futures_util::StreamExt;
@@ -169,6 +243,12 @@ async fn download_file(
     }
 
     let filename = dest.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+    // Скачиваем во временный *.partial, по успеху делаем atomic rename.
+    let partial = {
+        let mut s = dest.as_os_str().to_os_string();
+        s.push(".partial");
+        std::path::PathBuf::from(s)
+    };
     tracing::info!(
         "Скачивание [{}/{}] {} → {}",
         file_idx + 1,
@@ -183,9 +263,9 @@ async fn download_file(
     let total_size = response.content_length().unwrap_or(0);
 
     let mut stream = response.bytes_stream();
-    let mut file = tokio::fs::File::create(dest)
+    let mut file = tokio::fs::File::create(&partial)
         .await
-        .map_err(|e| format!("Не удалось создать {}: {}", filename, e))?;
+        .map_err(|e| format!("Не удалось создать {}: {}", partial.display(), e))?;
 
     let mut downloaded: u64 = 0;
     let mut last_progress: u64 = 0;
@@ -197,11 +277,7 @@ async fn download_file(
             .map_err(|e| format!("Ошибка записи {}: {}", filename, e))?;
 
         downloaded += chunk.len() as u64;
-        let progress_pct = if total_size > 0 {
-            downloaded * 100 / total_size
-        } else {
-            0
-        };
+        let progress_pct = (downloaded * 100).checked_div(total_size).unwrap_or(0);
         if progress_pct != last_progress {
             last_progress = progress_pct;
             let _ = app.emit(
@@ -217,6 +293,301 @@ async fn download_file(
                 }),
             );
         }
+    }
+    // Гарантируем, что данные сброшены на диск перед rename
+    if let Err(e) = tokio::io::AsyncWriteExt::flush(&mut file).await {
+        return Err(format!("Ошибка flush {}: {}", filename, e));
+    }
+    drop(file);
+
+    // Валидация размера до rename — иначе мы рискуем «успешно» переименовать обрезанный файл.
+    if let Some(min) = min_size
+        && downloaded < min
+    {
+        return Err(format!(
+            "Скачано {} байт для {}, ожидалось не меньше {} (источник вернул обрезанный ответ)",
+            downloaded, filename, min
+        ));
+    }
+
+    tokio::fs::rename(&partial, dest).await.map_err(|e| {
+        format!(
+            "Не удалось переименовать {} → {}: {}",
+            partial.display(),
+            dest.display(),
+            e
+        )
+    })?;
+    Ok(())
+}
+
+/// Распаковывает `.zip`, рассчитывая что архив имеет top-level директорию с именем,
+/// совпадающим с `expected_dir` (стандарт alphacephei для Vosk-моделей:
+/// `vosk-model-ru-0.42.zip` → `vosk-model-ru-0.42/{am,conf,graph,...}`).
+///
+/// Распаковка идёт в **родителя `expected_dir`**, чтобы top-level dir архива создал
+/// сам `expected_dir`. ВНИМАНИЕ: `zip_path.parent()` для нашей раскладки совпадает с
+/// `expected_dir` (zip лежит ВНУТРИ него), так что extract'ить туда нельзя — получится
+/// вложенность `expected_dir/expected_dir_name/...` и sanity-check не пройдёт.
+///
+/// После успешной распаковки сам `.zip` удаляется (~1.8 ГБ места).
+///
+/// Эмитит `download://extracting` сразу после старта чтобы UI заменил текст с
+/// «Скачивание…» на «Распаковка…» — фронтенд иначе видит застывший 100% прогресс
+/// на 30-90с (на N5095).
+///
+/// При ошибке распаковки **архив не удаляется** — пользователю нет смысла перекачивать
+/// 1.8 ГБ если zip целый, проблема в чём-то другом (диск, права, нестандартная структура).
+/// Удаляются только частично распакованные артефакты (всё в `expected_dir` КРОМЕ самого
+/// архива). На следующий клик «Скачать» вызывающий код пропустит download_file
+/// (увидит валидный zip на диске) и сразу попробует распаковать заново.
+async fn extract_zip_into_model_dir(
+    zip_path: &std::path::Path,
+    expected_dir: &std::path::Path,
+    model_id: &str,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    use tauri::Emitter;
+
+    let _ = app.emit("download://extracting", serde_json::json!({ "model_id": model_id }));
+
+    // Распаковка идёт в РОДИТЕЛЯ expected_dir, не в родителя zip_path. Подробности — в
+    // doc-комментарии выше.
+    let extract_target = expected_dir
+        .parent()
+        .ok_or_else(|| format!("у {} нет родителя", expected_dir.display()))?
+        .to_path_buf();
+    let zip_path_owned = zip_path.to_path_buf();
+
+    tracing::info!(
+        "Распаковка {} → {} (ожидается top-level дир {} в архиве)",
+        zip_path_owned.display(),
+        extract_target.display(),
+        expected_dir.file_name().and_then(|s| s.to_str()).unwrap_or("?")
+    );
+
+    // zip-крейт синхронный; распаковка ~1.8 ГБ → 2.6 ГБ на N5095 ~30-90с,
+    // нельзя блокировать async runtime — поэтому через spawn_blocking.
+    let extract_res = tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let f =
+            std::fs::File::open(&zip_path_owned).map_err(|e| format!("открыть {}: {}", zip_path_owned.display(), e))?;
+        let mut archive = zip::ZipArchive::new(f).map_err(|e| format!("zip read: {}", e))?;
+        archive
+            .extract(&extract_target)
+            .map_err(|e| format!("zip extract: {}", e))
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {}", e))?;
+
+    if let Err(e) = extract_res {
+        cleanup_extraction_artifacts(zip_path, expected_dir);
+        return Err(e);
+    }
+
+    // Sanity-check: alphacephei Vosk-zip кладёт `conf/` рядом с `am/graph/...`.
+    // Тот же чек используется в is_model_installed для vosk.
+    if !expected_dir.join("conf").exists() {
+        cleanup_extraction_artifacts(zip_path, expected_dir);
+        return Err(format!(
+            "после распаковки нет {}/conf — структура архива не та, что ожидалась",
+            expected_dir.display()
+        ));
+    }
+
+    if let Err(e) = std::fs::remove_file(zip_path) {
+        tracing::warn!(
+            "Не удалось удалить архив {} после распаковки: {}",
+            zip_path.display(),
+            e
+        );
+    }
+
+    Ok(())
+}
+
+/// Удаляет содержимое `model_dir` КРОМЕ самого `zip_path` — после неудачной распаковки
+/// частично созданные подпапки/файлы убираются, а архив сохраняется для retry без
+/// повторной загрузки 1.8 ГБ. zip_path в нашей раскладке всегда лежит ВНУТРИ model_dir,
+/// так что итерируем содержимое и пропускаем zip по имени файла.
+fn cleanup_extraction_artifacts(zip_path: &std::path::Path, model_dir: &std::path::Path) {
+    let zip_name = zip_path.file_name();
+    let Ok(entries) = std::fs::read_dir(model_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if Some(entry.file_name().as_os_str()) == zip_name {
+            continue; // не трогаем сам архив
+        }
+        let path = entry.path();
+        let _ = if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+    }
+}
+
+/// Проверяет наличие модели для активного транскрайбера и при необходимости
+/// скачивает её через `download_file()`. Прогресс эмитится через `download://progress`,
+/// после завершения — `download://complete`. Возвращает Ok(()) когда модель установлена
+/// (включая случай, когда она уже была на диске).
+///
+/// Защита от прерванного скачивания: если файл существует, но меньше
+/// `model.expected_min_size_bytes` — он считается повреждённым и удаляется
+/// перед перекачиванием. Это лечит ситуацию, когда `make run` был оборван и
+/// `whisper_model_load` падает с «expected N tensors, got 5».
+async fn ensure_active_model(transcriber_type: &str, app: &tauri::AppHandle) -> Result<(), String> {
+    use arcanaglyph_core::transcription_models;
+
+    let cfg = CoreConfig::load().map_err(|e| e.to_string())?;
+    let path = match transcriber_type {
+        "vosk" => cfg.model_path.clone(),
+        "whisper" => cfg.whisper_model_path.clone(),
+        "gigaam" => cfg.gigaam_model_path.clone(),
+        "qwen3asr" => cfg.qwen3asr_model_path.clone(),
+        _ => return Ok(()), // unknown тип — пусть engine create вернёт нормальную ошибку
+    };
+
+    // Для Whisper в реестре несколько моделей (Tiny/Small/Large) с разными размерами.
+    // Выбираем ту, чей `default_filename` совпадает с именем файла в `whisper_model_path` —
+    // иначе валидация может ошибочно посчитать Tiny-файл (~75 МБ) повреждённым по порогу
+    // Small (~400 МБ) или наоборот. Для остальных движков — одна модель на тип.
+    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let model = if transcriber_type == "whisper" && !filename.is_empty() {
+        transcription_models::find_by_type_and_filename(transcriber_type, filename)
+    } else {
+        transcription_models::find_by_transcriber_type(transcriber_type)
+    };
+    let min_size = model.and_then(|m| m.expected_min_size_bytes);
+
+    if is_model_installed(&path, transcriber_type, min_size) {
+        return Ok(()); // модель уже на месте и валидна
+    }
+
+    let model = model.ok_or_else(|| format!("В реестре нет модели для движка '{}'", transcriber_type))?;
+    tracing::info!(
+        "Модель для '{}' не найдена локально или повреждена — скачиваю '{}' ({})",
+        transcriber_type,
+        model.display_name,
+        model.size
+    );
+
+    // Whisper: путь — это файл (whisper_model_path указывает прямо на .bin).
+    // Остальные движки: путь — это директория с файлами модели; имя главного файла
+    // берём из последнего сегмента URL (а не из `default_filename` — это имя ДИРЕКТОРИИ,
+    // не файла; смешение сломало бы сохранение скачанной модели).
+    let main_dest: std::path::PathBuf = if transcriber_type == "whisper" {
+        path.clone()
+    } else {
+        let _ = std::fs::create_dir_all(&path);
+        let main_filename = model.download_url.rsplit('/').next().unwrap_or("model.bin");
+        path.join(main_filename)
+    };
+
+    // Чистим повреждённый главный файл (меньше порога), чтобы не путать atomic-rename.
+    if let (Some(min), Ok(meta)) = (min_size, std::fs::metadata(&main_dest))
+        && meta.is_file()
+        && meta.len() < min
+    {
+        tracing::warn!(
+            "Файл модели повреждён (размер {} байт, минимум {}) — будет перекачан: {}",
+            meta.len(),
+            min,
+            main_dest.display()
+        );
+        let _ = std::fs::remove_file(&main_dest);
+    }
+
+    let extras = model.extra_files.unwrap_or(&[]);
+    let total_files = 1 + extras.len();
+    // Тот же skip как в download_model: если zip уже скачан и валиден по размеру,
+    // не перекачиваем 1.8 ГБ ради повторной попытки распаковки.
+    let zip_already_downloaded = main_dest.extension().and_then(|s| s.to_str()) == Some("zip")
+        && match (min_size, std::fs::metadata(&main_dest)) {
+            (Some(min), Ok(m)) if m.is_file() => m.len() >= min,
+            _ => false,
+        };
+    if zip_already_downloaded {
+        tracing::info!(
+            "zip-архив {} уже на диске и валидного размера — пропускаем загрузку",
+            main_dest.display()
+        );
+    } else {
+        download_file(model.download_url, &main_dest, model.id, 0, total_files, min_size, app).await?;
+    }
+    // Если основной файл — .zip-архив, распаковываем сразу после скачивания.
+    // Сейчас касается только Vosk; для будущих архивных моделей сработает автоматом.
+    if main_dest.extension().and_then(|s| s.to_str()) == Some("zip") {
+        extract_zip_into_model_dir(&main_dest, &path, model.id, app).await?;
+    }
+    for (idx, (url, rel)) in extras.iter().enumerate() {
+        let extra_dest = path.join(rel);
+        // Для extra-файлов size-проверка не задаётся: размеры варьируются и порог в реестре пока один общий.
+        download_file(url, &extra_dest, model.id, idx + 1, total_files, None, app).await?;
+    }
+
+    let _ = app.emit("download://complete", serde_json::json!({ "model_id": model.id }));
+    tracing::info!("Модель '{}' успешно установлена", model.display_name);
+    Ok(())
+}
+
+/// Tauri-команда: удалить файлы модели с диска + очистить совпадающий путь в config'е.
+/// Если в config-поле для движка лежит ИМЕННО этот путь — оно затирается на пустой
+/// (чтобы UI после re-render'а не показывал мёртвый путь, и engine при следующем
+/// запуске на этом движке выбрасывал чистую ошибку «модель не выбрана» вместо
+/// попытки прочитать несуществующий файл). Если у пользователя несколько моделей
+/// одного движка (Whisper Tiny + Large) и удалена только одна — путь чистится
+/// только если совпадает с удалённой.
+///
+/// Whisper: путь это `.bin` файл → `remove_file`.
+/// Vosk / GigaAM / Qwen3-ASR: путь это директория → `remove_dir_all`.
+#[tauri::command]
+async fn delete_model(model_id: String, path: String) -> Result<(), String> {
+    let model_info = arcanaglyph_core::transcription_models::find(&model_id)
+        .ok_or_else(|| format!("Модель '{}' не найдена в реестре", model_id))?;
+    let pb = std::path::PathBuf::from(&path);
+
+    // Удаление файлов с диска (idempotent: если уже нет — продолжаем чистить config)
+    if pb.exists() {
+        if model_info.transcriber_type == "whisper" {
+            std::fs::remove_file(&pb).map_err(|e| format!("Не удалось удалить файл {}: {}", path, e))?;
+            tracing::info!("Удалён файл модели: {}", path);
+        } else if pb.is_dir() {
+            std::fs::remove_dir_all(&pb).map_err(|e| format!("Не удалось удалить директорию {}: {}", path, e))?;
+            tracing::info!("Удалена директория модели: {}", path);
+        } else {
+            std::fs::remove_file(&pb).map_err(|e| format!("Не удалось удалить {}: {}", path, e))?;
+            tracing::info!("Удалён файл модели: {}", path);
+        }
+    }
+
+    // Чистим config-путь, если он совпадает с удалённым.
+    let mut config = CoreConfig::load().map_err(|e| e.to_string())?;
+    let cleared = match model_info.transcriber_type {
+        "vosk" if config.model_path == pb => {
+            config.model_path = std::path::PathBuf::new();
+            true
+        }
+        "whisper" if config.whisper_model_path == pb => {
+            config.whisper_model_path = std::path::PathBuf::new();
+            true
+        }
+        "gigaam" if config.gigaam_model_path == pb => {
+            config.gigaam_model_path = std::path::PathBuf::new();
+            true
+        }
+        "qwen3asr" if config.qwen3asr_model_path == pb => {
+            config.qwen3asr_model_path = std::path::PathBuf::new();
+            true
+        }
+        _ => false,
+    };
+    if cleared {
+        config.save().map_err(|e| e.to_string())?;
+        tracing::info!(
+            "Очищен config-путь для движка '{}' после удаления модели",
+            model_info.transcriber_type
+        );
     }
     Ok(())
 }
@@ -241,12 +612,107 @@ async fn download_model(model_id: String, url: String, dest_dir: String, app: ta
     // Скачиваем основной файл
     let main_filename = url.rsplit('/').next().unwrap_or("model");
     let main_dest = dest_path.join(main_filename);
-    download_file(&url, &main_dest, &model_id, 0, total_files, &app).await?;
+    let min_size = model_info.and_then(|m| m.expected_min_size_bytes);
 
-    // Скачиваем дополнительные файлы
-    for (idx, (extra_url, rel_path)) in extra_files.iter().enumerate() {
-        let extra_dest = dest_path.join(rel_path);
-        download_file(extra_url, &extra_dest, &model_id, idx + 1, total_files, &app).await?;
+    // Guard: если модель уже установлена и валидна — не качаем заново. Это защищает от
+    // двойного клика, ре-нажатия после ошибки в другой части flow и от ситуации
+    // «config пустой, но файлы на диске лежат» (ручная подкладка). Config-путь обновим
+    // ниже как обычно, чтобы карточка перерисовалась корректно.
+    let already_installed = match model_info {
+        Some(m) => {
+            // Whisper хранит сам файл .bin как путь модели; остальные движки — директорию.
+            let install_path: std::path::PathBuf = if m.transcriber_type == "whisper" {
+                main_dest.clone()
+            } else {
+                dest_path.clone()
+            };
+            is_model_installed(&install_path, m.transcriber_type, m.expected_min_size_bytes)
+        }
+        None => false,
+    };
+    if already_installed {
+        tracing::info!(
+            "Модель '{}' уже установлена в {} — пропускаем скачивание",
+            model_id,
+            dest_path.display()
+        );
+    } else {
+        // Если zip-архив уже скачан и не повреждён по размеру — пропускаем download_file,
+        // сразу распаковываем. Это нужно когда прошлая попытка распаковки упала
+        // (extract_zip_into_model_dir на ошибке оставляет zip нетронутым), и пользователь
+        // повторно нажал «Скачать» — перекачивать 1.8 ГБ не нужно.
+        let zip_already_downloaded = main_dest.extension().and_then(|s| s.to_str()) == Some("zip")
+            && match (min_size, std::fs::metadata(&main_dest)) {
+                (Some(min), Ok(m)) if m.is_file() => m.len() >= min,
+                _ => false,
+            };
+        if zip_already_downloaded {
+            tracing::info!(
+                "zip-архив {} уже на диске и валидного размера — пропускаем загрузку, иду в распаковку",
+                main_dest.display()
+            );
+        } else {
+            download_file(&url, &main_dest, &model_id, 0, total_files, min_size, &app).await?;
+        }
+
+        // Если основной файл — .zip-архив, распаковываем сразу после скачивания.
+        // Сейчас касается только Vosk; для будущих архивных моделей сработает автоматом.
+        if main_dest.extension().and_then(|s| s.to_str()) == Some("zip") {
+            extract_zip_into_model_dir(&main_dest, &dest_path, &model_id, &app).await?;
+        }
+
+        // Скачиваем дополнительные файлы (внутри else — если модель уже установлена,
+        // is_model_installed проверил extras тоже, перекачивать их не нужно).
+        for (idx, (extra_url, rel_path)) in extra_files.iter().enumerate() {
+            let extra_dest = dest_path.join(rel_path);
+            download_file(extra_url, &extra_dest, &model_id, idx + 1, total_files, None, &app).await?;
+        }
+    }
+
+    // Авто-обновление config-пути для скачанной модели. Без этого:
+    //   1. После delete_model config-путь пуст; пользователь нажимает «Скачать» — файл
+    //      на диске есть, но config.whisper_model_path всё ещё "" → engine думает
+    //      что модель не выбрана, dropdown в UI помечает её как «(нет модели)».
+    //   2. Если пользователь хочет переключить варианты Whisper (Tiny/Large) через UI,
+    //      достаточно нажать «Скачать» — путь в config'е обновится сам.
+    // Whisper: путь — это сам .bin файл. Vosk/GigaAM/Qwen3-ASR — директория модели.
+    if let Some(model_info) = model_info {
+        let saved_path: std::path::PathBuf = if model_info.transcriber_type == "whisper" {
+            main_dest.clone()
+        } else {
+            dest_path.clone()
+        };
+        if let Ok(mut config) = CoreConfig::load() {
+            let updated = match model_info.transcriber_type {
+                "vosk" => {
+                    config.model_path = saved_path;
+                    true
+                }
+                "whisper" => {
+                    config.whisper_model_path = saved_path;
+                    true
+                }
+                "gigaam" => {
+                    config.gigaam_model_path = saved_path;
+                    true
+                }
+                "qwen3asr" => {
+                    config.qwen3asr_model_path = saved_path;
+                    true
+                }
+                _ => false,
+            };
+            if updated {
+                if let Err(e) = config.save() {
+                    tracing::warn!("Не удалось сохранить config-путь после скачивания: {}", e);
+                } else {
+                    tracing::info!(
+                        "Config-путь для движка '{}' обновлён на скачанный файл",
+                        model_info.transcriber_type
+                    );
+                }
+            }
+        }
     }
 
     let _ = app.emit(
@@ -268,7 +734,264 @@ fn is_wayland() -> bool {
         .unwrap_or(false)
 }
 
+/// Tauri-команда: запущены ли мы в GNOME-сессии (любой DM).
+/// Используется UI чтобы показывать toggle расширения только там, где оно
+/// применимо (на KDE/sway/Cinnamon наше расширение не работает).
+#[tauri::command]
+fn is_gnome() -> bool {
+    std::env::var("XDG_CURRENT_DESKTOP")
+        .map(|v| v.to_uppercase().contains("GNOME") || v.to_uppercase().contains("UNITY"))
+        .unwrap_or(false)
+}
+
+/// UUID нашего GNOME-расширения для виджета записи.
+const WIDGET_EXT_UUID: &str = "arcanaglyph-widget@arfi.tech";
+
+/// Источник файлов расширения (production: /usr/share/arcanaglyph/extension/...,
+/// dev: <repo_root>/extension/...). Возвращаем первый существующий путь.
+fn widget_ext_source_dir() -> Option<std::path::PathBuf> {
+    // 1. Production-путь (.deb положил сюда)
+    let prod = std::path::PathBuf::from("/usr/share/arcanaglyph/extension").join(WIDGET_EXT_UUID);
+    if prod.is_dir() {
+        return Some(prod);
+    }
+    // 2. Dev-путь относительно бинаря: target/{debug,release}/arcanaglyph → ../../extension/<uuid>
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(target_dir) = exe.parent()
+        && let Some(target_root) = target_dir.parent()
+        && let Some(repo_root) = target_root.parent()
+    {
+        let dev = repo_root.join("extension").join(WIDGET_EXT_UUID);
+        if dev.is_dir() {
+            return Some(dev);
+        }
+    }
+    // 3. Dev fallback: текущая рабочая директория (когда запущено `cargo run` из корня репо)
+    if let Ok(cwd) = std::env::current_dir() {
+        let dev = cwd.join("extension").join(WIDGET_EXT_UUID);
+        if dev.is_dir() {
+            return Some(dev);
+        }
+    }
+    None
+}
+
+/// Целевой user-путь куда устанавливаем расширение.
+fn widget_ext_user_dir() -> Option<std::path::PathBuf> {
+    dirs::data_dir().map(|d| d.join("gnome-shell/extensions").join(WIDGET_EXT_UUID))
+}
+
+/// Статус расширения: установлено ли в user dir и включено ли в gsettings.
+#[derive(serde::Serialize)]
+struct WidgetExtensionStatus {
+    available: bool, // есть ли .so/файлы расширения в источнике (можем установить)
+    installed: bool, // скопировано в ~/.local/share/gnome-shell/extensions/...
+    enabled: bool,   // в gsettings org.gnome.shell enabled-extensions
+}
+
+#[tauri::command]
+fn widget_extension_status() -> WidgetExtensionStatus {
+    let available = widget_ext_source_dir().is_some();
+    let installed = widget_ext_user_dir()
+        .map(|p| p.join("metadata.json").is_file())
+        .unwrap_or(false);
+    // Читаем enabled-extensions через gsettings — самый надёжный способ.
+    // Если gsettings нет (не GNOME) — enabled=false.
+    let enabled = std::process::Command::new("gsettings")
+        .args(["get", "org.gnome.shell", "enabled-extensions"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.contains(WIDGET_EXT_UUID))
+        .unwrap_or(false);
+    WidgetExtensionStatus {
+        available,
+        installed,
+        enabled,
+    }
+}
+
+/// Установить и включить расширение виджета. Идемпотентно.
+///
+/// 1. Сравнивает version из metadata.json (src vs dst). Совпадает → пропускаем
+///    копирование (файлы уже актуальны).
+/// 2. Перекомпилирует gschemas только если копировали.
+/// 3. Добавляет UUID в gsettings org.gnome.shell enabled-extensions
+///    напрямую — `gnome-extensions enable` отказывается активировать
+///    свежескопированное расширение пока gnome-shell не пере-сканировал
+///    директорию (на Wayland без relogin'а это не происходит). gsettings
+///    модификация идемпотентна (см. set_extension_enabled).
+/// 4. Best-effort `gnome-extensions enable` для случая когда shell уже знает
+///    об extension.
+///
+/// Возвращает `true` если расширение УЖЕ было активным до вызова — frontend
+/// тогда показывает короткий toast без модала про logout.
+#[tauri::command]
+fn install_widget_extension() -> Result<bool, String> {
+    let src = widget_ext_source_dir().ok_or_else(|| {
+        "Файлы расширения не найдены ни в /usr/share/arcanaglyph/extension/, ни в <repo>/extension/".to_string()
+    })?;
+    let dst = widget_ext_user_dir().ok_or_else(|| "Не удалось определить XDG_DATA_HOME".to_string())?;
+
+    let was_already_enabled = is_extension_enabled(WIDGET_EXT_UUID).unwrap_or(false);
+
+    // Если в установленной копии та же version — файлы не трогаем.
+    let needs_copy = !ext_version_matches(&src, &dst);
+    if needs_copy {
+        if dst.exists() {
+            std::fs::remove_dir_all(&dst)
+                .map_err(|e| format!("Не удалось очистить {}: {}", dst.display(), e))?;
+        }
+        std::fs::create_dir_all(&dst).map_err(|e| format!("mkdir {}: {}", dst.display(), e))?;
+        copy_dir_recursive(&src, &dst)
+            .map_err(|e| format!("copy {}→{}: {}", src.display(), dst.display(), e))?;
+        let schemas_dir = dst.join("schemas");
+        if schemas_dir.is_dir() {
+            let _ = std::process::Command::new("glib-compile-schemas")
+                .arg(&schemas_dir)
+                .output();
+        }
+        tracing::info!("Файлы расширения скопированы в {}", dst.display());
+    } else {
+        tracing::info!("Файлы расширения уже актуальны, пропускаю копирование");
+    }
+
+    // gsettings: идемпотентно (set_extension_enabled сам проверяет состояние).
+    set_extension_enabled(WIDGET_EXT_UUID, true)?;
+
+    // Best-effort активация в текущей shell-сессии.
+    let _ = std::process::Command::new("gnome-extensions")
+        .args(["enable", WIDGET_EXT_UUID])
+        .output();
+
+    Ok(was_already_enabled)
+}
+
+/// Сравнивает поле `"version"` в metadata.json src и dst. true если оба
+/// валидно прочитались и совпадают.
+fn ext_version_matches(src: &std::path::Path, dst: &std::path::Path) -> bool {
+    let read_ver = |p: &std::path::Path| -> Option<u64> {
+        let txt = std::fs::read_to_string(p.join("metadata.json")).ok()?;
+        let json: serde_json::Value = serde_json::from_str(&txt).ok()?;
+        json.get("version").and_then(|v| v.as_u64())
+    };
+    match (read_ver(src), read_ver(dst)) {
+        (Some(s), Some(d)) => s == d,
+        _ => false,
+    }
+}
+
+/// Проверяет, есть ли UUID в enabled-extensions через gsettings.
+fn is_extension_enabled(uuid: &str) -> Result<bool, String> {
+    let out = std::process::Command::new("gsettings")
+        .args(["get", "org.gnome.shell", "enabled-extensions"])
+        .output()
+        .map_err(|e| format!("gsettings get: {}", e))?;
+    if !out.status.success() {
+        return Ok(false);
+    }
+    let cur = String::from_utf8_lossy(&out.stdout);
+    Ok(parse_gvariant_strings(&cur).iter().any(|s| s == uuid))
+}
+
+/// Выключить расширение: убрать UUID из enabled-extensions через gsettings
+/// (файлы оставляем — быстрое включение обратно). Best-effort `gnome-extensions
+/// disable` для случая когда extension реально загружено в shell.
+#[tauri::command]
+fn disable_widget_extension() -> Result<(), String> {
+    set_extension_enabled(WIDGET_EXT_UUID, false)?;
+    let _ = std::process::Command::new("gnome-extensions")
+        .args(["disable", WIDGET_EXT_UUID])
+        .output();
+    Ok(())
+}
+
+/// Парсит GVariant string array `['a', 'b']` → Vec<String>. Пустой массив
+/// `@as []` или `[]` → пустой вектор.
+fn parse_gvariant_strings(s: &str) -> Vec<String> {
+    s.split('\'')
+        .skip(1)
+        .step_by(2)
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn format_gvariant_strings(list: &[String]) -> String {
+    let inner = list
+        .iter()
+        .map(|s| format!("'{}'", s))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{}]", inner)
+}
+
+/// Atomic-ish modify: читает gsettings enabled-extensions, добавляет/убирает
+/// UUID, пишет обратно. Если состояние уже правильное — no-op.
+fn set_extension_enabled(uuid: &str, enable: bool) -> Result<(), String> {
+    let out = std::process::Command::new("gsettings")
+        .args(["get", "org.gnome.shell", "enabled-extensions"])
+        .output()
+        .map_err(|e| format!("gsettings get: {}", e))?;
+    if !out.status.success() {
+        return Err(format!(
+            "gsettings get вернул ошибку: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let cur = String::from_utf8_lossy(&out.stdout);
+    let mut list = parse_gvariant_strings(&cur);
+    let already = list.iter().any(|s| s == uuid);
+    if enable && !already {
+        list.push(uuid.to_string());
+    } else if !enable && already {
+        list.retain(|s| s != uuid);
+    } else {
+        return Ok(());
+    }
+    let new_val = format_gvariant_strings(&list);
+    let out = std::process::Command::new("gsettings")
+        .args(["set", "org.gnome.shell", "enabled-extensions", &new_val])
+        .output()
+        .map_err(|e| format!("gsettings set: {}", e))?;
+    if !out.status.success() {
+        return Err(format!(
+            "gsettings set вернул ошибку: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+/// Запросить выход из GNOME-сессии. GNOME сам покажет диалог подтверждения о
+/// несохранённой работе.
+#[tauri::command]
+fn request_logout() -> Result<(), String> {
+    std::process::Command::new("gnome-session-quit")
+        .args(["--logout"])
+        .spawn()
+        .map_err(|e| format!("gnome-session-quit: {}", e))?;
+    Ok(())
+}
+
+/// Рекурсивное копирование директории (без external крейтов).
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let target = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_recursive(&path, &target)?;
+        } else {
+            std::fs::copy(&path, &target)?;
+        }
+    }
+    Ok(())
+}
+
 /// Конвертация формата хоткея из Tauri ("Super+Alt+Control+Space") в gsettings ("<Super><Alt><Control>space")
+#[cfg(target_os = "linux")]
 fn tauri_hotkey_to_gsettings(hotkey: &str) -> String {
     if hotkey.is_empty() {
         return String::new();
@@ -290,6 +1013,7 @@ fn tauri_hotkey_to_gsettings(hotkey: &str) -> String {
 }
 
 /// Маппинг латинских клавиш → XKB keysym кириллических (для GNOME gsettings)
+#[cfg(target_os = "linux")]
 fn latin_to_cyrillic_keysym(key: &str) -> Option<&'static str> {
     match key {
         "q" => Some("Cyrillic_shorti"),   // й
@@ -318,13 +1042,29 @@ fn latin_to_cyrillic_keysym(key: &str) -> Option<&'static str> {
         "b" => Some("Cyrillic_i"),        // и
         "n" => Some("Cyrillic_te"),       // т
         "m" => Some("Cyrillic_softsign"), // ь
+        // Спец-клавиша: на русской раскладке клавиша слева от 1 (`/~) даёт Ё.
+        // Без этого маппинга keybinding `<Control>grave` не срабатывает на ru-раскладке —
+        // GNOME ищет `<Control>Cyrillic_io` и не находит его.
+        "grave" => Some("Cyrillic_io"), // Ё
         _ => None,
     }
 }
 
-/// Tauri-команда: проверить, занята ли комбинация клавиш в GNOME
+/// Tauri-команда: проверить, занята ли комбинация клавиш в GNOME.
+/// На Win/macOS возвращает None — там GNOME отсутствует.
 #[tauri::command]
 fn check_hotkey_conflict(hotkey: String) -> Result<Option<String>, String> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = hotkey;
+        return Ok(None);
+    }
+    #[cfg(target_os = "linux")]
+    check_hotkey_conflict_gnome(hotkey)
+}
+
+#[cfg(target_os = "linux")]
+fn check_hotkey_conflict_gnome(hotkey: String) -> Result<Option<String>, String> {
     if hotkey.is_empty() {
         return Ok(None);
     }
@@ -405,9 +1145,21 @@ fn check_hotkey_conflict(hotkey: String) -> Result<Option<String>, String> {
     Ok(None)
 }
 
-/// Tauri-команда: зарегистрировать глобальные хоткеи через gsettings (Wayland/GNOME)
+/// Tauri-команда: зарегистрировать глобальные хоткеи через gsettings (Wayland/GNOME).
+/// На Win/macOS — no-op.
 #[tauri::command]
 fn register_gnome_hotkeys(hotkey_trigger: String, hotkey_pause: String) -> Result<(), String> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (hotkey_trigger, hotkey_pause);
+        return Ok(());
+    }
+    #[cfg(target_os = "linux")]
+    register_gnome_hotkeys_linux(hotkey_trigger, hotkey_pause)
+}
+
+#[cfg(target_os = "linux")]
+fn register_gnome_hotkeys_linux(hotkey_trigger: String, hotkey_pause: String) -> Result<(), String> {
     // Получаем текущий список custom keybindings
     let output = std::process::Command::new("gsettings")
         .args([
@@ -539,33 +1291,104 @@ fn register_gnome_hotkeys(hotkey_trigger: String, hotkey_pause: String) -> Resul
     Ok(())
 }
 
-/// Проверяет, установлена ли модель (не просто существование директории, а ключевые файлы)
-fn is_model_installed(path: &std::path::Path, transcriber_type: &str) -> bool {
+/// Проверяет, установлена ли модель (не просто существование директории, а ключевые файлы).
+///
+/// `min_size` — минимальный ожидаемый размер главного файла. Если задан и фактический
+/// размер меньше — считаем, что файл повреждён (например, прерванное скачивание).
+fn is_model_installed(path: &std::path::Path, transcriber_type: &str, min_size: Option<u64>) -> bool {
     if !path.exists() {
         return false;
     }
+
+    // Главный файл, размер которого валидируем по `min_size` (если задан).
+    // Для whisper это сам путь (это файл), для директорных движков — главный файл внутри.
+    let main_file: Option<std::path::PathBuf> = match transcriber_type {
+        "whisper" => Some(path.to_path_buf()),
+        "gigaam" => Some(path.join("v3_e2e_ctc.int8.onnx")),
+        "qwen3asr" => Some(path.join("tokenizer.json")),
+        _ => None,
+    };
+    if let Some(ref f) = main_file {
+        if !f.exists() {
+            return false;
+        }
+        if let Some(min) = min_size {
+            match std::fs::metadata(f) {
+                Ok(meta) if meta.is_file() && meta.len() >= min => {}
+                _ => return false,
+            }
+        }
+    }
+
+    // Дополнительные обязательные файлы (без проверки размера — только наличие)
     match transcriber_type {
-        "gigaam" => path.join("v3_e2e_ctc.int8.onnx").exists() && path.join("v3_e2e_ctc_vocab.txt").exists(),
-        "qwen3asr" => path.join("onnx_models/encoder_conv.onnx").exists() && path.join("tokenizer.json").exists(),
+        "gigaam" => path.join("v3_e2e_ctc_vocab.txt").exists(),
+        "qwen3asr" => path.join("onnx_models/encoder_conv.onnx").exists(),
         "vosk" => path.join("conf").exists() || path.join("am").exists() || path.join("graph").exists(),
-        _ => path.exists(),
+        _ => true,
     }
 }
 
-/// Tauri-команда: получить реестр моделей с проверкой наличия файлов
+/// Tauri-команда: получить реестр моделей с проверкой наличия файлов.
+/// Возвращает ВСЕ известные модели (включая недоступные в текущей сборке) с
+/// флагом `available`, чтобы UI мог показать неактивные карточки в disabled-стиле.
+///
+/// Путь модели резолвится так:
+///   1. Если в config'е под движок есть непустой путь — используем его.
+///   2. Иначе fallback на `models_base_dir/<default_filename>` из реестра.
+/// Это позволяет UI корректно отображать «Установлено» для моделей, чьи файлы
+/// физически лежат в дефолтной директории, но config-поле для них пустое
+/// (например после `delete_model` который чистит config-путь, или после
+/// первой установки `.deb` где config пустой по умолчанию).
 #[tauri::command]
 fn get_models() -> Result<serde_json::Value, String> {
     let config = CoreConfig::load().map_err(|e| e.to_string())?;
-    let models = arcanaglyph_core::transcription_models::all();
+    let models = arcanaglyph_core::transcription_models::all_with_availability();
     let result: Vec<_> = models
         .iter()
-        .map(|m| {
-            let path = match m.transcriber_type {
+        .map(|(m, available)| {
+            let config_path = match m.transcriber_type {
                 "vosk" => &config.model_path,
                 "whisper" => &config.whisper_model_path,
                 "gigaam" => &config.gigaam_model_path,
                 "qwen3asr" => &config.qwen3asr_model_path,
                 _ => &config.model_path,
+            };
+            // Резолвим путь к ФАЙЛУ модели (для проверки наличия + UI display).
+            //
+            // Для Whisper в реестре две модели (Tiny + Large), но `whisper_model_path`
+            // в config один. Если бы мы использовали config_path для обеих карточек,
+            // одна из них показывала бы статус другой (например, Large card видела бы
+            // `ggml-tiny.bin` если в config'е лежит он → размер не совпадает с
+            // expected → installed=false → ложное «Не найдена», хотя файл Large
+            // лежит в models_base_dir/ggml-large-v3-turbo.bin). Решение:
+            // **для Whisper — всегда `models_base_dir/<default_filename>` per-model**,
+            // независимо от config_path. Сам config_path всё ещё используется engine'ом
+            // для загрузки активной модели через `getModelPathFromCard`/dropdown в UI.
+            //
+            // Для Vosk/GigaAM/Qwen3-ASR — одна модель на движок, конфликта нет.
+            // Используем config_path; если пуст — fallback на default-локацию.
+            let resolved_path: std::path::PathBuf = match m.transcriber_type {
+                "whisper" => config.models_base_dir.join(m.default_filename),
+                _ => {
+                    if config_path.as_os_str().is_empty() {
+                        config.models_base_dir.join(m.default_filename)
+                    } else {
+                        config_path.clone()
+                    }
+                }
+            };
+            // Файл «установлен» считаем только для доступных движков —
+            // нет смысла показывать «зелёную галочку» для модели, которой backend нет.
+            let installed =
+                *available && is_model_installed(&resolved_path, m.transcriber_type, m.expected_min_size_bytes);
+            // Path для UI — если файла нет на диске, отдаём пустую строку. Иначе
+            // path input в карточке заполнялся бы дефолтной локацией даже после
+            // удаления, что вводит в заблуждение («путь есть, файла нет»).
+            let display_path = if installed {
+                resolved_path.display().to_string()
+            } else {
+                String::new()
             };
             serde_json::json!({
                 "id": m.id,
@@ -575,8 +1398,9 @@ fn get_models() -> Result<serde_json::Value, String> {
                 "description": m.description,
                 "size": m.size,
                 "download_url": m.download_url,
-                "installed": is_model_installed(path, m.transcriber_type),
-                "path": path.display().to_string(),
+                "installed": installed,
+                "available": *available,
+                "path": display_path,
             })
         })
         .collect();
@@ -606,8 +1430,59 @@ fn save_config(
     // Управляем видимостью трея
     tray::set_tray_visible(&app, config.show_tray);
 
+    // Репозиционируем виджет если он создан — на лету, без рестарта приложения.
+    // На Wayland set_position может быть проигнорирован mutter'ом — это ожидаемо.
+    if let Some(w) = app.get_webview_window("widget")
+        && let Ok(Some(monitor)) = w.primary_monitor()
+    {
+        let screen = monitor.size();
+        let scale = monitor.scale_factor();
+        let (x, y) = arcanaglyph_core::config::widget_position_xy(
+            &config.widget_position,
+            screen.width as f64 / scale,
+            screen.height as f64 / scale,
+            220.0,
+            40.0,
+        );
+        let _ = w.set_position(tauri::LogicalPosition::new(x, y));
+    }
+
+    // Wayland-путь: пишем позицию в gsettings нашего GNOME-расширения.
+    // Если расширение установлено и включено — оно сразу подхватит и переместит
+    // окно. Если нет — gsettings вернёт ошибку, игнорируем (для X11/non-GNOME
+    // эта запись просто бессмысленна, но безвредна).
+    let _ = std::process::Command::new("gsettings")
+        .args([
+            "set",
+            "org.gnome.shell.extensions.arcanaglyph-widget",
+            "position",
+            &config.widget_position,
+        ])
+        .output();
+
     if let Some(e) = engine.get() {
+        let prev_transcriber = e.active_transcriber_type();
+        let new_transcriber = config.transcriber.clone();
         e.update_config(config);
+
+        // Eager-preload: если активный движок изменился — грузим новую модель в фоне
+        // СРАЗУ (не дожидаясь первого Ctrl+Ё). preload_model сам эмитит ModelLoading и
+        // ModelLoaded → frontend обновит top-status и блокирует mic-btn на время загрузки.
+        // Это убирает тот баг, когда top-status горел «Готов» пока на самом деле модель
+        // ещё не была в памяти и trigger() лениво её догружал на 10-20с.
+        if prev_transcriber != new_transcriber {
+            let engine_state: EngineState = engine.inner().clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = tokio::task::spawn_blocking(move || {
+                    if let Some(e) = engine_state.get()
+                        && let Err(err) = e.preload_model(&new_transcriber)
+                    {
+                        tracing::warn!("Eager preload '{:?}' не удалась: {}", new_transcriber, err);
+                    }
+                })
+                .await;
+            });
+        }
     }
     Ok(())
 }
@@ -675,15 +1550,37 @@ fn export_history(format: String, db: tauri::State<'_, Arc<HistoryDB>>) -> Resul
     Ok(path.to_string_lossy().to_string())
 }
 
-/// Tauri-команда: повторно транскрибировать запись другой моделью
+/// Tauri-команда: повторно транскрибировать запись другой моделью.
+///
+/// `allow`'ы нужны для сборок с уменьшенным набором features (например `--no-default-features`),
+/// где после раннего возврата ошибки оставшийся код становится статически unreachable.
 #[tauri::command]
+#[allow(unreachable_code, unused_variables)]
 async fn retranscribe(
     recording_id: i64,
     transcriber_type: String,
     db: tauri::State<'_, Arc<HistoryDB>>,
 ) -> Result<serde_json::Value, String> {
+    #[cfg(any(feature = "gigaam", feature = "gigaam-system-ort"))]
     use arcanaglyph_core::gigaam::transcriber::GigaAmTranscriber;
-    use arcanaglyph_core::transcriber::{Transcriber, VoskTranscriber, WhisperTranscriber};
+    use arcanaglyph_core::transcriber::Transcriber;
+    #[cfg(feature = "vosk")]
+    use arcanaglyph_core::transcriber::VoskTranscriber;
+    #[cfg(feature = "whisper")]
+    use arcanaglyph_core::transcriber::WhisperTranscriber;
+
+    // Ранний выход, если запрошенный движок не включён в текущую сборку.
+    // Это убирает unreachable-предупреждения при сборках с уменьшенным набором features
+    // и даёт пользователю понятную ошибку до чтения аудиофайла.
+    if !TranscriberType::compiled_engines()
+        .iter()
+        .any(|e| e.as_str() == transcriber_type)
+    {
+        return Err(format!(
+            "Движок '{}' недоступен в этой сборке — пересоберите с соответствующей cargo feature",
+            transcriber_type
+        ));
+    }
 
     // Получаем запись из БД
     let entries = db.query(0, 1000, 0).map_err(|e| e.to_string())?.0;
@@ -749,26 +1646,38 @@ async fn retranscribe(
         return Err(format!("Запись уже распознана моделью {}", model_name));
     }
 
-    // Создаём транскрайбер
+    // Создаём транскрайбер.
+    // Каждое плечо собирается только при включённой соответствующей feature.
+    // Любая строка, не подобранная активными плечами (включая корректные имена движков,
+    // не включённых в сборку), попадает в дефолтное плечо с понятной ошибкой.
     let (transcriber, sr): (Box<dyn Transcriber>, u32) = match transcriber_type.as_str() {
+        #[cfg(feature = "vosk")]
         "vosk" => {
             let t = VoskTranscriber::new(&config.model_path, config.sample_rate as f32).map_err(|e| e.to_string())?;
             (Box::new(t), config.sample_rate)
         }
+        #[cfg(feature = "whisper")]
         "whisper" => {
             let t = WhisperTranscriber::new(&config.whisper_model_path).map_err(|e| e.to_string())?;
             (Box::new(t), config.sample_rate)
         }
+        #[cfg(any(feature = "gigaam", feature = "gigaam-system-ort"))]
         "gigaam" => {
             let t = GigaAmTranscriber::new(&config.gigaam_model_path).map_err(|e| e.to_string())?;
             (Box::new(t), config.sample_rate)
         }
+        #[cfg(feature = "qwen3asr")]
         "qwen3asr" => {
             let t = arcanaglyph_core::qwen3asr::transcriber::Qwen3AsrTranscriber::new(&config.qwen3asr_model_path)
                 .map_err(|e| e.to_string())?;
             (Box::new(t), config.sample_rate)
         }
-        _ => unreachable!(),
+        other => {
+            return Err(format!(
+                "Движок '{}' недоступен в этой сборке — пересоберите с соответствующей cargo feature",
+                other
+            ));
+        }
     };
 
     // Транскрибируем
@@ -824,17 +1733,190 @@ async fn hide_window(window: tauri::Window, visible: tauri::State<'_, Arc<Atomic
     Ok(())
 }
 
-fn main() {
-    // Инициализируем логирование
-    // Подавляем логи whisper.cpp (whisper_rs::whisper_sys_log) — оставляем только наши
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::new("info,whisper_rs=warn"))
-        .init();
+/// Выбирает путь к `libonnxruntime.so` для load-dynamic backend ORT и записывает его в
+/// `ORT_DYLIB_PATH`. ВАЖНО: вызывать ДО первого касания `ort` (первый вызов —
+/// `Session::builder()` в `gigaam/transcriber.rs`). Не имеет эффекта если ORT_DYLIB_PATH
+/// уже выставлена (например, Makefile при `make run`).
+///
+/// Приоритет:
+/// 1. `ORT_DYLIB_PATH` в env — оставляем как есть (dev override).
+/// 2. `/usr/local/lib/libonnxruntime.so` — self-build пользователя (десктоп с самосборкой ORT).
+/// 3. Bundled в `.deb` — `/usr/lib/arcanaglyph/libonnxruntime-{avx2,noavx}.so`,
+///    выбор по runtime AVX-detection.
+///
+/// Если ничего не нашли — оставляем env пустой и ort попробует системный dlopen
+/// (LD_LIBRARY_PATH, /usr/lib, /etc/ld.so.cache). Это путь dev-сборки на машине без
+/// нашего pre-arrangement'а — fallback логика ничего не ломает.
+#[cfg(target_os = "linux")]
+fn setup_ort_dylib_path() {
+    use std::path::Path;
 
-    let config = CoreConfig::load().unwrap_or_else(|e| {
+    if std::env::var_os("ORT_DYLIB_PATH").is_some() {
+        tracing::info!(
+            "ORT_DYLIB_PATH = {} (взят из env)",
+            std::env::var("ORT_DYLIB_PATH").unwrap_or_default()
+        );
+        return;
+    }
+
+    let local_lib = Path::new("/usr/local/lib/libonnxruntime.so");
+    if local_lib.exists() {
+        // SAFETY: вызывается в main() до спавна тредов, до загрузки ort.
+        unsafe { std::env::set_var("ORT_DYLIB_PATH", local_lib) };
+        tracing::info!("ORT_DYLIB_PATH = {} (self-build override)", local_lib.display());
+        return;
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    let bundled = if std::is_x86_feature_detected!("avx") {
+        "/usr/lib/arcanaglyph/libonnxruntime-avx2.so"
+    } else {
+        "/usr/lib/arcanaglyph/libonnxruntime-noavx.so"
+    };
+    #[cfg(not(target_arch = "x86_64"))]
+    let bundled = "/usr/lib/arcanaglyph/libonnxruntime.so";
+
+    let bundled_path = Path::new(bundled);
+    if bundled_path.exists() {
+        // SAFETY: вызывается в main() до спавна тредов, до загрузки ort.
+        unsafe { std::env::set_var("ORT_DYLIB_PATH", bundled_path) };
+        tracing::info!("ORT_DYLIB_PATH = {} (bundled .deb)", bundled_path.display());
+        return;
+    }
+
+    tracing::warn!(
+        "ORT_DYLIB_PATH не выставлена и libonnxruntime.so не найдена ни в /usr/local/lib, \
+         ни в /usr/lib/arcanaglyph. ORT попробует загрузить через системный dlopen — \
+         если в LD_LIBRARY_PATH нет нужной либы, GigaAM/Qwen3-ASR упадут при инициализации."
+    );
+}
+
+#[cfg(not(target_os = "linux"))]
+fn setup_ort_dylib_path() {
+    // На Windows/macOS ORT крейт ищет либу через системные механизмы — ничего не делаем.
+}
+
+/// Проставляет glib `g_prgname` в "arcanaglyph", чтобы GTK/GDK выставили `WM_CLASS`
+/// в "arcanaglyph" вне зависимости от физического имени бинаря.
+///
+/// Зачем: в self-contained `.deb` у нас два бинаря — `arcanaglyph-avx` и
+/// `arcanaglyph-noavx` (см. `assets/scripts/arcanaglyph-wrapper.sh`). По умолчанию
+/// GTK берёт `g_prgname` из `argv[0]` → `WM_CLASS = "arcanaglyph-noavx"`. Это не
+/// совпадает со `StartupWMClass=arcanaglyph` в `assets/arcanaglyph.desktop`, и
+/// GNOME shell не привязывает работающее окно к ярлыку приложения — в Dash
+/// появляется отдельная иконка с именем бинаря. После явной установки `g_prgname`
+/// `WM_CLASS = "arcanaglyph"` и Dash корректно группирует окно с ярлыком.
+///
+/// Вызывать ДО любого GTK/GDK init (т.е. до `tauri::Builder::new()`).
+#[cfg(target_os = "linux")]
+fn setup_program_name() {
+    unsafe extern "C" {
+        fn g_set_prgname(prgname: *const std::ffi::c_char);
+    }
+    let name = std::ffi::CString::new("arcanaglyph").expect("static name without NULs");
+    // SAFETY: glib `g_set_prgname` копирует строку в свой буфер; срок жизни
+    // нашего CString не важен. Вызывается до спавна потоков и до GTK init.
+    unsafe { g_set_prgname(name.as_ptr()) };
+}
+
+#[cfg(not(target_os = "linux"))]
+fn setup_program_name() {}
+
+fn main() {
+    // Инициализируем логирование. Дефолт — `info,whisper_rs=warn` (тихий whisper.cpp);
+    // через `RUST_LOG` можно перебить (например `RUST_LOG=info,whisper_rs=trace` для
+    // отладки whisper-инференса — увидим внутренние ggml/encoder сообщения).
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,whisper_rs=warn"));
+    tracing_subscriber::fmt().with_env_filter(filter).init();
+
+    // Выбираем libonnxruntime.so для GigaAM/Qwen3-ASR. Делаем сразу после init трейсинга,
+    // чтобы все последующие сообщения о выборе ORT попали в лог; и сильно ДО первого
+    // обращения к `ort` (первое касание — в transcriber.rs при создании engine после
+    // скачивания модели, спустя секунды).
+    setup_ort_dylib_path();
+    // Принудительно ставим WM_CLASS=arcanaglyph (для группировки в GNOME Dash).
+    setup_program_name();
+
+    let mut config = CoreConfig::load().unwrap_or_else(|e| {
         tracing::warn!("Не удалось загрузить конфиг: {}, используем дефолтные настройки", e);
         CoreConfig::default()
     });
+
+    // Возможные причины авто-fallback'а на старте (показываются единым toast'ом в UI):
+    //   1. В SQLite сохранён движок, не включённый в текущую сборку
+    //      (например, ранее был Vosk, а сейчас собрано без feature `vosk`).
+    //   2. Активный движок ONNX-based (GigaAM/Qwen3-ASR), а CPU без AVX.
+    //      Эмпирически проверено: pre-built ONNX Runtime от Microsoft (тот, что качает
+    //      `ort` крейт через `download-binaries`) на CPU без AVX крашит SIGILL ещё
+    //      до первого `println!`. Поэтому, если у пользователя выбран ONNX-движок и
+    //      нет AVX — мягко переключаемся на не-ONNX (Whisper или Vosk) и сохраняем
+    //      выбор в БД, чтобы UI показал реальное состояние.
+    let mut engine_fallback: Option<(String, String)> = None;
+
+    // Случай 1: движок не включён в текущую сборку.
+    // ВАЖНО: НЕ сохраняем fallback в БД — пользовательский выбор (например, GigaAM)
+    // остаётся в конфиге как первичный. Если пользователь пересоберёт с другой
+    // feature-set'ом или установит более производительный CPU — выбор GigaAM сразу
+    // станет активным без необходимости восстанавливать настройку. Toast в UI
+    // объяснит, какой именно движок реально использовался в этой сессии.
+    if !config.transcriber.is_compiled_in() {
+        let original = config.transcriber.as_str().to_string();
+        let new_engine = TranscriberType::compiled_engines()
+            .into_iter()
+            .next()
+            .unwrap_or_default();
+        config.transcriber = new_engine;
+        let fallback = config.transcriber.as_str().to_string();
+        tracing::warn!(
+            "Движок '{}' не включён в эту сборку — используется '{}' (runtime-fallback, БД не меняется)",
+            original,
+            fallback
+        );
+        engine_fallback = Some((original, fallback));
+    }
+
+    // Случай 2: ONNX-based движок на CPU без AVX. На не-x86_64 (aarch64 и т.д.)
+    // считаем, что AVX-проблем нет — там используются другие SIMD-наборы.
+    #[cfg(target_arch = "x86_64")]
+    let avx_ok = std::is_x86_feature_detected!("avx");
+    #[cfg(not(target_arch = "x86_64"))]
+    let avx_ok = true;
+    // ORT-фича `download-binaries` тянет Microsoft pre-built ORT — требует AVX.
+    // `load-dynamic` (через `gigaam-system-ort`) использует локальную libonnxruntime.so
+    // (см. `setup_ort_dylib_path()` выше). На наших .deb-сборках выбирается no-AVX-вариант,
+    // поэтому AVX не нужен.
+    // qwen3asr использует тот же ORT-крейт что и gigaam (после унификации feature'ов),
+    // поэтому условие AVX-требования совпадает.
+    let ort_needs_avx = cfg!(feature = "gigaam") && !cfg!(feature = "gigaam-system-ort");
+    let needs_avx = match config.transcriber {
+        TranscriberType::GigaAm | TranscriberType::Qwen3Asr => ort_needs_avx,
+        _ => false,
+    };
+    if !avx_ok && needs_avx {
+        let original = config.transcriber.as_str().to_string();
+        // Ищем первый не-ONNX движок среди скомпилированных (Whisper, потом Vosk).
+        let alt = TranscriberType::compiled_engines()
+            .into_iter()
+            .find(|t| !matches!(t, TranscriberType::GigaAm | TranscriberType::Qwen3Asr));
+        if let Some(new_engine) = alt {
+            config.transcriber = new_engine;
+            let fallback = config.transcriber.as_str().to_string();
+            // НЕ сохраняем в БД — пользовательский выбор (GigaAM) остаётся первичным.
+            tracing::warn!(
+                "CPU без AVX: '{}' требует ONNX Runtime с AVX — runtime-переключение на '{}' (БД не меняется)",
+                original,
+                fallback
+            );
+            engine_fallback = Some((original, fallback));
+        } else {
+            // Все скомпилированные движки требуют AVX (только gigaam/qwen3asr).
+            // Engine всё равно создастся и упадёт SIGILL'ом — это редкий кейс
+            // явной пользовательской ошибки при сборке.
+            tracing::error!("CPU без AVX и нет не-ONNX движков в сборке — engine может крашить");
+        }
+    }
+
     let hotkey = config.hotkey.clone();
     let hotkey_pause = config.hotkey_pause.clone();
 
@@ -872,43 +1954,10 @@ fn main() {
                 .build(),
         )
         .setup(move |app| {
-            // Устанавливаем UDP-скрипты для Wayland (если ещё не установлены)
-            // Создаём директорию моделей если не существует
+            // Создаём директорию моделей если не существует. Сами модели качаем
+            // позже через `ensure_active_model` — единым generic-механизмом для всех движков.
             if let Some(models_dir) = CoreConfig::models_dir() {
                 let _ = std::fs::create_dir_all(&models_dir);
-
-                // Автоскачивание GigaAM v3 при первом запуске
-                let gigaam_dir = models_dir.join("gigaam-v3-e2e-ctc");
-                if !gigaam_dir.join("v3_e2e_ctc.int8.onnx").exists() {
-                    tracing::info!("GigaAM v3 не найдена — скачиваю автоматически...");
-                    let _ = std::fs::create_dir_all(&gigaam_dir);
-                    let files = [
-                        ("https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/main/v3_e2e_ctc.int8.onnx", "v3_e2e_ctc.int8.onnx"),
-                        ("https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/main/v3_e2e_ctc_vocab.txt", "v3_e2e_ctc_vocab.txt"),
-                    ];
-                    let gd = gigaam_dir.clone();
-                    tauri::async_runtime::spawn(async move {
-                        for (url, filename) in &files {
-                            let dest = gd.join(filename);
-                            tracing::info!("Скачиваю {} ...", filename);
-                            match reqwest::get(*url).await {
-                                Ok(response) => {
-                                    match response.bytes().await {
-                                        Ok(bytes) => {
-                                            if let Err(e) = tokio::fs::write(&dest, &bytes).await {
-                                                tracing::error!("Ошибка записи {}: {}", filename, e);
-                                            } else {
-                                                tracing::info!("{} скачан ({}MB)", filename, bytes.len() / 1_000_000);
-                                            }
-                                        }
-                                        Err(e) => tracing::error!("Ошибка скачивания {}: {}", filename, e),
-                                    }
-                                }
-                                Err(e) => tracing::error!("Ошибка запроса {}: {}", filename, e),
-                            }
-                        }
-                    });
-                }
             }
 
             install_wayland_scripts();
@@ -971,13 +2020,34 @@ fn main() {
             let history_db = Arc::new(HistoryDB::new(&db_path, audio_cache).map_err(|e| e.to_string())?);
             app.manage(history_db);
 
-            // Загрузка модели в фоне
+            // Скачивание модели и загрузка engine в фоне.
+            // Выполняем СТРОГО последовательно: сначала убеждаемся, что модель активного
+            // движка на диске (качаем при первом запуске), затем создаём engine. Это убирает
+            // ERROR-логи при первом запуске («failed to open <model>») — engine видит файл.
             let app_handle_load = app.handle().clone();
             let engine_state_load = engine_state.clone();
+            let engine_fallback_evt = engine_fallback.clone();
+            let active_transcriber = config.transcriber.as_str().to_string();
+            // Копию widget_position берём заранее — после spawn'а ниже config moves в engine
+            let widget_position = config.widget_position.clone();
             tauri::async_runtime::spawn(async move {
+                if let Err(e) = ensure_active_model(&active_transcriber, &app_handle_load).await {
+                    tracing::error!(
+                        "Не удалось подготовить модель для '{}': {}",
+                        active_transcriber,
+                        e
+                    );
+                    let _ = app_handle_load.emit(
+                        "engine://error",
+                        serde_json::json!({ "message": format!("Не удалось скачать модель: {}", e) }),
+                    );
+                    return;
+                }
+
                 let result = tokio::task::spawn_blocking(move || {
                     ArcanaEngine::new(config, window_visible)
-                }).await;
+                })
+                .await;
 
                 match result {
                     Ok(Ok(engine)) => {
@@ -986,6 +2056,15 @@ fn main() {
                         let _ = engine_state_load.set(engine);
                         tracing::info!("Engine готов к работе");
                         let _ = app_handle_load.emit("engine://model-loaded", serde_json::json!({}));
+
+                        // Если при старте сработал auto-fallback на дефолтный движок — сообщаем UI,
+                        // чтобы тот показал toast «движок X недоступен, используется Y».
+                        if let Some((original, fallback)) = engine_fallback_evt {
+                            let _ = app_handle_load.emit(
+                                "engine://fallback",
+                                serde_json::json!({ "original": original, "fallback": fallback }),
+                            );
+                        }
 
                         // Предзагрузка дополнительных моделей в фоне
                         if engine_state_load.get().is_some() {
@@ -1059,6 +2138,7 @@ fn main() {
                                             EngineEvent::TranscriptionResult(text) => ("engine://transcription-result", serde_json::json!({"text": text})),
                                             EngineEvent::Transcribing => ("engine://transcribing", serde_json::json!({})),
                                             EngineEvent::FinishedProcessing => ("engine://finished-processing", serde_json::json!({})),
+                                            EngineEvent::ModelLoading(name) => ("engine://model-loading", serde_json::json!({"model": name})),
                                             EngineEvent::ModelLoaded => ("engine://model-loaded", serde_json::json!({})),
                                             EngineEvent::RequestFocus => { tray::show_window(&app_handle_events); continue; }
                                             EngineEvent::Error(msg) => ("engine://error", serde_json::json!({"message": msg})),
@@ -1102,7 +2182,9 @@ fn main() {
                     "widget",
                     tauri::WebviewUrl::App("widget.html".into()),
                 )
-                .title("")
+                // Title используется GNOME-расширением arcanaglyph-widget@arfi.tech
+                // для идентификации именно этого окна (wm_class общий с главным).
+                .title("ArcanaGlyph Recording Widget")
                 .inner_size(widget_width, widget_height)
                 .resizable(false)
                 .decorations(false)
@@ -1111,12 +2193,20 @@ fn main() {
                 .visible(false)
                 .skip_taskbar(true);
 
-                // Позиционируем в правом верхнем углу экрана
+                // Позиционируем виджет по выбору пользователя (config.widget_position).
+                // На Wayland mutter может проигнорировать приложенческое позиционирование
+                // (security-model `xdg_toplevel`) — это ожидаемо, в UI показывается хинт.
                 if let Some(monitor) = app.primary_monitor().ok().flatten() {
                     let screen = monitor.size();
                     let scale = monitor.scale_factor();
-                    let x = (screen.width as f64 / scale) - widget_width - 24.0;
-                    builder = builder.position(x, 48.0);
+                    let (x, y) = arcanaglyph_core::config::widget_position_xy(
+                        &widget_position,
+                        screen.width as f64 / scale,
+                        screen.height as f64 / scale,
+                        widget_width,
+                        widget_height,
+                    );
+                    builder = builder.position(x, y);
                 }
 
                 if let Err(e) = builder.build() {
@@ -1154,26 +2244,77 @@ fn main() {
                 }
             }
 
-            // Авторегистрация горячих клавиш в GNOME (Wayland) при первом запуске
-            {
-                let is_wayland = std::env::var("XDG_SESSION_TYPE")
-                    .map(|v| v == "wayland")
-                    .unwrap_or(false);
-                if is_wayland && !hotkey.is_empty() {
-                    // Проверяем, зарегистрированы ли уже наши хоткеи
+            // Авторегистрация горячих клавиш в GNOME (Wayland И X11) при первом запуске.
+            // Запускаем на любом GNOME-сеансе:
+            // - на Wayland tauri-plugin-global-shortcut вообще не работает (нет X11);
+            // - на X11+GNOME он часто не получает event'ы (mutter их перехватывает).
+            // Нативные GNOME custom-keybindings → ag-trigger → UDP — единственный
+            // надёжный путь для GNOME. Для не-GNOME DE (KDE/i3/sway) этот блок просто
+            // тихо отвалится с ошибкой gsettings — там нужно настраивать вручную.
+            #[cfg(target_os = "linux")]
+            if !hotkey.is_empty() {
+                // Проверяем, зарегистрированы ли уже наши хоткеи. Перерегистрируем если
+                // отсутствует ЛЮБОЙ из четырёх slots — особенно cyr-варианты, которые
+                // могли не быть созданы старой версией кода без mapping для grave.
+                let probe = |slot: &str| -> bool {
                     let check = std::process::Command::new("gsettings")
-                        .args(["get", "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/arcanaglyph-trigger/", "binding"])
+                        .args([
+                            "get",
+                            &format!("org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/{}/", slot),
+                            "binding",
+                        ])
                         .output();
-                    let needs_register = match check {
+                    match check {
                         Ok(out) => {
                             let val = String::from_utf8_lossy(&out.stdout).trim().to_string();
                             val.is_empty() || val == "''" || val.contains("No such")
                         }
                         Err(_) => true,
-                    };
-                    if needs_register {
-                        tracing::info!("Первый запуск на Wayland — регистрирую горячие клавиши в GNOME...");
-                        let _ = register_gnome_hotkeys(hotkey.clone(), hotkey_pause.clone());
+                    }
+                };
+                let needs_register = probe("arcanaglyph-trigger")
+                    || probe("arcanaglyph-trigger-cyr")
+                    || probe("arcanaglyph-pause")
+                    || probe("arcanaglyph-pause-cyr");
+                if needs_register {
+                    tracing::info!("Регистрирую глобальные горячие клавиши в GNOME...");
+                    if let Err(e) = register_gnome_hotkeys(hotkey.clone(), hotkey_pause.clone()) {
+                        tracing::warn!("Не удалось зарегистрировать GNOME-хоткеи (не GNOME?): {}", e);
+                    }
+                }
+
+                // Пинок XKB на X11+GNOME: заставляем mutter пере-grab'ить keysym'ы.
+                // Без этого на свежезагруженной системе кириллические keybindings
+                // (`<Control>Cyrillic_io` для Ё) НЕ срабатывают пока пользователь
+                // не переключит раскладку хотя бы раз вручную (Super+Space).
+                // setxkbmap с теми же параметрами триггерит XKB-reload и mutter
+                // пересоздаёт grabs, включая Cyrillic_io.
+                let is_x11 = std::env::var("XDG_SESSION_TYPE")
+                    .map(|v| v == "x11")
+                    .unwrap_or(false);
+                if is_x11
+                    && let Ok(query) = std::process::Command::new("setxkbmap").arg("-query").output()
+                {
+                    let mut layout = String::new();
+                    let mut variant = String::new();
+                    for line in String::from_utf8_lossy(&query.stdout).lines() {
+                        if let Some(rest) = line.strip_prefix("layout:") {
+                            layout = rest.trim().to_string();
+                        } else if let Some(rest) = line.strip_prefix("variant:") {
+                            variant = rest.trim().to_string();
+                        }
+                    }
+                    if !layout.is_empty() {
+                        let mut args = vec!["-layout".to_string(), layout.clone()];
+                        if !variant.is_empty() {
+                            args.push("-variant".to_string());
+                            args.push(variant.clone());
+                        }
+                        let _ = std::process::Command::new("setxkbmap").args(&args).output();
+                        tracing::info!(
+                            "XKB пнут (layout={}, variant={}) — mutter пере-grab'ит cyr keysym'ы",
+                            layout, variant
+                        );
                     }
                 }
             }
@@ -1202,7 +2343,7 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![trigger, pause, get_audio_level, is_recording, is_paused, is_model_loaded, get_loaded_models, get_models, download_model, is_wayland, check_hotkey_conflict, register_gnome_hotkeys, hide_window, load_config, save_config, set_history_filter, set_language, get_history, delete_history_entry, clear_history, export_history, retranscribe, get_audio_data])
+        .invoke_handler(tauri::generate_handler![trigger, pause, cancel_transcription, active_supports_cancel, get_audio_level, is_recording, is_paused, is_model_loaded, get_loaded_models, get_compiled_engines, get_cpu_features, get_default_input_device_name, get_models, download_model, delete_model, is_wayland, is_gnome, widget_extension_status, install_widget_extension, disable_widget_extension, request_logout, check_hotkey_conflict, register_gnome_hotkeys, hide_window, load_config, save_config, set_history_filter, set_language, get_history, delete_history_entry, clear_history, export_history, retranscribe, get_audio_data])
         .on_window_event(|window, event| {
             // Перехватываем закрытие окна — скрываем вместо закрытия
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
