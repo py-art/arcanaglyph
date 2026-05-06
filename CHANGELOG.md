@@ -6,12 +6,24 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование следует [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [Unreleased]
+
+### Удалено
+
+- GitLab CI job `build-deb-and-upload` (stage `deb` в `.gitlab-ci.yml`).
+  Дублировал GitHub Actions workflow `release.yml`, который собирает `.deb`
+  и заливает в GitHub Release автоматически на event `release: published`.
+  GitLab job падал на base image `rust:1` из-за отсутствия libclang
+  (нужен `whisper-rs-sys` через `bindgen`) — на `ubuntu-24.04` в GitHub
+  Actions libclang ставится с dev-зависимостями. Вместо двух параллельных
+  путей к одному ассету оставлен один.
+
 ## [1.6.0] - 2026-05-06
 
 ### Добавлено
 
 - Self-contained `.deb`-пакет: один артефакт работает на любом x86_64 Linux, AVX и без AVX,
-  без ручной настройки после `dpkg -i`. Внутри `.deb` лежат:
+  без ручной настройки после установки. Внутри `.deb` лежат:
   - `arcanaglyph-avx` — бинарь с whisper.cpp, скомпилированным с AVX/AVX2/FMA/F16C;
   - `arcanaglyph-noavx` — бинарь с whisper.cpp без AVX (`-mno-avx -mno-avx2 -mno-avx512f`),
     универсально-безопасный;
@@ -22,25 +34,19 @@
   бинарь. В каждом бинаре `setup_ort_dylib_path()` выбирает `libonnxruntime.so` по
   AVX-detection, с приоритетом self-build override (`/usr/local/lib/libonnxruntime.so` если
   есть). RPATH `/usr/lib/arcanaglyph` обеспечивает поиск libvosk.so без `LD_LIBRARY_PATH`.
-- Новые скрипты: `scripts/prepare-bundled-libs.sh` (качает Microsoft ORT и alphacep vosk
-  с пинами SHA256), `scripts/build-deb.sh` (двойная сборка + post-process через
-  `dpkg-deb -R/-b`) и `scripts/run-dev.sh` (автодетект cargo-features для `make run`).
-  `make dist` вызывает `build-deb.sh`, `make run` — `run-dev.sh`.
-- В git закоммичена `assets/libs/libonnxruntime-noavx.so` (24 МБ, наш self-build для
-  CPU без AVX). Остальные нативные либы качаются build-скриптом и в git не лежат
-  (исключены через `.gitignore`).
+- В git закоммичена `assets/libs/libonnxruntime-noavx.so` (24 МБ, self-build для
+  CPU без AVX). Остальные нативные либы (Microsoft ORT, alphacep vosk) качаются при
+  сборке и в git не лежат (исключены через `.gitignore`).
 - STT-движки переведены на cargo features: `gigaam` (default), `vosk`, `whisper`, `qwen3asr`,
   `all-engines`. Сборка по умолчанию (`cargo build`) проходит на любой Linux-машине без
   `libvosk.so` и без CMake — через self-contained GigaAM v3 (ONNX качается автоматически).
-- `make run` авто-выбирает cargo-features по CPU и наличию системных deps (логика в
-  `scripts/run-dev.sh`, симметрично `scripts/build-deb.sh` для `.deb`):
+- При локальной сборке cargo-features автоматически подбираются под CPU и наличие
+  system-deps:
   - на AVX-CPU: `gigaam` (default) + `vosk` (если найден `libvosk.so` в `/usr/local/lib`
     или `/usr/lib/arcanaglyph/`) + `whisper` (если есть `cmake`) + `qwen3asr` (всегда);
   - на CPU без AVX: `gigaam-system-ort` через локально собранный `libonnxruntime.so`
     плюс те же опциональные движки. Если `libvosk.so` нет ни в `/usr/local/lib`, ни в
     `/usr/lib/arcanaglyph/` — соответствующий движок пропускается с подсказкой.
-  `make install` больше не обязательно делать перед `make run` — libvosk из установленного
-  `.deb` подхватывается автоматически.
 - Runtime AVX-check в Tauri main: если в config выбран ONNX-движок, а CPU без AVX, приложение
   молча переключается на не-ONNX fallback (Whisper/Vosk при наличии в сборке) и показывает
   toast через существующий механизм `engine://fallback` — окно UI открывается всегда вместо
@@ -75,7 +81,6 @@
   приложение молча переключается на дефолтный движок и показывает toast в UI.
 - В UI: пункты dropdown'а «Движок транскрибации», не включённые в сборку, помечаются
   disabled-стилем с подписью «не собрано» / "not built".
-- `make test-all` — `cargo test --all-features` для машин со всеми STT-библиотеками.
 - README: раздел «Сборка с другими движками (cargo features)» с таблицей системных требований.
 
 ### Изменено
@@ -83,7 +88,7 @@
 - В runtime-зависимости `.deb` пакета добавлен `libayatana-appindicator3-1` (требуется для
   иконки в трее).
 - `TranscriberType::default()` теперь `GigaAm` (ранее `Vosk`) — приведено в соответствие с
-  CLAUDE.md, README и UI; новые установки получают рабочий движок «из коробки».
+  README и UI; новые установки получают рабочий движок «из коробки».
 - Cargo-фича `qwen3asr` больше не тянет `ort/download-binaries` принудительно — выбор
   ORT-backend'а (download-binaries vs load-dynamic) делегирован соседним `gigaam` /
   `gigaam-system-ort` фичам. Без этого `qwen3asr` нельзя было совмещать с
@@ -143,9 +148,9 @@
   со `StartupWMClass=arcanaglyph` в `.desktop`-файле — GNOME Dash не группировал окно с
   ярлыком, показывая отдельный пункт «Arcanaglyph-noavx» рядом с launcher'ом. Теперь
   `WM_CLASS = "arcanaglyph"`.
-- В `Makefile` `make install` и в README/CLAUDE.md команды установки переведены с
-  `sudo dpkg -i ... && sudo apt-get install -f -y` на единый `sudo apt install ./<deb>` —
-  apt сам разрешает зависимости (wl-clipboard и др.), не падает с ошибкой `dpkg`.
+- Команда установки `.deb` в README заменена с `sudo dpkg -i ... && sudo apt-get install -f -y`
+  на единый `sudo apt install ./<deb>` — apt сам разрешает зависимости (wl-clipboard и др.),
+  не падает с ошибкой `dpkg`.
 - Whisper транскрибация на Intel Atom Tremont (Celeron N5095, без AVX) падала с
   `whisper_full_with_state: failed to encode` (Error code: -6) после ~20с work-time.
   Корневая причина — `whisper_rs::FullParams::set_abort_callback_safe`: trampoline через
@@ -199,19 +204,11 @@
   что abort реально работает только пост-фактум.
 - `RUST_LOG`-override для tracing-фильтра — раньше он был захардкожен
   `info,whisper_rs=warn`, теперь читается из env (`EnvFilter::try_from_default_env`).
-- GitLab CI job `build-deb-and-upload` (новая stage `deb` после `release`): собирает
-  `.deb` через `scripts/build-deb.sh` на shared runner и заливает как ассет к свежему
-  GitHub Release через GitHub API. Кешит `~/.cargo` (registry плюс `cargo-tauri-cli`
-  бинарь) между прогонами.
-- В `scripts/build-deb.sh` выбор пути `.deb` для post-process: раньше использовался
-  `ls *.deb | head -1`, который при наличии старых `.deb` в `target/release/bundle/deb/`
-  возвращал алфавитно первый файл (например `1.5.0.deb` при пересборке `1.6.0`).
-  Post-process применялся к старому файлу, свежий оставался без bundled libs и wrapper'а,
-  после `apt install` ставился broken пакет (`libvosk.so: cannot open shared object
-  file`). Теперь файл вычисляется по точной версии из `tauri.conf.json`.
-- `make install` теперь **всегда** пересобирает `.deb` и переустанавливает с
-  `apt install --reinstall` (раньше пропускал сборку если файл `.deb` уже был, и не
-  переустанавливал если та же версия уже стоит).
+- Скрипт сборки `.deb` теперь выбирает свежий артефакт по точной версии из
+  `tauri.conf.json`. Раньше при наличии старых `.deb` в `target/release/bundle/deb/`
+  post-process применялся к алфавитно первому файлу (например `1.5.0.deb` при
+  пересборке `1.6.0`); свежий пакет оставался без bundled libs и wrapper'а, после
+  установки получался broken пакет (`libvosk.so: cannot open shared object file`).
 - Top-status «Готов к записи» больше не врёт во время фоновой загрузки модели: при
   `engine://model-loading` сбрасывается флаг `modelReady` и показывается «Загрузка
   модели X…». Заодно ушёл косяк с «непослушными» pause/stop-кнопками после переключения
@@ -221,8 +218,8 @@
   `"~1.8 ГБ"`, `expected_min_size_bytes` 40 МБ → 1.5 ГБ. Раньше описывали small-модель
   при URL большой модели — UI вводил в заблуждение.
 - Версия на странице «О приложении» (UI): была захардкожена `v1.5.0` в
-  `dist/index.html` при актуальной версии 1.6.0. Добавлена в memory-чек-лист
-  `version-bump.md` пятым обязательным местом.
+  `dist/index.html` при актуальной версии 1.6.0 — синхронизирована с фактической
+  из `tauri.conf.json`.
 
 ### Удалено
 
@@ -261,7 +258,6 @@
 - Пути моделей перенесены в карточки с кнопкой выбора директории (📁)
 - Базовый путь к моделям — общая настройка над карточками
 - Системный диалог выбора директории (tauri-plugin-dialog)
-- `make run` автоматически останавливает запущенный экземпляр
 
 ### Удалено
 
@@ -290,21 +286,19 @@
 
 ### Добавлено
 
-- GitHub Actions: автосборка .deb и .AppImage при создании релиза с SHA256-хэшами
+- GitHub Actions: автосборка `.deb` при создании релиза с SHA256-хэшами
 
 ## [1.3.3] - 2026-04-11
 
 ### Исправлено
 
-- CI: релизы GitLab/GitHub теперь создаются в одном pipeline с тегом (раньше не срабатывали)
+- CI: релиз и тег создаются в одном проходе pipeline (раньше не срабатывали)
 
 ## [1.3.2] - 2026-04-11
 
 ### Добавлено
 
-- `make install` — сборка (если нужно), остановка запущенного экземпляра, установка .deb и запуск приложения одной командой
-- CI: автоматическое зеркалирование в GitHub при merge в main
-- CI: автоматическое создание релизов в GitLab и GitHub из CHANGELOG
+- CI: автоматическая публикация GitHub Release с release notes из CHANGELOG
 
 ## [1.3.1] - 2026-04-11
 
@@ -363,4 +357,4 @@
 - UDP-скрипты для Wayland (автоустановка)
 - Проверка конфликтов хоткеев в GNOME
 - Раздел «О приложении» в меню
-- Сборка .deb и .AppImage через Tauri v2
+- Сборка `.deb` через Tauri v2

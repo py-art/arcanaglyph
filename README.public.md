@@ -26,12 +26,11 @@
 
 ## Установка
 
-Скачайте .deb или .AppImage из раздела [Releases](https://github.com/py-art/arcanaglyph/releases).
+Скачайте `.deb` из раздела [Releases](https://github.com/py-art/arcanaglyph/releases).
 
 ```bash
-# .deb (Ubuntu/Debian)
-sudo dpkg -i ArcanaGlyph_*_amd64.deb
-sudo apt-get install -f
+# Ubuntu/Debian — apt сам подтянет зависимости
+sudo apt install ./ArcanaGlyph_*_amd64.deb
 
 # Запуск
 arcanaglyph
@@ -57,7 +56,7 @@ arcanaglyph
 ## Удаление
 
 ```bash
-sudo dpkg -r arcanaglyph
+sudo apt remove arcanaglyph
 ```
 
 ## Лицензия
