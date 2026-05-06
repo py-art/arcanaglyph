@@ -314,7 +314,6 @@ impl Transcriber for WhisperTranscriber {
     feature = "whisper",
     feature = "gigaam",
     feature = "gigaam-system-ort",
-    feature = "gigaam-tract",
     feature = "qwen3asr"
 ))]
 pub(crate) fn trim_silence(samples: &[i16], sample_rate: u32) -> &[i16] {
@@ -402,7 +401,6 @@ pub(crate) fn remove_filler_words(text: &str) -> String {
     feature = "whisper",
     feature = "gigaam",
     feature = "gigaam-system-ort",
-    feature = "gigaam-tract",
     feature = "qwen3asr"
 ))]
 pub(crate) fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {

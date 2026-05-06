@@ -56,6 +56,22 @@
 - Pre-existing clippy warnings (`collapsible_if`, появились после обновления Rust 1.95):
   `crates/arcanaglyph-core/src/transcriber.rs:276` и `engine.rs:591` — заменены на
   `if let ... && ...` форму. `make all` снова проходит чисто.
+- `make run` на AVX-десктопе собирал только GigaAM (default-feature `gigaam`), из-за
+  чего во вкладке «Модели» все остальные движки помечались «Недоступна в этой сборке»,
+  а в dropdown'е «Движок транскрибации» — «(не собрано)». Логика автодетекта deps
+  (libvosk, cmake) была только в no-AVX-ветке Makefile. Теперь обе ветки вынесены в
+  `scripts/run-dev.sh`, и `make run` подбирает максимальный набор features
+  (`vosk`/`whisper` по наличию системных deps + `qwen3asr` всегда), как и в `.deb`.
+
+### Удалено
+
+- `gigaam-tract` backend и модель GigaAM v3 FP32 (~846 МБ) — tract не поддерживает
+  ONNX-оператор `Range`, который использует GigaAM v3, и backend никогда не работал
+  на этой модели (та же проблема в `wonnx`/`candle-onnx`). Удалены feature `gigaam-tract`,
+  optional dep `tract-onnx`, файлы `crates/arcanaglyph-core/src/gigaam/transcriber_tract.rs`
+  и `crates/arcanaglyph-core/src/transcription_models/gigaam_v3_fp32_speech_model.rs`,
+  все cfg-блоки. На no-AVX-машинах GigaAM по-прежнему работает через `gigaam-system-ort`
+  (load-dynamic ORT с локально собранной без-AVX libonnxruntime.so).
 
 ## [1.6.0] - 2026-05-04
 

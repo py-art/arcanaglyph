@@ -8,7 +8,6 @@
 // они нужны UI, чтобы показать пользователю даже те модели, чей backend в текущей
 // сборке не включён (метка «не доступно»). Сами transcriber'ы по-прежнему за
 // `#[cfg(feature = ...)]` и в реестр `all()` попадают только активные.
-pub mod gigaam_v3_fp32_speech_model;
 pub mod gigaam_v3_speech_model;
 pub mod qwen3_asr_speech_model;
 pub mod vosk_russian_speech_model;
@@ -65,14 +64,12 @@ pub fn all_with_availability() -> Vec<(&'static SpeechModelInfo, bool)> {
         // UI-dropdown "Движок транскрибации" должен предлагать оба варианта раздельно.
         (&whisper_tiny_speech_model::MODEL, cfg!(feature = "whisper")),
         (&whisper_large_v3_turbo_speech_model::MODEL, cfg!(feature = "whisper")),
-        // GigaAM. INT8 — для ort-backend'ов (`gigaam`, `gigaam-system-ort`),
-        // FP32 — только для tract'а (`gigaam-tract`, экспериментально).
-        // Оба имеют transcriber_type = "gigaam".
+        // GigaAM v3 INT8 — единственный вариант, общий для обоих ort-backend'ов
+        // (`gigaam` с download-binaries и `gigaam-system-ort` с load-dynamic).
         (
             &gigaam_v3_speech_model::MODEL,
             cfg!(any(feature = "gigaam", feature = "gigaam-system-ort")),
         ),
-        (&gigaam_v3_fp32_speech_model::MODEL, cfg!(feature = "gigaam-tract")),
         (&qwen3_asr_speech_model::MODEL, cfg!(feature = "qwen3asr")),
     ]
 }

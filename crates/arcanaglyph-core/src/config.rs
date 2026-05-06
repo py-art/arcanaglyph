@@ -28,16 +28,14 @@ pub enum TranscriberType {
 
 impl TranscriberType {
     /// Включён ли этот движок в текущую сборку через cargo feature.
-    /// GigaAM считается включённым при ЛЮБОМ из двух backend'ов (`gigaam` через ort
-    /// или `gigaam-tract` через pure-Rust tract) — для UI и fallback-логики
-    /// различие между бэкендами не важно, важен только сам движок GigaAM.
+    /// GigaAM считается включённым при ЛЮБОМ из двух ort-backend'ов (`gigaam` с
+    /// download-binaries или `gigaam-system-ort` с load-dynamic) — различие в способе
+    /// доставки libonnxruntime для UI не важно, важен только сам движок GigaAM.
     pub const fn is_compiled_in(&self) -> bool {
         match self {
             Self::Vosk => cfg!(feature = "vosk"),
             Self::Whisper => cfg!(feature = "whisper"),
-            Self::GigaAm => {
-                cfg!(feature = "gigaam") || cfg!(feature = "gigaam-system-ort") || cfg!(feature = "gigaam-tract")
-            }
+            Self::GigaAm => cfg!(feature = "gigaam") || cfg!(feature = "gigaam-system-ort"),
             Self::Qwen3Asr => cfg!(feature = "qwen3asr"),
         }
     }

@@ -42,8 +42,6 @@ default = ["gigaam"]
 vosk = ["arcanaglyph-core/vosk"]
 whisper = ["arcanaglyph-core/whisper"]
 gigaam = ["arcanaglyph-core/gigaam"]
-# tract-backend GigaAM (заготовка). UI/код приложения не отличает — TranscriberType::GigaAm один на все 3 backend'а.
-gigaam-tract = ["arcanaglyph-core/gigaam-tract"]
 # GigaAM через локально собранный onnxruntime без AVX (для N5095 и подобных).
 gigaam-system-ort = ["arcanaglyph-core/gigaam-system-ort"]
 qwen3asr = ["arcanaglyph-core/qwen3asr"]

@@ -48,10 +48,6 @@ whisper-rs = { version = "0.16", features = ["tracing_backend"], optional = true
 # собранной libonnxruntime 1.20.x. Без api-XX feature ort крейт зависает на init
 # из-за version mismatch с ORT C API. api-20 соответствует ORT 1.20.x (наша сборка).
 ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "half", "api-20"], optional = true }
-# tract-onnx — pure-Rust ONNX inference. Используется gigaam-tract feature как замена
-# ort'у на CPU без AVX (ort качает Microsoft pre-built ORT, требующий AVX → SIGILL
-# до main() на бюджетных CPU вроде Intel Celeron N5095). tract работает на любом x86_64/aarch64.
-tract-onnx = { version = "0.21", optional = true }
 ndarray = { version = "0.17", optional = true }
 rustfft = { version = "6", optional = true }
 tokenizers = { version = "0.21", optional = true }
@@ -67,10 +63,6 @@ whisper = ["dep:whisper-rs"]
 # Дефолт для современных x86_64 — быстрый INT8 inference.
 # `tls-native` нужна, чтобы build-script ort-sys мог скачать pre-built binaries.
 gigaam = ["dep:ort", "ort/download-binaries", "ort/tls-native", "dep:ndarray", "dep:rustfft"]
-# Альтернативный backend GigaAM на pure-Rust tract — заготовка для будущих моделей
-# без оператора Range (текущая GigaAM v3 его использует и tract translate'ить
-# не умеет, см. transcriber_tract.rs). Не активен на N5095 в текущем make run.
-gigaam-tract = ["dep:tract-onnx", "dep:ndarray", "dep:rustfft"]
 # GigaAM через ort с динамической загрузкой libonnxruntime.so (через dlopen).
 # Используется на CPU без AVX (N5095): локально собранная без-AVX libonnxruntime
 # берётся из ORT_DYLIB_PATH или стандартных путей (~/.local/lib и т.п.).

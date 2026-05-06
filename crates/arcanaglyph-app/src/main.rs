@@ -1599,7 +1599,7 @@ fn main() {
     // ORT-фича `download-binaries` тянет Microsoft pre-built ORT — требует AVX.
     // `load-dynamic` (через `gigaam-system-ort`) использует локальную libonnxruntime.so
     // (см. `setup_ort_dylib_path()` выше). На наших .deb-сборках выбирается no-AVX-вариант,
-    // поэтому AVX не нужен. `gigaam-tract` — pure-Rust, AVX не требует.
+    // поэтому AVX не нужен.
     // qwen3asr использует тот же ORT-крейт что и gigaam (после унификации feature'ов),
     // поэтому условие AVX-требования совпадает.
     let ort_needs_avx = cfg!(feature = "gigaam") && !cfg!(feature = "gigaam-system-ort");

@@ -11,16 +11,12 @@ use tracing::info;
 use crate::audio::{self, AudioCommand};
 use crate::config::{CoreConfig, TranscriberType};
 use crate::error::ArcanaError;
-// Параллельные backend'ы GigaAM с одинаковым именем GigaAmTranscriber:
+// Backend GigaAM: один transcriber.rs через ort, отличается только способ доставки
+// libonnxruntime.so (см. core/Cargo.toml):
 // - feature `gigaam` → ort + Microsoft pre-built ONNX (требует AVX)
 // - feature `gigaam-system-ort` → ort + локально собранная libonnxruntime (без AVX)
-// - feature `gigaam-tract` → tract pure-Rust (заготовка)
-// Mutually-exclusive (cargo features), поэтому код ниже видит ровно один тип.
-// `gigaam` и `gigaam-system-ort` используют один и тот же transcriber.rs (через ort).
 #[cfg(any(feature = "gigaam", feature = "gigaam-system-ort"))]
 use crate::gigaam::transcriber::GigaAmTranscriber;
-#[cfg(feature = "gigaam-tract")]
-use crate::gigaam::transcriber_tract::GigaAmTranscriber;
 use crate::history::HistoryDB;
 #[cfg(feature = "qwen3asr")]
 use crate::qwen3asr::transcriber::Qwen3AsrTranscriber;
@@ -158,7 +154,7 @@ impl ArcanaEngine {
                     .unwrap_or_else(|| "whisper".to_string());
                 Ok((name, Arc::new(t)))
             }
-            #[cfg(any(feature = "gigaam", feature = "gigaam-system-ort", feature = "gigaam-tract"))]
+            #[cfg(any(feature = "gigaam", feature = "gigaam-system-ort"))]
             TranscriberType::GigaAm => {
                 // init_ort_logging() ВРЕМЕННО только для feature `gigaam` (статически
                 // линкованный ORT). Для `gigaam-system-ort` (load-dynamic) вызов

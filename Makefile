@@ -57,54 +57,9 @@ build:
 ##############################################################################
 # Run local
 ##############################################################################
-.PHONY: run   ## Run application (AVX → all-engines; без AVX → gigaam-system-ort + vosk/whisper если есть deps)
+.PHONY: run   ## Run application (auto-detect deps via scripts/run-dev.sh)
 run:
-	@if pgrep -x arcanaglyph >/dev/null 2>&1; then \
-		echo "${YELLOW}INFO : ${RESET}ArcanaGlyph запущен — останавливаю...${RESET}"; \
-		pkill -x arcanaglyph && sleep 1; \
-	fi
-	@if grep -qw avx /proc/cpuinfo 2>/dev/null; then \
-		echo "${GREEN}INFO : ${AZURE}CPU поддерживает AVX — GigaAM через ort + Microsoft pre-built (INT8 ~225 МБ)${RESET}"; \
-		cargo run -p arcanaglyph-app --bin arcanaglyph; \
-	else \
-		LIBORT="$$HOME/.local/lib/libonnxruntime.so"; \
-		if [ -f "$$LIBORT" ]; then \
-			FEATURES="gigaam-system-ort"; \
-			echo "${GREEN}INFO : ${AZURE}CPU без AVX — GigaAM через локально собранный onnxruntime: $$LIBORT${RESET}"; \
-			LIBVOSK_DIR=""; \
-			if [ -f /usr/local/lib/libvosk.so ]; then \
-				FEATURES="$$FEATURES,vosk"; \
-				echo "${GREEN}INFO : ${AZURE}+ vosk (/usr/local/lib/libvosk.so)${RESET}"; \
-			elif [ -f /usr/lib/arcanaglyph/libvosk.so ]; then \
-				FEATURES="$$FEATURES,vosk"; \
-				LIBVOSK_DIR="/usr/lib/arcanaglyph"; \
-				echo "${GREEN}INFO : ${AZURE}+ vosk (/usr/lib/arcanaglyph/libvosk.so из установленного .deb)${RESET}"; \
-			else \
-				echo "${YELLOW}INFO : ${RESET}- vosk пропущен: нет libvosk.so ни в /usr/local/lib, ни в /usr/lib/arcanaglyph${RESET}"; \
-				echo "${YELLOW}        скачать: https://github.com/alphacep/vosk-api/releases (vosk-linux-x86_64-*.zip)${RESET}"; \
-				echo "${YELLOW}        или: make install (поставит .deb с bundled libvosk.so)${RESET}"; \
-			fi; \
-			if command -v cmake >/dev/null 2>&1; then \
-				FEATURES="$$FEATURES,whisper"; \
-				echo "${GREEN}INFO : ${AZURE}+ whisper (CMake найден)${RESET}"; \
-			else \
-				echo "${YELLOW}INFO : ${RESET}- whisper пропущен: нет CMake (sudo apt install cmake)${RESET}"; \
-			fi; \
-			echo "${GREEN}INFO : ${AZURE}features: $$FEATURES${RESET}"; \
-			ORT_DYLIB_PATH="$$LIBORT" LIBRARY_PATH="$$LIBVOSK_DIR:$${LIBRARY_PATH:-}" \
-			cargo run -p arcanaglyph-app --bin arcanaglyph --no-default-features --features "$$FEATURES"; \
-		else \
-			echo "${RED}ERROR: $$LIBORT не найден. Соберите onnxruntime без AVX:${RESET}"; \
-			echo "${YELLOW}  cd ~/projects/onnxruntime-build/onnxruntime && \\${RESET}"; \
-			echo "${YELLOW}  ./build.sh --config Release --build_shared_lib --parallel 3 --skip_tests \\${RESET}"; \
-			echo "${YELLOW}      --cmake_extra_defines CMAKE_CXX_FLAGS='-mno-avx -mno-avx2 -mno-avx512f' \\${RESET}"; \
-			echo "${YELLOW}      --cmake_extra_defines CMAKE_C_FLAGS='-mno-avx -mno-avx2 -mno-avx512f' \\${RESET}"; \
-			echo "${YELLOW}      --cmake_extra_defines onnxruntime_DISABLE_CONTRIB_OPS=ON && \\${RESET}"; \
-			echo "${YELLOW}  mkdir -p ~/.local/lib && cp build/Linux/Release/libonnxruntime.so* ~/.local/lib/${RESET}"; \
-			echo "${YELLOW}INFO : Откатываюсь на Whisper Tiny (медленнее, но работает)${RESET}"; \
-			cargo run -p arcanaglyph-app --bin arcanaglyph --no-default-features --features whisper; \
-		fi \
-	fi
+	@bash scripts/run-dev.sh
 
 ##############################################################################
 # Code quality
