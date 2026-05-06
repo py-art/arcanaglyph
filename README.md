@@ -30,36 +30,103 @@
 ## Быстрый старт (из исходников)
 
 ```bash
-# 1. Системные зависимости
+# 1. Системные зависимости (минимум — для дефолтной сборки с GigaAM v3)
 sudo apt-get install build-essential libasound2-dev libgtk-3-dev \
   libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev \
   wl-clipboard netcat-openbsd
 
-# 2. libvosk (если не установлена)
-# Скачать libvosk.so → /usr/local/lib/
-# Или: scripts/legacy/install_libvosk.bash
-
-# 3. Запуск
+# 2. Запуск (по умолчанию — только GigaAM v3, никаких системных STT-библиотек не требуется)
 make run
 ```
 
 При первом запуске GigaAM v3 скачается автоматически в `~/.local/share/arcanaglyph/models/`.
 
-## Сборка и установка .deb пакета
+### CPU без AVX (старые Celeron/Atom)
+
+Дефолтный движок GigaAM требует, чтобы CPU поддерживал инструкции **AVX** —
+pre-built ONNX Runtime, который тянет `ort/download-binaries`, инициализируется
+с AVX и крашит SIGILL'ом на старых CPU (например Intel Celeron N4xxx/N5xxx,
+Pentium Silver и т.п.).
+
+`make run` определяет это автоматически: на CPU без AVX он пересобирает
+приложение с **Whisper** (`--no-default-features --features whisper`).
+Whisper.cpp детектит CPU при сборке и использует только доступные SIMD —
+работает без AVX. Дополнительно, при запуске с дефолтной сборкой на CPU без
+AVX, само приложение делает runtime AVX-check и переключает движок на
+Whisper/Vosk если они скомпилированы — окно UI открывается всегда, без SIGILL.
+
+### Сборка с другими движками (cargo features)
+
+По умолчанию собирается только GigaAM v3 (ONNX, self-contained). Остальные движки
+включаются через cargo features — в скобках указаны дополнительные системные требования
+для каждого движка:
 
 ```bash
-# Требуется Tauri CLI
-cargo install tauri-cli
+# Дефолт: только GigaAM v3 (ничего лишнего ставить не нужно)
+cargo build
 
-# Сборка (несколько минут)
+# Все 4 движка
+cargo build --no-default-features --features all-engines
+
+# Дефолт + Vosk (требует libvosk.so в /usr/local/lib/)
+cargo build --features vosk
+
+# Дефолт + Whisper (требует CMake и C++ toolchain — `whisper-rs` собирает whisper.cpp)
+cargo build --features whisper
+
+# Дефолт + Qwen3-ASR (требует только сетевой доступ — ort качает binaries сам)
+cargo build --features qwen3asr
+```
+
+| Движок | cargo feature | Системные требования |
+| --- | --- | --- |
+| GigaAM v3 | `gigaam` (default) | Нет |
+| Qwen3-ASR | `qwen3asr` | Нет |
+| Whisper | `whisper` | CMake, C++ toolchain |
+| Vosk | `vosk` | `libvosk.so` в `/usr/local/lib/` (см. ниже) |
+
+Если в SQLite-конфиге сохранён движок, не включённый в текущую сборку (например, после
+переключения с `all-engines` на default), приложение **не падает**: оно автоматически
+переключается на дефолтный движок и показывает в UI toast «движок X не включён в сборку».
+
+### libvosk (только если собираете с feature `vosk`)
+
+```bash
+# Скачать prebuilt libvosk.so → /usr/local/lib/
+wget https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-linux-x86_64-0.3.45.zip
+unzip vosk-linux-x86_64-0.3.45.zip
+sudo cp vosk-linux-x86_64-0.3.45/libvosk.so /usr/local/lib/
+sudo cp vosk-linux-x86_64-0.3.45/vosk_api.h /usr/local/include/
+sudo ldconfig
+# Или собрать из исходников (часы): scripts/legacy/install_libvosk.bash
+```
+
+## Сборка и установка .deb пакета
+
+`make dist` собирает self-contained `.deb`, который работает на любом x86_64 Linux
+(с AVX и без AVX) сразу после `dpkg -i`. Внутри:
+
+- два бинаря: `arcanaglyph-avx` (whisper.cpp с AVX/AVX2/FMA/F16C) и `arcanaglyph-noavx`
+  (whisper.cpp с `-mno-avx*`); wrapper `/usr/bin/arcanaglyph` выбирает по `/proc/cpuinfo`.
+- `libonnxruntime-avx2.so` (Microsoft pre-built 1.20.1, ~16 МБ) и `libonnxruntime-noavx.so`
+  (наш self-build 1.20.1, ~24 МБ) — runtime AVX-detection выбирает нужный.
+- `libvosk.so` (alphacep pre-built 0.3.45, ~25 МБ) — для движка Vosk.
+
+Если на машине лежит `/usr/local/lib/libonnxruntime.so` (твой self-build) — он
+приоритетнее bundled. Аналогично `/usr/local/lib/libvosk.so` через ld.so.cache.
+
+```bash
+# Требуются: cargo-tauri-cli, cmake, dpkg-deb, curl, unzip
+cargo install tauri-cli --version "^2.0"
+
+# Сборка (~25-40 мин на N5095, ~10-15 мин на современном CPU)
 make dist
 
-# Результат
+# Результат — один .deb (~160 МБ)
 ls target/release/bundle/deb/ArcanaGlyph_*.deb
 
-# Установка
-sudo dpkg -i target/release/bundle/deb/ArcanaGlyph_1.5.0_amd64.deb
-sudo apt-get install -f   # если не хватает зависимостей
+# Установка (apt сам подтянет зависимости: wl-clipboard, libwebkit2gtk и т.д.)
+sudo apt install ./target/release/bundle/deb/ArcanaGlyph_1.6.0_amd64.deb
 
 # Запуск
 arcanaglyph
@@ -107,10 +174,11 @@ sudo dpkg -r arcanaglyph
 ```bash
 make help     # Показать все команды
 make run      # Запустить приложение
-make all      # fmt + clippy + check + test
+make all      # fmt + clippy + check + test (default features)
 make fmt      # cargo fmt
 make lint     # cargo clippy -- -D warnings
-make test     # cargo test
+make test     # cargo test (default features)
+make test-all # cargo test --all-features (требует все системные libs)
 make build    # Release-сборка
 make dist     # Сборка .deb и .AppImage
 make install  # Собрать (если нужно) и установить .deb локально

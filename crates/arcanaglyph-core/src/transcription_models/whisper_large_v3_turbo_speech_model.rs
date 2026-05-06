@@ -22,4 +22,6 @@ pub static MODEL: SpeechModelInfo = SpeechModelInfo {
     size: "~1.5 ГБ",
     download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
     extra_files: None,
+    // Реальный размер ~1.62 ГБ; порог в 1.4 ГБ переживёт минорные апдейты в источнике
+    expected_min_size_bytes: Some(1_400_000_000),
 };

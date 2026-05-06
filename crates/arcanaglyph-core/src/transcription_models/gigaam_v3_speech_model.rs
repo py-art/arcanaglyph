@@ -25,4 +25,6 @@ pub static MODEL: SpeechModelInfo = SpeechModelInfo {
         "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/main/v3_e2e_ctc_vocab.txt",
         "v3_e2e_ctc_vocab.txt",
     )]),
+    // Главный файл `v3_e2e_ctc.int8.onnx` ~225 МБ; порог 200 МБ
+    expected_min_size_bytes: Some(200_000_000),
 };

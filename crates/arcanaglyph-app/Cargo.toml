@@ -2,7 +2,7 @@
 
 [package]
 name = "arcanaglyph-app"
-version = "1.5.0"
+version = "1.6.0"
 edition = "2024"
 build = "src/build.rs"
 
@@ -15,7 +15,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
-arcanaglyph-core = { path = "../arcanaglyph-core" }
+arcanaglyph-core = { path = "../arcanaglyph-core", default-features = false }
 tokio = { version = "1.47.1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -29,7 +29,21 @@ tauri-plugin-dialog = "2"
 reqwest = { version = "0.12", features = ["stream"] }
 futures-util = "0.3"
 dirs = "6"
+# Распаковка .zip-архивов моделей (Vosk качается одним архивом). default-features = false
+# отключает bzip2/zstd/aes — Vosk-zip использует только deflate; экономит размер бинаря
+# и убирает нативные deps.
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [features]
-default = []
+# default включает app-feature "gigaam", которая каскадно включает core/gigaam.
+# Это важно: #[cfg(feature = "gigaam")] в коде app активен только когда app-feature
+# реально включена, а не только при пробросе подфичи core.
+default = ["gigaam"]
+vosk = ["arcanaglyph-core/vosk"]
+whisper = ["arcanaglyph-core/whisper"]
+gigaam = ["arcanaglyph-core/gigaam"]
+# GigaAM через локально собранный onnxruntime без AVX (для N5095 и подобных).
+gigaam-system-ort = ["arcanaglyph-core/gigaam-system-ort"]
+qwen3asr = ["arcanaglyph-core/qwen3asr"]
+all-engines = ["vosk", "whisper", "gigaam", "qwen3asr"]
 cuda = ["arcanaglyph-core/cuda"]

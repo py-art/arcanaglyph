@@ -386,7 +386,6 @@ impl Transcriber for Qwen3AsrTranscriber {
             .unwrap_or(ENDOFTEXT_ID);
 
         let mut generated = vec![first_token];
-        let mut cur_pos = seq_len as i64;
 
         // Извлекаем present_keys/values для KV cache
         let (_, keys_data) = init_outputs[1]
@@ -409,7 +408,7 @@ impl Transcriber for Qwen3AsrTranscriber {
 
         // 5. Авторегрессивный цикл
         let max_new_tokens = 512;
-        for _ in 0..max_new_tokens - 1 {
+        for (cur_pos, _) in (seq_len as i64..).zip(0..max_new_tokens - 1) {
             let last_token = *generated.last().unwrap();
             if last_token == IM_END_ID || last_token == ENDOFTEXT_ID {
                 break;
@@ -467,7 +466,6 @@ impl Transcriber for Qwen3AsrTranscriber {
                 .unwrap_or(ENDOFTEXT_ID);
 
             generated.push(next_token);
-            cur_pos += 1;
 
             // Обновляем KV cache
             let (new_keys_shape, new_keys) = step_outputs[1]
