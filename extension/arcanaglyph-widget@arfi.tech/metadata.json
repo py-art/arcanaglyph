@@ -1,0 +1,9 @@
+{
+  "name": "ArcanaGlyph Recording Widget",
+  "description": "Позиционирует плавающий виджет ArcanaGlyph (запись/таймер/пауза-стоп) на GNOME Wayland, где приложение само не может задать координаты окна (xdg_toplevel security model). Читает выбранную позицию из gsettings org.gnome.shell.extensions.arcanaglyph-widget и применяет к окну с title \"ArcanaGlyph Recording Widget\".",
+  "shell-version": ["46", "47", "48", "49"],
+  "uuid": "arcanaglyph-widget@arfi.tech",
+  "settings-schema": "org.gnome.shell.extensions.arcanaglyph-widget",
+  "url": "https://github.com/py-art/arcanaglyph",
+  "version": 1
+}

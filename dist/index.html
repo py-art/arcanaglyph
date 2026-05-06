@@ -1521,6 +1521,14 @@
             <small class="position-picker-hint" id="s-widget-position-hint" data-i18n="settings.widget_position_hint" hidden>На Wayland система может проигнорировать выбор</small>
           </div>
         </div>
+
+        <!-- Toggle GNOME-расширения для точного позиционирования виджета на Wayland.
+             Виден только когда XDG_CURRENT_DESKTOP=GNOME и XDG_SESSION_TYPE=wayland. -->
+        <div class="setting-row" id="s-widget-ext-row" hidden>
+          <label data-i18n="settings.widget_ext">Точное позиционирование на Wayland (GNOME)</label>
+          <div class="toggle" id="s-widget-ext"></div>
+        </div>
+        <small class="position-picker-hint" id="s-widget-ext-hint" data-i18n="settings.widget_ext_hint" hidden>Установит и активирует GNOME-расширение для точного размещения виджета. После активации потребуется выйти и войти заново.</small>
       </div>
 
       <!-- Таб: Модели -->
@@ -2786,6 +2794,52 @@
         }
       });
 
+      // GNOME-Wayland: показываем toggle GNOME-расширения для точного позиционирования.
+      // На X11 / KDE / sway / Cinnamon — расширение не применимо, ряд скрыт.
+      Promise.all([invoke('is_wayland'), invoke('is_gnome'), invoke('widget_extension_status')])
+        .then(([wayland, gnome, status]) => {
+          if (!(wayland && gnome && status.available)) return;
+          document.getElementById('s-widget-ext-row').hidden = false;
+          document.getElementById('s-widget-ext-hint').hidden = false;
+          // Текущее состояние toggle = enabled в gsettings (status.enabled).
+          // Если установлено но не enabled — toggle off (пользователь выключил вручную).
+          document.getElementById('s-widget-ext').classList.toggle('on', status.enabled);
+        }).catch(() => { /* gsettings/non-GNOME — игнорируем */ });
+
+      // Click-handler на toggle расширения: install + enable + предложить logout, либо disable.
+      document.getElementById('s-widget-ext').addEventListener('click', async () => {
+        const toggle = document.getElementById('s-widget-ext');
+        const wantOn = !toggle.classList.contains('on');
+        // Оптимистично переключаем визуально; откатим если бэкенд вернёт ошибку.
+        toggle.classList.toggle('on', wantOn);
+        try {
+          if (wantOn) {
+            // backend возвращает true если уже было включено — тогда не предлагаем relogin
+            const wasAlreadyEnabled = await invoke('install_widget_extension');
+            if (wasAlreadyEnabled) {
+              showToast(i18n.t('toast.widget_ext_already_enabled'), 'success', 3000);
+            } else {
+              showToast(i18n.t('toast.widget_ext_installed'), 'success', 4000);
+              const wantsLogout = await showConfirm(
+                i18n.t('modal.widget_ext_logout_question'),
+                i18n.t('modal.logout_now'),
+                i18n.t('modal.later'),
+              );
+              if (wantsLogout) {
+                await invoke('request_logout').catch(() => {});
+              }
+            }
+          } else {
+            await invoke('disable_widget_extension');
+            showToast(i18n.t('toast.widget_ext_disabled'), 'success', 3000);
+          }
+        } catch (e) {
+          // Откатываем визуально и сообщаем об ошибке
+          toggle.classList.toggle('on', !wantOn);
+          showToast(`${i18n.t('toast.error')}: ${e}`, 'error', 5000);
+        }
+      });
+
       // Picker позиции виджета: клик по точке выставляет её активной + триггерит changed
       document.querySelectorAll('#s-widget-position .position-picker-dot').forEach(dot => {
         dot.addEventListener('click', () => {
@@ -3255,20 +3309,29 @@
 
       // Очистить историю
       // Кастомный модальный диалог
-      function showConfirm(text) {
+      function showConfirm(text, confirmLabel, cancelLabel) {
         return new Promise(resolve => {
           const overlay = document.getElementById('modal-overlay');
+          const confirmEl = document.getElementById('modal-confirm');
+          const cancelEl = document.getElementById('modal-cancel');
+          const origConfirmText = confirmEl.textContent;
+          const origCancelText = cancelEl.textContent;
           document.getElementById('modal-text').textContent = text;
+          if (confirmLabel) confirmEl.textContent = confirmLabel;
+          if (cancelLabel) cancelEl.textContent = cancelLabel;
           overlay.classList.add('visible');
           const onConfirm = () => { cleanup(); resolve(true); };
           const onCancel = () => { cleanup(); resolve(false); };
           const cleanup = () => {
             overlay.classList.remove('visible');
-            document.getElementById('modal-confirm').removeEventListener('click', onConfirm);
-            document.getElementById('modal-cancel').removeEventListener('click', onCancel);
+            confirmEl.removeEventListener('click', onConfirm);
+            cancelEl.removeEventListener('click', onCancel);
+            // Восстанавливаем оригинальные тексты, чтобы не сломать другие вызовы.
+            confirmEl.textContent = origConfirmText;
+            cancelEl.textContent = origCancelText;
           };
-          document.getElementById('modal-confirm').addEventListener('click', onConfirm);
-          document.getElementById('modal-cancel').addEventListener('click', onCancel);
+          confirmEl.addEventListener('click', onConfirm);
+          cancelEl.addEventListener('click', onCancel);
         });
       }
 

@@ -177,6 +177,35 @@ chmod 755 "${EXTRACT_DIR}/usr/lib/arcanaglyph/arcanaglyph-noavx"
 chmod 644 "${EXTRACT_DIR}/usr/lib/arcanaglyph/"libonnxruntime-*.so
 chmod 644 "${EXTRACT_DIR}/usr/lib/arcanaglyph/libvosk.so"
 
+# Кладём GNOME Shell extension для позиционирования виджета на Wayland.
+# Пользователь включает его через UI настроек — приложение копирует
+# /usr/share/arcanaglyph/extension/<uuid>/ → ~/.local/share/gnome-shell/extensions/<uuid>/
+# и активирует через `gnome-extensions enable`.
+WIDGET_EXT_UUID="arcanaglyph-widget@arfi.tech"
+WIDGET_EXT_SRC="${REPO_ROOT}/extension/${WIDGET_EXT_UUID}"
+WIDGET_EXT_DST="${EXTRACT_DIR}/usr/share/arcanaglyph/extension/${WIDGET_EXT_UUID}"
+if [[ -d "${WIDGET_EXT_SRC}" ]]; then
+    mkdir -p "${WIDGET_EXT_DST}"
+    cp "${WIDGET_EXT_SRC}/metadata.json" "${WIDGET_EXT_DST}/"
+    cp "${WIDGET_EXT_SRC}/extension.js" "${WIDGET_EXT_DST}/"
+    if [[ -d "${WIDGET_EXT_SRC}/schemas" ]]; then
+        mkdir -p "${WIDGET_EXT_DST}/schemas"
+        cp "${WIDGET_EXT_SRC}/schemas/"*.gschema.xml "${WIDGET_EXT_DST}/schemas/"
+        # Перекомпилируем gschemas из чистого XML — версия glib на машине пользователя
+        # может отличаться от той, что собирала закоммиченный gschemas.compiled.
+        if command -v glib-compile-schemas >/dev/null 2>&1; then
+            glib-compile-schemas "${WIDGET_EXT_DST}/schemas/"
+        fi
+    fi
+    chmod 644 "${WIDGET_EXT_DST}/metadata.json"
+    chmod 644 "${WIDGET_EXT_DST}/extension.js"
+    [[ -f "${WIDGET_EXT_DST}/schemas/gschemas.compiled" ]] && chmod 644 "${WIDGET_EXT_DST}/schemas/gschemas.compiled"
+    [[ -f "${WIDGET_EXT_DST}/schemas/"*.gschema.xml ]] && chmod 644 "${WIDGET_EXT_DST}/schemas/"*.gschema.xml
+    log "Расширение виджета упаковано: ${WIDGET_EXT_DST}"
+else
+    warn "Расширение виджета не найдено в ${WIDGET_EXT_SRC}, пропускаю"
+fi
+
 # Обновляем Installed-Size в DEBIAN/control (в килобайтах). Иначе apt будет писать
 # неверные цифры в `apt show` и при апгрейде/удалении.
 NEW_SIZE_KB="$(du -sk "${EXTRACT_DIR}/usr" | awk '{print $1}')"

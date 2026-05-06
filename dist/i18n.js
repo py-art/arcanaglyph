@@ -115,6 +115,8 @@
         show_widget: 'Виджет записи',
         widget_position: 'Расположение виджета',
         widget_position_hint: 'На Wayland система может проигнорировать выбор',
+        widget_ext: 'Точное позиционирование на Wayland (GNOME)',
+        widget_ext_hint: 'Установит и активирует GNOME-расширение для точного размещения виджета. После активации потребуется выйти и войти заново.',
         language: 'Язык интерфейса',
         lang_ru: 'Русский',
         lang_en: 'English',
@@ -152,6 +154,9 @@
       modal: {
         cancel: 'Отмена',
         confirm_delete: 'Удалить',
+        widget_ext_logout_question: 'Расширение установлено и добавлено в автозагрузку GNOME Shell. Чтобы оно реально применилось к виджету, нужно выйти из системы и войти заново (Wayland не умеет перезагружать shell на лету). Выйти сейчас?',
+        logout_now: 'Выйти сейчас',
+        later: 'Позже',
       },
       toast: {
         saved: 'Сохранено',
@@ -159,6 +164,9 @@
         file_saved: 'Файл сохранён в папку Загрузки',
         error: 'Ошибка',
         engine_fallback: 'Движок «{original}» не включён в сборку — используется «{fallback}»',
+        widget_ext_installed: 'Расширение установлено и активировано',
+        widget_ext_already_enabled: 'Расширение уже активно',
+        widget_ext_disabled: 'Расширение отключено',
       },
       result: {
         empty: '(пустой результат)',
@@ -278,6 +286,8 @@
         show_widget: 'Recording widget',
         widget_position: 'Widget position',
         widget_position_hint: 'Wayland may ignore this choice',
+        widget_ext: 'Precise placement on Wayland (GNOME)',
+        widget_ext_hint: 'Installs and enables a small GNOME extension to place the widget at the chosen position. Logout/login required after enabling.',
         language: 'Interface language',
         lang_ru: 'Русский',
         lang_en: 'English',
@@ -315,6 +325,9 @@
       modal: {
         cancel: 'Cancel',
         confirm_delete: 'Delete',
+        widget_ext_logout_question: 'Extension installed and added to GNOME Shell autostart. To actually apply it to the widget, you need to log out and back in (Wayland cannot reload shell on the fly). Log out now?',
+        logout_now: 'Log out now',
+        later: 'Later',
       },
       toast: {
         saved: 'Saved',
@@ -322,6 +335,9 @@
         file_saved: 'File saved to Downloads folder',
         error: 'Error',
         engine_fallback: 'Engine "{original}" is not enabled in this build — using "{fallback}"',
+        widget_ext_installed: 'Extension installed and enabled',
+        widget_ext_already_enabled: 'Extension is already active',
+        widget_ext_disabled: 'Extension disabled',
       },
       result: {
         empty: '(empty result)',

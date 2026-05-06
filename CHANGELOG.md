@@ -104,6 +104,21 @@
   через `WebviewWindow::set_position`. Default — `bottom-center` для всех платформ.
   На Wayland mutter может проигнорировать выбор (security-model `xdg_toplevel`) —
   под picker'ом показывается соответствующий хинт.
+- GNOME Shell extension `arcanaglyph-widget@arfi.tech` для точного позиционирования
+  виджета на Wayland, где приложение само не может задать координаты окна.
+  Поставляется внутри `.deb` (`/usr/share/arcanaglyph/extension/`); при включении
+  toggle'а «Точное позиционирование на Wayland (GNOME)» в Settings приложение
+  копирует расширение в `~/.local/share/gnome-shell/extensions/`, перекомпилирует
+  gschema через `glib-compile-schemas` и активирует через `gnome-extensions enable`.
+  Дальше предлагает выйти из системы и войти заново через `gnome-session-quit`
+  (mutter не может перезагружать shell на Wayland без relogin'а). Само расширение
+  слушает gsettings-ключ `org.gnome.shell.extensions.arcanaglyph-widget position`
+  (приложение пишет туда выбранное в picker'е значение) и через `Meta.Window.move_frame`
+  переставляет окно с title `ArcanaGlyph Recording Widget`. Toggle виден только в
+  GNOME-Wayland сессии; на X11 / KDE / sway / Cinnamon — скрыт.
+  Поддерживаемые версии GNOME: 46/47/48/49 (Ubuntu 24.04 LTS — GNOME 46, Ubuntu
+  25.10 — GNOME 49). На GNOME 50+ — потребуется тестирование и обновление
+  `shell-version` в `metadata.json`.
 
 ### Исправлено
 
