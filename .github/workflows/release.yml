@@ -49,12 +49,41 @@ jobs:
         # На GitHub Actions FUSE недоступен в transitive subprocess'ах:
         # APPIMAGE_EXTRACT_AND_RUN=1 помогает только корневому AppImage,
         # но linuxdeploy форкает plugin-appimage (тоже AppImage), и тот падает.
-        # Скрипт распаковывает все AppImage-инструменты в ~/.cache/tauri/appimage/
-        # и подменяет .AppImage на shell-shim'ы — Tauri запустит их как обычный
-        # exec без FUSE-mount.
+        # Скрипт распаковывает plugin-appimage в ~/.cache/tauri/ и подменяет
+        # его на shell-shim — Tauri запустит как обычный exec без FUSE.
         run: bash scripts/ci-prepare-appimage-tools.sh
 
+      - name: Probe linuxdeploy can run (debug stderr)
+        # Tauri AppImage bundler глотает stderr процесса linuxdeploy и печатает
+        # только обобщённое "failed to run linuxdeploy". Прогоняем linuxdeploy
+        # руками — увидим конкретную ошибку (FUSE, shared lib, что угодно).
+        # `|| true` чтобы шаг не упал даже если linuxdeploy ругается; нам нужен
+        # сам диагностический вывод.
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          set +e
+          echo "=== Files in ~/.cache/tauri/ ==="
+          ls -la ~/.cache/tauri/
+          echo
+          echo "=== file ~/.cache/tauri/linuxdeploy-x86_64.AppImage ==="
+          file ~/.cache/tauri/linuxdeploy-x86_64.AppImage
+          echo
+          echo "=== Run linuxdeploy --version ==="
+          ~/.cache/tauri/linuxdeploy-x86_64.AppImage --version 2>&1
+          echo "linuxdeploy exit: $?"
+          echo
+          echo "=== Run linuxdeploy --help (truncated) ==="
+          ~/.cache/tauri/linuxdeploy-x86_64.AppImage --help 2>&1 | head -20
+          echo "linuxdeploy --help exit: $?"
+
       - name: Build self-contained .deb + .AppImage
+        env:
+          # APPIMAGE_EXTRACT_AND_RUN на уровне шага — наследуется в каждый
+          # subprocess (cargo, tauri-cli, linuxdeploy, plugin'ы). Inline `env`
+          # внутри build-deb.sh оставляем как страховку.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          LIBRARY_PATH: ${{ github.workspace }}/assets/libs
         # Используем тот же скрипт, что и локальная сборка (`make dist`):
         #   * собирает оба бинаря (avx + noavx) с разными whisper.cpp флагами;
         #   * упаковывает 3 нативные либы (libonnxruntime-{avx2,noavx}.so + libvosk.so)

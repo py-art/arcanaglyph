@@ -8,6 +8,19 @@
 
 ## [Unreleased]
 
+## [1.6.4] - 2026-05-07
+
+### Изменено
+
+- В CI добавлен diagnostic-шаг «Probe linuxdeploy» — запускает linuxdeploy
+  напрямую и пишет stderr в лог. Tauri AppImage bundler глотает stderr
+  process'а и печатает только обобщённое `failed to run linuxdeploy`,
+  поэтому без отдельного probe нельзя понять реальную причину падения
+  (FUSE, недостающая shared lib, что угодно ещё).
+- `APPIMAGE_EXTRACT_AND_RUN=1` поднят на уровень env шага build —
+  гарантированно наследуется во все subprocess'ы Tauri (раньше выставлялся
+  только inline для `cargo tauri build` внутри `build-deb.sh`).
+
 ## [1.6.3] - 2026-05-07
 
 ### Исправлено
