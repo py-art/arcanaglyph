@@ -86,7 +86,7 @@ all: fmt lint check test
 ##############################################################################
 # Packaging
 ##############################################################################
-.PHONY: dist   ## Build self-contained .deb (универсальный для AVX/no-AVX x86_64)
+.PHONY: dist   ## Build self-contained .deb + .AppImage (универсальные для AVX/no-AVX x86_64)
 dist:
 	bash scripts/build-deb.sh
 

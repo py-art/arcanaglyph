@@ -8,6 +8,21 @@
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-05-07
+
+### Исправлено
+
+- Сборка `.AppImage` в GitHub Actions: Tauri AppImage bundler падал из-за
+  `linuxdeploy`, которому требуется FUSE в transitive subprocess'ах
+  (APPIMAGE_EXTRACT_AND_RUN=1 не наследовалось плагинами). Решено через
+  pre-extract — все AppImage-инструменты разворачиваются в кэше Tauri и
+  подменяются shell-shim'ами на распакованный AppDir, exec работает без FUSE.
+- CI теперь использует тот же `scripts/build-deb.sh`, что и локальный `make dist`.
+  И `.deb`, и `.AppImage` self-contained: внутри обоих лежат avx + noavx бинари
+  и три нативные библиотеки (libonnxruntime-{avx2,noavx}.so + libvosk.so).
+  Раньше `.deb` из CI был тривиальный (один noavx-бинарь без bundled libs) —
+  только локальный `make dist` давал self-contained.
+
 ## [1.6.1] - 2026-05-07
 
 ### Добавлено

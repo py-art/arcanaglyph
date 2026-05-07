@@ -2,17 +2,18 @@
 #
 # scripts/build-deb.sh
 #
-# Собирает self-contained `.deb` пакет ArcanaGlyph, который работает на любом
-# x86_64 Linux (AVX и без AVX) сразу после `dpkg -i`, без ручной настройки.
+# Собирает self-contained `.deb` И `.AppImage` пакеты ArcanaGlyph, которые
+# работают на любом x86_64 Linux (AVX и без AVX) сразу после `dpkg -i` /
+# `chmod +x`, без ручной настройки.
 #
 # Что делает:
 #   1. Готовит pre-built нативные библиотеки в assets/libs/
 #      (см. scripts/prepare-bundled-libs.sh).
 #   2. Собирает бинарь arcanaglyph-avx с whisper.cpp, скомпилированным с AVX/AVX2.
 #   3. Собирает бинарь arcanaglyph-noavx с whisper.cpp без AVX (-mno-avx*).
-#   4. Запускает `cargo tauri build` (бандлит noavx-вариант как /usr/bin/arcanaglyph
-#      внутри .deb — этот же бинарь становится /usr/lib/arcanaglyph/arcanaglyph-noavx
-#      после post-processing'а).
+#   4. Запускает `cargo tauri build --bundles deb,appimage` (Tauri бандлит
+#      noavx-вариант как /usr/bin/arcanaglyph внутри обоих образов; post-process
+#      ниже добавляет туда avx-вариант, либы и wrapper).
 #   5. Post-process .deb: разворачивает через dpkg-deb -R, добавляет:
 #        /usr/bin/arcanaglyph                            <- shell wrapper
 #        /usr/lib/arcanaglyph/arcanaglyph-noavx          <- (был /usr/bin/arcanaglyph)
@@ -21,9 +22,14 @@
 #        /usr/lib/arcanaglyph/libonnxruntime-noavx.so    <- наш self-build 1.20.1
 #        /usr/lib/arcanaglyph/libvosk.so                 <- alphacep prebuilt 0.3.45
 #      Обновляет Installed-Size в DEBIAN/control. Перепакует через dpkg-deb -b.
+#   6. Post-process .AppImage: --appimage-extract разворачивает squashfs,
+#      повторяет ту же раскладку (но в `${APPDIR}/usr/lib/arcanaglyph/`),
+#      ставит AppRun-wrapper, который выставляет ORT_DYLIB_PATH и LD_LIBRARY_PATH
+#      на bundled-копии перед exec'ом нужного бинаря. Перепакует через appimagetool.
 #
-# Запуск: `bash scripts/build-deb.sh` из корня репо.
-# Требует: cargo, cargo-tauri, dpkg-deb, GNU coreutils.
+# Запуск: `bash scripts/build-deb.sh` из корня репо (или `make dist`).
+# Требует: cargo, cargo-tauri, dpkg-deb, GNU coreutils. Для AppImage post-process
+# нужен appimagetool — скачивается автоматически в target/ если отсутствует.
 
 set -euo pipefail
 
@@ -70,9 +76,26 @@ NOAVX_WHISPER_ENV=(
     "CMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG -mno-avx -mno-avx2 -mno-avx512f -mno-fma -mno-f16c"
 )
 
+# ----- 0. Удаляем артефакты ровно текущей версии ---------------------------------------
+# Tauri bundler обычно перезаписывает свой выход, но это не гарантировано — особенно
+# если предыдущая сборка упала на середине post-process. Поэтому удаляем артефакты
+# текущей версии перед сборкой, чтобы Phase 4-6 точно работали со свежими файлами.
+# Артефакты прошлых версий (ArcanaGlyph_1.5.0_*, 1.6.0_* и т.д.) НЕ трогаем — пусть
+# лежат локально как архив, чистятся через `make clean`.
+CURRENT_VERSION="$(grep '"version"' "${REPO_ROOT}/crates/arcanaglyph-app/tauri.conf.json" | head -1 | sed 's/.*"version": *"//;s/".*//')"
+[[ -n "${CURRENT_VERSION}" ]] || err "Не удалось вычитать версию из tauri.conf.json"
+log "Phase 0/6: removing prior artifacts of v${CURRENT_VERSION} (older versions kept)"
+# Удаляем не только готовые файлы, но и распакованные рабочие каталоги Tauri
+# (ArcanaGlyph_<ver>_amd64/ рядом с .deb — там лежит структура до упаковки dpkg-deb,
+# в appimage/ — аналогичный AppDir). Если оставить — Tauri может переиспользовать
+# устаревшее содержимое или конфликтовать при перепаковке. Wildcard ловит и файл,
+# и каталог одной командой; артефакты других версий (с другим префиксом) не трогает.
+rm -rf "${REPO_ROOT}/target/release/bundle/deb/ArcanaGlyph_${CURRENT_VERSION}_"*
+rm -rf "${REPO_ROOT}/target/release/bundle/appimage/ArcanaGlyph_${CURRENT_VERSION}_"*
+
 # ----- 1. Pre-built нативные либы -----------------------------------------------------
 
-log "Phase 1/5: prepare-bundled-libs"
+log "Phase 1/6: prepare-bundled-libs"
 bash "${REPO_ROOT}/scripts/prepare-bundled-libs.sh"
 
 # Линкер vosk-rs ищет libvosk.so по стандартным путям. Прокидываем assets/libs/ в
@@ -84,7 +107,7 @@ export LIBRARY_PATH="${REPO_ROOT}/assets/libs:${LIBRARY_PATH:-}"
 
 # ----- 2. arcanaglyph-avx (whisper с AVX) ---------------------------------------------
 
-log "Phase 2/5: cargo build arcanaglyph-avx (whisper с AVX)"
+log "Phase 2/6: cargo build arcanaglyph-avx (whisper с AVX)"
 AVX_TARGET_DIR="${REPO_ROOT}/target/avx-build"
 # Принудительная чистка whisper-rs-sys и зависимых .rmeta — без этого cargo
 # не пересоберёт whisper.cpp с GGML_NATIVE=OFF + GGML_AVX=ON флагами
@@ -109,7 +132,7 @@ log "arcanaglyph-avx собран ($(du -h "${AVX_BINARY}" | awk '{print $1}'))"
 
 # ----- 3. arcanaglyph-noavx + .deb (через cargo tauri build) --------------------------
 
-log "Phase 3/5: cargo tauri build (noavx, whisper без AVX, только .deb)"
+log "Phase 3/6: cargo tauri build (noavx, whisper без AVX, .deb + .AppImage)"
 # Принудительная чистка whisper-rs-sys из target/release/. cargo clean -p не работает
 # для transitive deps (выдаёт "Removed 0 files"). А whisper-rs-sys/build.rs не объявляет
 # cargo:rerun-if-env-changed=WHISPER_* — без удаления build artifacts cmake возьмёт
@@ -126,12 +149,15 @@ rm -rf "${REPO_ROOT}/target/release/build/whisper-rs-sys-"* \
        "${REPO_ROOT}/target/release/deps/libarcanaglyph_app-"* \
        "${REPO_ROOT}/target/release/deps/arcanaglyph_app-"* \
        "${REPO_ROOT}/target/release/arcanaglyph"
-# `--bundles deb` ограничивает Tauri одним форматом — AppImage пропускаем,
-# наш post-process ориентирован на .deb (для AppImage понадобилась бы своя обвязка).
+# Собираем оба бандла за один проход. Tauri разделяет cargo build (один) и
+# собственно bundlers (deb / appimage параллельно по одному и тому же бинарю).
 # `cargo tauri build` сам не имеет флага `--no-default-features` — пробрасываем
 # его через `-- ARGS` в нижележащий cargo. `--features` Tauri знает и форвардит сам.
+# APPIMAGE_EXTRACT_AND_RUN=1 — fallback на распаковку, если в системе нет рабочего
+# FUSE (Tauri использует appimagetool/linuxdeploy, оба сами AppImage).
 env "${NOAVX_WHISPER_ENV[@]}" \
-    cargo tauri build --bundles deb --features "${APP_FEATURES}" -- --no-default-features
+    APPIMAGE_EXTRACT_AND_RUN=1 \
+    cargo tauri build --bundles deb,appimage --features "${APP_FEATURES}" -- --no-default-features
 
 # ----- 4. Локализуем сгенерированный .deb ---------------------------------------------
 
@@ -146,7 +172,7 @@ VERSION="$(grep '"version"' "${REPO_ROOT}/crates/arcanaglyph-app/tauri.conf.json
 [[ -n "${VERSION}" ]] || err "Не удалось вычитать версию из tauri.conf.json"
 DEB_FILE="${DEB_DIR}/ArcanaGlyph_${VERSION}_amd64.deb"
 [[ -f "${DEB_FILE}" ]] || err "Не нашёл .deb по ожидаемому пути: ${DEB_FILE}"
-log "Phase 4/5: post-process ${DEB_FILE}"
+log "Phase 4/6: post-process ${DEB_FILE}"
 
 # ----- 5. Расширяем .deb: добавляем avx-бинарь, либы, wrapper -------------------------
 
@@ -213,9 +239,96 @@ sed -i "s/^Installed-Size: .*/Installed-Size: ${NEW_SIZE_KB}/" "${EXTRACT_DIR}/D
 log "Installed-Size обновлён: ${NEW_SIZE_KB} KB"
 
 # Пересобираем .deb. Имя — то же, перезатираем.
-log "Phase 5/5: dpkg-deb -b"
+log "Phase 5/6: dpkg-deb -b"
 rm -f "${DEB_FILE}"
 dpkg-deb --build --root-owner-group "${EXTRACT_DIR}" "${DEB_FILE}"
+
+# ----- 6. Расширяем .AppImage аналогично .deb -----------------------------------------
+
+APPIMAGE_DIR="${REPO_ROOT}/target/release/bundle/appimage"
+# Tauri именует AppImage по productName и версии. Стандартный паттерн совпадает с .deb.
+APPIMAGE_FILE="${APPIMAGE_DIR}/ArcanaGlyph_${VERSION}_amd64.AppImage"
+if [[ ! -f "${APPIMAGE_FILE}" ]]; then
+    # Fallback: ищем любой .AppImage в директории (Tauri иногда меняет шаблон).
+    APPIMAGE_FILE="$(find "${APPIMAGE_DIR}" -maxdepth 1 -name '*.AppImage' -type f | head -1 || true)"
+fi
+[[ -n "${APPIMAGE_FILE}" && -f "${APPIMAGE_FILE}" ]] \
+    || err "Не нашёл .AppImage в ${APPIMAGE_DIR} — Tauri appimage bundler упал?"
+log "Phase 6/6: post-process ${APPIMAGE_FILE}"
+
+APPIMAGE_EXTRACT_DIR="${REPO_ROOT}/target/appimage-extract"
+rm -rf "${APPIMAGE_EXTRACT_DIR}"
+mkdir -p "${APPIMAGE_EXTRACT_DIR}"
+(
+    cd "${APPIMAGE_EXTRACT_DIR}"
+    "${APPIMAGE_FILE}" --appimage-extract >/dev/null
+)
+APPDIR="${APPIMAGE_EXTRACT_DIR}/squashfs-root"
+[[ -d "${APPDIR}" ]] || err "appimage-extract не создал ${APPDIR}"
+
+# Tauri положил основной бинарь как usr/bin/arcanaglyph — это наш noavx-вариант.
+mkdir -p "${APPDIR}/usr/lib/arcanaglyph"
+[[ -f "${APPDIR}/usr/bin/arcanaglyph" ]] \
+    || err "В AppImage нет usr/bin/arcanaglyph (структура изменилась?)"
+mv "${APPDIR}/usr/bin/arcanaglyph" "${APPDIR}/usr/lib/arcanaglyph/arcanaglyph-noavx"
+
+# avx-вариант рядом.
+cp "${AVX_BINARY}" "${APPDIR}/usr/lib/arcanaglyph/arcanaglyph-avx"
+
+# Bundled нативные либы (как в .deb).
+cp "${REPO_ROOT}/assets/libs/libonnxruntime-avx2.so" "${APPDIR}/usr/lib/arcanaglyph/libonnxruntime-avx2.so"
+cp "${REPO_ROOT}/assets/libs/libonnxruntime-noavx.so" "${APPDIR}/usr/lib/arcanaglyph/libonnxruntime-noavx.so"
+cp "${REPO_ROOT}/assets/libs/libvosk.so" "${APPDIR}/usr/lib/arcanaglyph/libvosk.so"
+
+# Wrapper. Кладём как usr/bin/arcanaglyph; AppRun (symlink на usr/bin/arcanaglyph)
+# Tauri уже создал — так что цепочка AppRun → usr/bin/arcanaglyph (наш wrapper) → exec
+# на правильный бинарь сработает автоматически.
+cp "${REPO_ROOT}/assets/scripts/arcanaglyph-appimage-AppRun.sh" "${APPDIR}/usr/bin/arcanaglyph"
+chmod 755 "${APPDIR}/usr/bin/arcanaglyph"
+chmod 755 "${APPDIR}/usr/lib/arcanaglyph/arcanaglyph-avx"
+chmod 755 "${APPDIR}/usr/lib/arcanaglyph/arcanaglyph-noavx"
+chmod 644 "${APPDIR}/usr/lib/arcanaglyph/"libonnxruntime-*.so
+chmod 644 "${APPDIR}/usr/lib/arcanaglyph/libvosk.so"
+
+# GNOME Shell extension — кладём по тому же относительному пути что и в .deb.
+APPIMG_WIDGET_DST="${APPDIR}/usr/share/arcanaglyph/extension/${WIDGET_EXT_UUID}"
+if [[ -d "${WIDGET_EXT_SRC}" ]]; then
+    mkdir -p "${APPIMG_WIDGET_DST}"
+    cp "${WIDGET_EXT_SRC}/metadata.json" "${APPIMG_WIDGET_DST}/"
+    cp "${WIDGET_EXT_SRC}/extension.js" "${APPIMG_WIDGET_DST}/"
+    if [[ -d "${WIDGET_EXT_SRC}/schemas" ]]; then
+        mkdir -p "${APPIMG_WIDGET_DST}/schemas"
+        cp "${WIDGET_EXT_SRC}/schemas/"*.gschema.xml "${APPIMG_WIDGET_DST}/schemas/"
+        if command -v glib-compile-schemas >/dev/null 2>&1; then
+            glib-compile-schemas "${APPIMG_WIDGET_DST}/schemas/"
+        fi
+    fi
+    chmod 644 "${APPIMG_WIDGET_DST}/metadata.json" "${APPIMG_WIDGET_DST}/extension.js"
+    [[ -f "${APPIMG_WIDGET_DST}/schemas/gschemas.compiled" ]] \
+        && chmod 644 "${APPIMG_WIDGET_DST}/schemas/gschemas.compiled"
+fi
+
+# Качаем appimagetool если его нет — официальный с GitHub releases continuous.
+APPIMAGETOOL="${REPO_ROOT}/target/appimagetool-x86_64.AppImage"
+if [[ ! -x "${APPIMAGETOOL}" ]]; then
+    log "Скачиваю appimagetool…"
+    curl -fSL -o "${APPIMAGETOOL}" \
+        https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+    chmod +x "${APPIMAGETOOL}"
+fi
+
+# Перепакуем. APPIMAGE_EXTRACT_AND_RUN=1 — обходит FUSE если он недоступен
+# (например в Docker/CI без --privileged).
+log "Перепаковка AppImage…"
+rm -f "${APPIMAGE_FILE}"
+APPIMAGE_EXTRACT_AND_RUN=1 "${APPIMAGETOOL}" \
+    --no-appstream \
+    "${APPDIR}" "${APPIMAGE_FILE}" >/dev/null
+chmod 755 "${APPIMAGE_FILE}"
+
+log "Готово:"
+log "  ${DEB_FILE} ($(du -h "${DEB_FILE}" | awk '{print $1}'))"
+log "  ${APPIMAGE_FILE} ($(du -h "${APPIMAGE_FILE}" | awk '{print $1}'))"
 
 # Чистим временную распаковку.
 rm -rf "${EXTRACT_DIR}"
