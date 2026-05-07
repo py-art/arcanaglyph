@@ -45,6 +45,19 @@ jobs:
       - name: Install tauri-cli
         run: cargo install tauri-cli --locked
 
+      - name: Install libvosk system-wide
+        # linuxdeploy (внутри Tauri AppImage bundler) анализирует ELF-зависимости
+        # бинаря и ищет libvosk.so в стандартных linker paths. Без этого шага он
+        # падает с "Could not find dependency: libvosk.so". Мы кладём libvosk
+        # внутрь .deb/.AppImage позже (post-process в build-deb.sh), но Tauri
+        # AppImage build запускается ДО post-process и должен видеть либу
+        # в системе. Локально у разработчика она в /usr/local/lib/ обычно лежит
+        # руками; в CI её туда кладёт этот шаг через prepare-bundled-libs.sh.
+        run: |
+          bash scripts/prepare-bundled-libs.sh
+          sudo cp assets/libs/libvosk.so /usr/local/lib/
+          sudo ldconfig
+
       - name: Pre-extract AppImage tools (avoid FUSE in CI)
         # На GitHub Actions FUSE недоступен в transitive subprocess'ах:
         # APPIMAGE_EXTRACT_AND_RUN=1 помогает только корневому AppImage,
