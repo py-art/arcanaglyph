@@ -29,42 +29,43 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Install system dependencies
+        # cmake — для whisper.cpp, libglib2.0-bin — для glib-compile-schemas (GNOME-extension
+        # widget). libfuse2 нужен для запуска appimagetool через extract-and-run fallback.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            build-essential cmake \
             libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
             libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
             libxdo-dev libayatana-appindicator3-dev \
             libssl-dev patchelf \
-            libfuse2 desktop-file-utils fuse zsync
-
-      - name: Prepare FUSE for AppImage tools
-        # AppImage-инструменты (linuxdeploy/appimagetool) сами AppImage и при запуске
-        # делают FUSE-mount. На ubuntu-24.04 модуль есть, но не загружен — подгружаем.
-        # APPIMAGE_EXTRACT_AND_RUN=1 (см. env шага Build) — fallback на распаковку,
-        # если FUSE всё-таки недоступен.
-        run: |
-          sudo modprobe fuse 2>/dev/null || true
-          fusermount -V 2>/dev/null || echo "fusermount not available — extract-and-run fallback will be used"
-
-      - name: Install libvosk
-        run: |
-          curl -fSL -o /tmp/vosk.zip \
-            https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-linux-x86_64-0.3.45.zip
-          unzip -o /tmp/vosk.zip -d /tmp/vosk
-          sudo cp /tmp/vosk/vosk-linux-x86_64-0.3.45/libvosk.so /usr/local/lib/
-          sudo ldconfig
+            libfuse2 desktop-file-utils \
+            libglib2.0-bin
 
       - name: Install tauri-cli
         run: cargo install tauri-cli --locked
 
-      - name: Build
+      - name: Pre-extract AppImage tools (avoid FUSE in CI)
+        # На GitHub Actions FUSE недоступен в transitive subprocess'ах:
+        # APPIMAGE_EXTRACT_AND_RUN=1 помогает только корневому AppImage,
+        # но linuxdeploy форкает plugin-appimage (тоже AppImage), и тот падает.
+        # Скрипт распаковывает все AppImage-инструменты в ~/.cache/tauri/appimage/
+        # и подменяет .AppImage на shell-shim'ы — Tauri запустит их как обычный
+        # exec без FUSE-mount.
+        run: bash scripts/ci-prepare-appimage-tools.sh
+
+      - name: Build self-contained .deb + .AppImage
+        # Используем тот же скрипт, что и локальная сборка (`make dist`):
+        #   * собирает оба бинаря (avx + noavx) с разными whisper.cpp флагами;
+        #   * упаковывает 3 нативные либы (libonnxruntime-{avx2,noavx}.so + libvosk.so)
+        #     внутрь .deb и .AppImage;
+        #   * в .AppImage кладёт AppRun-wrapper, который выставляет ORT_DYLIB_PATH /
+        #     LD_LIBRARY_PATH перед exec'ом нужного бинаря.
+        # AppImage post-process использует appimagetool напрямую — без linuxdeploy
+        # (Tauri-встроенный путь падает на runner'е из-за FUSE-цепочки в плагинах).
         env:
-          LIBRARY_PATH: /usr/local/lib
-          LD_LIBRARY_PATH: /usr/local/lib
-          APPIMAGE_EXTRACT_AND_RUN: 1
-          NO_STRIP: 1
-        run: cargo tauri build --bundles deb,appimage
+          LIBRARY_PATH: ${{ github.workspace }}/assets/libs
+        run: bash scripts/build-deb.sh
 
       - name: Generate SHA256 checksums
         run: |
