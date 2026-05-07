@@ -8,20 +8,21 @@
 
 ## [Unreleased]
 
-## [1.6.2] - 2026-05-07
+## [1.6.3] - 2026-05-07
 
 ### Исправлено
 
-- Сборка `.AppImage` в GitHub Actions: Tauri AppImage bundler падал из-за
-  `linuxdeploy`, которому требуется FUSE в transitive subprocess'ах
-  (APPIMAGE_EXTRACT_AND_RUN=1 не наследовалось плагинами). Решено через
-  pre-extract — все AppImage-инструменты разворачиваются в кэше Tauri и
-  подменяются shell-shim'ами на распакованный AppDir, exec работает без FUSE.
+- Сборка `.AppImage` в GitHub Actions. Tauri AppImage bundler падал на
+  `linuxdeploy-plugin-appimage`, которому нужен FUSE даже при
+  `APPIMAGE_EXTRACT_AND_RUN=1` — флаг не наследовался через цепочку процессов
+  linuxdeploy → plugin. Решено через pre-extract: plugin-appimage распаковывается
+  в кэш Tauri (`~/.cache/tauri/`) и подменяется shell-shim'ом на распакованный
+  AppDir; exec идёт без FUSE.
 - CI теперь использует тот же `scripts/build-deb.sh`, что и локальный `make dist`.
-  И `.deb`, и `.AppImage` self-contained: внутри обоих лежат avx + noavx бинари
-  и три нативные библиотеки (libonnxruntime-{avx2,noavx}.so + libvosk.so).
-  Раньше `.deb` из CI был тривиальный (один noavx-бинарь без bundled libs) —
-  только локальный `make dist` давал self-contained.
+  Оба артефакта (`.deb` и `.AppImage`) self-contained: внутри обоих — avx и
+  noavx бинари, libonnxruntime-{avx2,noavx}.so и libvosk.so. До этого `.deb`
+  из CI был тривиальный (только noavx-бинарь, без bundled libs) — self-contained
+  делал только локальный `make dist`.
 
 ## [1.6.1] - 2026-05-07
 
@@ -53,10 +54,10 @@
   - `libonnxruntime-avx2.so` (Microsoft pre-built 1.20.1) и `libonnxruntime-noavx.so`
     (наша self-build 1.20.1) — load-dynamic backend для GigaAM/Qwen3-ASR;
   - `libvosk.so` (alphacep pre-built 0.3.45) — нужна для Vosk-движка.
-  Wrapper `/usr/bin/arcanaglyph` (sh) проверяет `/proc/cpuinfo` и запускает соответствующий
-  бинарь. В каждом бинаре `setup_ort_dylib_path()` выбирает `libonnxruntime.so` по
-  AVX-detection, с приоритетом self-build override (`/usr/local/lib/libonnxruntime.so` если
-  есть). RPATH `/usr/lib/arcanaglyph` обеспечивает поиск libvosk.so без `LD_LIBRARY_PATH`.
+    Wrapper `/usr/bin/arcanaglyph` (sh) проверяет `/proc/cpuinfo` и запускает соответствующий
+    бинарь. В каждом бинаре `setup_ort_dylib_path()` выбирает `libonnxruntime.so` по
+    AVX-detection, с приоритетом self-build override (`/usr/local/lib/libonnxruntime.so` если
+    есть). RPATH `/usr/lib/arcanaglyph` обеспечивает поиск libvosk.so без `LD_LIBRARY_PATH`.
 - В git закоммичена `assets/libs/libonnxruntime-noavx.so` (24 МБ, self-build для
   CPU без AVX). Остальные нативные либы (Microsoft ORT, alphacep vosk) качаются при
   сборке и в git не лежат (исключены через `.gitignore`).
