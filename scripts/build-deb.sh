@@ -155,9 +155,12 @@ rm -rf "${REPO_ROOT}/target/release/build/whisper-rs-sys-"* \
 # его через `-- ARGS` в нижележащий cargo. `--features` Tauri знает и форвардит сам.
 # APPIMAGE_EXTRACT_AND_RUN=1 — fallback на распаковку, если в системе нет рабочего
 # FUSE (Tauri использует appimagetool/linuxdeploy, оба сами AppImage).
+# `--verbose` критичен: при default log_level (Error) Tauri глотает stderr процесса
+# linuxdeploy — при падении печатает только обобщённое "failed to run linuxdeploy"
+# без полезной информации. С --verbose stderr попадает в лог.
 env "${NOAVX_WHISPER_ENV[@]}" \
     APPIMAGE_EXTRACT_AND_RUN=1 \
-    cargo tauri build --bundles deb,appimage --features "${APP_FEATURES}" -- --no-default-features
+    cargo tauri build --verbose --bundles deb,appimage --features "${APP_FEATURES}" -- --no-default-features
 
 # ----- 4. Локализуем сгенерированный .deb ---------------------------------------------
 
