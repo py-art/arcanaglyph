@@ -8,6 +8,19 @@
 
 ## [Unreleased]
 
+## [1.6.7] - 2026-05-07
+
+### Исправлено
+
+- Сборка `.AppImage` в CI: linuxdeploy падал с `Could not find dependency:
+  libvosk.so` при анализе ELF-зависимостей бинаря. У нас `libvosk.so` лежит
+  в `assets/libs/`, но это видно только линкеру (через `LIBRARY_PATH` при
+  `cargo build`); linuxdeploy ищет либу в runtime linker paths
+  (`/usr/lib`, `/usr/local/lib` и т.п.). Локально она была в `/usr/local/lib/`
+  у разработчика руками — а в CI этот путь оказался пустым после рефакторинга
+  release.yml. Добавлен явный шаг «Install libvosk system-wide», который
+  кладёт libvosk.so в `/usr/local/lib/` через `prepare-bundled-libs.sh` + cp.
+
 ## [1.6.6] - 2026-05-07
 
 ### Изменено
