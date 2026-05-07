@@ -29,8 +29,22 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Install system dependencies
-        # cmake — для whisper.cpp, libglib2.0-bin — для glib-compile-schemas (GNOME-extension
-        # widget). libfuse2 нужен для запуска appimagetool через extract-and-run fallback.
+        # cmake — для whisper.cpp.
+        # libfuse2 — для запуска appimagetool через extract-and-run fallback.
+        # libglib2.0-bin — даёт glib-compile-schemas (GNOME-extension widget +
+        #                  linuxdeploy-plugin-gtk).
+        # linuxdeploy-plugin-gtk требует кучу .pc и утилит, на чистой Ubuntu
+        # они не все стоят — добавляем явно, чтобы плагин не падал на pkg-config
+        # запросах вроде `there is no 'libdir' variable for X`:
+        #   librsvg2-dev          → librsvg-2.0.pc (+ librsvg2-common тянется по
+        #                           Depends — runtime SVG loader для pixbuf).
+        #   libpango1.0-dev       → pango.pc / pangocairo.pc / pangoft2.pc.
+        #   libgdk-pixbuf-2.0-dev → gdk-pixbuf-2.0.pc.
+        # И утилиты, которые плагин ищет через `search_tool`:
+        #   libgtk-3-bin          → gtk-query-immodules-3.0.
+        #   libgdk-pixbuf2.0-bin  → gdk-pixbuf-query-loaders (без него
+        #                           loaders.cache не создаётся, sed -i по нему
+        #                           может уронить плагин).
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -40,7 +54,8 @@ jobs:
             libxdo-dev libayatana-appindicator3-dev \
             libssl-dev patchelf \
             libfuse2 desktop-file-utils \
-            libglib2.0-bin
+            libglib2.0-bin libgtk-3-bin libgdk-pixbuf2.0-bin \
+            librsvg2-dev libpango1.0-dev libgdk-pixbuf-2.0-dev
 
       - name: Install tauri-cli
         run: cargo install tauri-cli --locked
@@ -65,30 +80,6 @@ jobs:
         # Скрипт распаковывает plugin-appimage в ~/.cache/tauri/ и подменяет
         # его на shell-shim — Tauri запустит как обычный exec без FUSE.
         run: bash scripts/ci-prepare-appimage-tools.sh
-
-      - name: Probe linuxdeploy can run (debug stderr)
-        # Tauri AppImage bundler глотает stderr процесса linuxdeploy и печатает
-        # только обобщённое "failed to run linuxdeploy". Прогоняем linuxdeploy
-        # руками — увидим конкретную ошибку (FUSE, shared lib, что угодно).
-        # `|| true` чтобы шаг не упал даже если linuxdeploy ругается; нам нужен
-        # сам диагностический вывод.
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-        run: |
-          set +e
-          echo "=== Files in ~/.cache/tauri/ ==="
-          ls -la ~/.cache/tauri/
-          echo
-          echo "=== file ~/.cache/tauri/linuxdeploy-x86_64.AppImage ==="
-          file ~/.cache/tauri/linuxdeploy-x86_64.AppImage
-          echo
-          echo "=== Run linuxdeploy --version ==="
-          ~/.cache/tauri/linuxdeploy-x86_64.AppImage --version 2>&1
-          echo "linuxdeploy exit: $?"
-          echo
-          echo "=== Run linuxdeploy --help (truncated) ==="
-          ~/.cache/tauri/linuxdeploy-x86_64.AppImage --help 2>&1 | head -20
-          echo "linuxdeploy --help exit: $?"
 
       - name: Build self-contained .deb + .AppImage
         # Используем тот же скрипт, что и локальная сборка (`make dist`):
