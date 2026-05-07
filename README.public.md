@@ -42,7 +42,7 @@ curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | bash
 Поддерживается только Linux x86_64. Зафиксировать конкретную версию:
 
 ```bash
-curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | VERSION=1.6.2 bash
+curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | VERSION=1.6.3 bash
 ```
 
 При первом запуске автоматически скачается GigaAM v3 (~225 МБ).

@@ -8,6 +8,21 @@
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-05-07
+
+### Исправлено
+
+- Pre-extract AppImage-инструментов из 1.6.2 не срабатывал: shim'ы клались в
+  `~/.cache/tauri/appimage/`, тогда как Tauri-bundler v2 ищет их прямо в
+  `~/.cache/tauri/` (см. `crates/tauri-bundler/.../appimage/linuxdeploy.rs`).
+  Tauri снова всё скачивал и снова падал на `linuxdeploy-plugin-appimage`.
+  Pre-extract скрипт переписан под точный путь и точные имена файлов
+  (`linuxdeploy-plugin-appimage.AppImage` без `-<arch>` суффикса). Теперь
+  shim используется только для plugin-appimage, а сам `linuxdeploy.AppImage`
+  остаётся настоящим AppImage с `APPIMAGE_EXTRACT_AND_RUN=1` — Tauri патчит
+  его через `dd seek=8 count=3` (стирает AppImage magic), что испортило бы
+  shebang shell-shim'а.
+
 ## [1.6.2] - 2026-05-07
 
 ### Исправлено
@@ -53,10 +68,10 @@
   - `libonnxruntime-avx2.so` (Microsoft pre-built 1.20.1) и `libonnxruntime-noavx.so`
     (наша self-build 1.20.1) — load-dynamic backend для GigaAM/Qwen3-ASR;
   - `libvosk.so` (alphacep pre-built 0.3.45) — нужна для Vosk-движка.
-  Wrapper `/usr/bin/arcanaglyph` (sh) проверяет `/proc/cpuinfo` и запускает соответствующий
-  бинарь. В каждом бинаре `setup_ort_dylib_path()` выбирает `libonnxruntime.so` по
-  AVX-detection, с приоритетом self-build override (`/usr/local/lib/libonnxruntime.so` если
-  есть). RPATH `/usr/lib/arcanaglyph` обеспечивает поиск libvosk.so без `LD_LIBRARY_PATH`.
+    Wrapper `/usr/bin/arcanaglyph` (sh) проверяет `/proc/cpuinfo` и запускает соответствующий
+    бинарь. В каждом бинаре `setup_ort_dylib_path()` выбирает `libonnxruntime.so` по
+    AVX-detection, с приоритетом self-build override (`/usr/local/lib/libonnxruntime.so` если
+    есть). RPATH `/usr/lib/arcanaglyph` обеспечивает поиск libvosk.so без `LD_LIBRARY_PATH`.
 - В git закоммичена `assets/libs/libonnxruntime-noavx.so` (24 МБ, self-build для
   CPU без AVX). Остальные нативные либы (Microsoft ORT, alphacep vosk) качаются при
   сборке и в git не лежат (исключены через `.gitignore`).
