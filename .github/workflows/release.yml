@@ -78,21 +78,17 @@ jobs:
           echo "linuxdeploy --help exit: $?"
 
       - name: Build self-contained .deb + .AppImage
-        env:
-          # APPIMAGE_EXTRACT_AND_RUN на уровне шага — наследуется в каждый
-          # subprocess (cargo, tauri-cli, linuxdeploy, plugin'ы). Inline `env`
-          # внутри build-deb.sh оставляем как страховку.
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-          LIBRARY_PATH: ${{ github.workspace }}/assets/libs
         # Используем тот же скрипт, что и локальная сборка (`make dist`):
         #   * собирает оба бинаря (avx + noavx) с разными whisper.cpp флагами;
         #   * упаковывает 3 нативные либы (libonnxruntime-{avx2,noavx}.so + libvosk.so)
         #     внутрь .deb и .AppImage;
         #   * в .AppImage кладёт AppRun-wrapper, который выставляет ORT_DYLIB_PATH /
         #     LD_LIBRARY_PATH перед exec'ом нужного бинаря.
-        # AppImage post-process использует appimagetool напрямую — без linuxdeploy
-        # (Tauri-встроенный путь падает на runner'е из-за FUSE-цепочки в плагинах).
+        # APPIMAGE_EXTRACT_AND_RUN на уровне шага — наследуется в каждый
+        # subprocess (cargo, tauri-cli, linuxdeploy, plugin'ы); inline-копия
+        # внутри build-deb.sh остаётся как страховка.
         env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
           LIBRARY_PATH: ${{ github.workspace }}/assets/libs
         run: bash scripts/build-deb.sh
 
