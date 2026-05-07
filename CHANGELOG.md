@@ -8,6 +8,19 @@
 
 ## [Unreleased]
 
+## [1.6.6] - 2026-05-07
+
+### Изменено
+
+- В CI добавлен `--verbose` к `cargo tauri build` внутри `scripts/build-deb.sh`.
+  Tauri-bundler по дефолту запускает linuxdeploy с `cmd.output()` и при ошибке
+  печатает только обобщённое `failed to run linuxdeploy`, глотая весь stderr.
+  Это сделано намеренно при `log_level == Error` (см.
+  `crates/tauri-bundler/.../linuxdeploy.rs`). Поднимаем log level флагом
+  `--verbose` — теперь stderr linuxdeploy попадает в CI-лог, можно диагностировать
+  причину падения (предыдущий «Probe linuxdeploy» подтвердил, что linuxdeploy
+  сам по себе запускается; падает только на конкретных аргументах от Tauri).
+
 ## [1.6.5] - 2026-05-07
 
 ### Исправлено
