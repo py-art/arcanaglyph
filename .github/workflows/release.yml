@@ -35,7 +35,17 @@ jobs:
             libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
             libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
             libxdo-dev libayatana-appindicator3-dev \
-            libssl-dev patchelf
+            libssl-dev patchelf \
+            libfuse2 desktop-file-utils fuse zsync
+
+      - name: Prepare FUSE for AppImage tools
+        # AppImage-инструменты (linuxdeploy/appimagetool) сами AppImage и при запуске
+        # делают FUSE-mount. На ubuntu-24.04 модуль есть, но не загружен — подгружаем.
+        # APPIMAGE_EXTRACT_AND_RUN=1 (см. env шага Build) — fallback на распаковку,
+        # если FUSE всё-таки недоступен.
+        run: |
+          sudo modprobe fuse 2>/dev/null || true
+          fusermount -V 2>/dev/null || echo "fusermount not available — extract-and-run fallback will be used"
 
       - name: Install libvosk
         run: |
@@ -53,12 +63,13 @@ jobs:
           LIBRARY_PATH: /usr/local/lib
           LD_LIBRARY_PATH: /usr/local/lib
           APPIMAGE_EXTRACT_AND_RUN: 1
-        run: cargo tauri build --bundles deb
+          NO_STRIP: 1
+        run: cargo tauri build --bundles deb,appimage
 
       - name: Generate SHA256 checksums
         run: |
           cd target/release/bundle
-          sha256sum deb/*.deb > SHA256SUMS.txt
+          sha256sum deb/*.deb appimage/*.AppImage > SHA256SUMS.txt
           echo "=== SHA256SUMS ===" && cat SHA256SUMS.txt
 
       - name: Upload assets to release
@@ -68,5 +79,6 @@ jobs:
           TAG="${{ github.event.release.tag_name }}"
           gh release upload "$TAG" \
             target/release/bundle/deb/*.deb \
+            target/release/bundle/appimage/*.AppImage \
             target/release/bundle/SHA256SUMS.txt \
             --clobber

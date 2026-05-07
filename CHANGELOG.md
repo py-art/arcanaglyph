@@ -8,15 +8,23 @@
 
 ## [Unreleased]
 
-### Удалено
+## [1.6.1] - 2026-05-07
 
-- GitLab CI job `build-deb-and-upload` (stage `deb` в `.gitlab-ci.yml`).
-  Дублировал GitHub Actions workflow `release.yml`, который собирает `.deb`
-  и заливает в GitHub Release автоматически на event `release: published`.
-  GitLab job падал на base image `rust:1` из-за отсутствия libclang
-  (нужен `whisper-rs-sys` через `bindgen`) — на `ubuntu-24.04` в GitHub
-  Actions libclang ставится с dev-зависимостями. Вместо двух параллельных
-  путей к одному ассету оставлен один.
+### Добавлено
+
+- Установка одной командой: `curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | bash`.
+  Скрипт сам подбирает способ — на Debian/Ubuntu ставит `.deb` через `apt`, на
+  остальных Linux-дистрибутивах кладёт `.AppImage` в `~/.local/bin/arcanaglyph`
+  и регистрирует ярлык в меню. Поддерживается переменная `VERSION=x.y.z` для
+  пиннинга версии. Скачанные артефакты проверяются по `SHA256SUMS.txt`.
+- Удаление одной командой:
+  `curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/uninstall.sh | bash`.
+  По умолчанию снимает только бинарь и ярлык, конфиг и модели сохраняются.
+  Флаг `--purge` дополнительно удаляет `~/.config/arcanaglyph/`,
+  `~/.local/share/arcanaglyph/` и `~/.cache/arcanaglyph/`.
+- К каждому GitHub Release теперь автоматически прикладывается `.AppImage` рядом
+  с `.deb` — для пользователей дистрибутивов, не основанных на Debian (Arch,
+  Fedora, openSUSE и др.).
 
 ## [1.6.0] - 2026-05-06
 
