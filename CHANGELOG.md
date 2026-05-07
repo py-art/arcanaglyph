@@ -8,6 +8,23 @@
 
 ## [Unreleased]
 
+## [1.6.8] - 2026-05-07
+
+### Исправлено
+
+- Сборка `.AppImage` в CI: `linuxdeploy-plugin-gtk` падал на запросах
+  pkg-config к библиотекам, которые он бандлит (SVG-renderer, pango,
+  gdk-pixbuf). На чистом ubuntu-runner'е соответствующих `-dev` пакетов
+  не было. Расширен список deps в `release.yml`:
+  - `librsvg2-dev` — `librsvg-2.0.pc` (без него падал `there is no 'libdir'
+    variable for 'librsvg-2.0'`).
+  - `libpango1.0-dev` — `pango.pc` / `pangocairo.pc` / `pangoft2.pc`.
+  - `libgdk-pixbuf-2.0-dev` — `gdk-pixbuf-2.0.pc`.
+  - `libgtk-3-bin` — утилита `gtk-query-immodules-3.0` (без неё IM-модули
+    в AppImage не регистрируются).
+  - `libgdk-pixbuf2.0-bin` — утилита `gdk-pixbuf-query-loaders` (без неё
+    `loaders.cache` не создаётся, и последующий `sed -i` по нему ронит плагин).
+
 ## [1.6.7] - 2026-05-07
 
 ### Исправлено
