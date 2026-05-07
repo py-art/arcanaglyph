@@ -26,18 +26,41 @@
 
 ## Установка
 
-Скачайте `.deb` из раздела [Releases](https://github.com/py-art/arcanaglyph/releases).
+Одной командой:
+
+```bash
+curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | bash
+```
+
+Скрипт сам подберёт способ установки:
+
+- На **Debian/Ubuntu** скачивает `.deb` из последнего релиза и ставит через `apt`
+  (потребуется sudo).
+- На остальных Linux-дистрибутивах кладёт `.AppImage` в `~/.local/bin/arcanaglyph`
+  и регистрирует ярлык в меню (без sudo).
+
+Поддерживается только Linux x86_64. Зафиксировать конкретную версию:
+
+```bash
+curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | VERSION=1.6.1 bash
+```
+
+При первом запуске автоматически скачается GigaAM v3 (~225 МБ).
+Остальные модели можно скачать из настроек приложения.
+
+### Установка вручную
+
+Если по каким-то причинам one-liner не подходит, скачайте артефакт из раздела
+[Releases](https://github.com/py-art/arcanaglyph/releases) и установите сами:
 
 ```bash
 # Ubuntu/Debian — apt сам подтянет зависимости
 sudo apt install ./ArcanaGlyph_*_amd64.deb
 
-# Запуск
-arcanaglyph
+# Любой Linux — AppImage
+chmod +x ArcanaGlyph_*_amd64.AppImage
+./ArcanaGlyph_*_amd64.AppImage
 ```
-
-При первом запуске автоматически скачается GigaAM v3 (~225 МБ).
-Остальные модели можно скачать из настроек приложения.
 
 ## Горячие клавиши
 
@@ -56,8 +79,17 @@ arcanaglyph
 ## Удаление
 
 ```bash
-sudo apt remove arcanaglyph
+curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/uninstall.sh | bash
 ```
+
+Удалить также пользовательские данные (настройки, БД, скачанные модели):
+
+```bash
+curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/uninstall.sh | bash -s -- --purge
+```
+
+Вручную: `sudo apt remove arcana-glyph` (для `.deb`) или `rm ~/.local/bin/arcanaglyph
+~/.local/share/applications/arcanaglyph.desktop` (для AppImage).
 
 ## Лицензия
 
