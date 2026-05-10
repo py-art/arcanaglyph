@@ -859,8 +859,30 @@ fn terminal_args(terminal: &str, bash_cmd: &str) -> Vec<String> {
 /// в temp-файл, спавним терминал с `bash <tmp>` (не `curl|bash` — это
 /// устраняет PTY-passthrough проблемы для sudo внутри install.sh).
 /// При отсутствии терминала возвращаем ошибку с инструкцией для UI.
+///
+/// `latest_version` пишется в `UpdateState.applying_version` ДО спавна
+/// терминала: UI на этом основании переключается в applying-режим и
+/// сохраняет его между перезапусками (пока `APP_VERSION` не догонит).
 #[tauri::command]
-async fn apply_update() -> Result<(), String> {
+async fn apply_update(
+    latest_version: String,
+    history_db: tauri::State<'_, Arc<HistoryDB>>,
+) -> Result<(), String> {
+    // Помечаем applying ДО любых сетевых/IO операций — UI получает
+    // мгновенный переход в applying-режим и persistent state на случай
+    // повторного запуска приложения до restart.
+    updater::set_applying(history_db.inner(), &latest_version).map_err(|e| e.to_string())?;
+
+    // Если ниже что-то падает — откатываем applying, иначе баннер
+    // залипнет в applying-режиме без реально начавшейся установки.
+    let result = apply_update_inner().await;
+    if result.is_err() {
+        let _ = updater::clear_applying(history_db.inner());
+    }
+    result
+}
+
+async fn apply_update_inner() -> Result<(), String> {
     let terminal = detect_terminal().ok_or_else(|| {
         format!(
             "Терминал не найден. Запустите вручную:\n  curl -fsSL {} | bash",
@@ -917,6 +939,49 @@ async fn apply_update() -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("Запуск {terminal}: {e}"))?;
 
+    Ok(())
+}
+
+/// Tauri-команда: сбросить applying-метку (пользователь нажал × в
+/// applying-баннере). Не отменяет уже запущенную установку — только
+/// прячет UI; при следующем check available-баннер вернётся если
+/// версия всё ещё > APP_VERSION и не dismissed.
+#[tauri::command]
+fn clear_update_applying(
+    history_db: tauri::State<'_, Arc<HistoryDB>>,
+) -> Result<(), String> {
+    updater::clear_applying(history_db.inner()).map_err(|e| e.to_string())
+}
+
+/// Tauri-команда: текущее значение `applying_version` из state.
+/// Фронт зовёт на mount баннера, чтобы восстановить applying-режим
+/// без ожидания emit'а из setup hook.
+#[tauri::command]
+fn get_update_applying(
+    history_db: tauri::State<'_, Arc<HistoryDB>>,
+) -> Option<String> {
+    updater::applying_version(history_db.inner())
+}
+
+/// Tauri-команда: перезапустить приложение. Спавним новый процесс
+/// (новая версия из PATH после успешной установки .deb) и выходим
+/// из текущего. Если бинарь не найден в PATH — возвращаем Err, фронт
+/// показывает toast.
+#[tauri::command]
+fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
+    // Detached spawn — новый процесс не зависит от родителя, который
+    // через миллисекунды exit'нется.
+    std::process::Command::new("arcanaglyph")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Запуск новой версии: {e}"))?;
+
+    // Небольшая задержка чтобы spawn успел запуститься до exit
+    // (на быстрых машинах race не случается, но safer side).
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    app.exit(0);
     Ok(())
 }
 
@@ -2233,9 +2298,27 @@ fn main() {
             app.manage(history_db.clone());
 
             // === Update checker ===
+            // 0. Восстановление applying-режима после реального restart.
+            //    Если applying_version == APP_VERSION — установка прошла
+            //    успешно, чистим метку. Иначе — эмитим applying, чтобы UI
+            //    показал баннер «Установка идёт... / Перезапустить».
+            //    Делаем это ДО cached_pending_update, чтобы applying имел
+            //    приоритет над available для той же версии.
+            {
+                let state = updater::read_state(&history_db);
+                if let Some(v) = state.applying_version.clone() {
+                    if v == updater::APP_VERSION {
+                        let _ = updater::clear_applying(&history_db);
+                    } else {
+                        let _ = app.handle().emit("update://applying", v);
+                    }
+                }
+            }
             // 1. Если в state уже знаем про более свежий релиз — эмитим
             //    `update://available` сразу, чтобы UI получил баннер до
             //    первой фоновой проверки (которая через 60 секунд).
+            //    `cached_pending_update` сам фильтрует applying_version,
+            //    так что available + applying для одной версии не конфликтуют.
             if let Some(info) = updater::cached_pending_update(&history_db) {
                 let _ = app.handle().emit("update://available", info);
             }
@@ -2607,7 +2690,7 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![trigger, pause, cancel_transcription, active_supports_cancel, get_audio_level, is_recording, is_paused, is_model_loaded, get_loaded_models, get_compiled_engines, get_cpu_features, get_default_input_device_name, get_models, download_model, delete_model, is_wayland, is_gnome, check_portal_grant_needed, grant_portal_now, get_app_version, check_updates_now, dismiss_update, open_release_notes, apply_update, widget_extension_status, install_widget_extension, disable_widget_extension, request_logout, check_hotkey_conflict, register_gnome_hotkeys, hide_window, load_config, save_config, set_history_filter, set_language, get_history, delete_history_entry, clear_history, export_history, retranscribe, get_audio_data])
+        .invoke_handler(tauri::generate_handler![trigger, pause, cancel_transcription, active_supports_cancel, get_audio_level, is_recording, is_paused, is_model_loaded, get_loaded_models, get_compiled_engines, get_cpu_features, get_default_input_device_name, get_models, download_model, delete_model, is_wayland, is_gnome, check_portal_grant_needed, grant_portal_now, get_app_version, check_updates_now, dismiss_update, open_release_notes, apply_update, clear_update_applying, get_update_applying, restart_app, widget_extension_status, install_widget_extension, disable_widget_extension, request_logout, check_hotkey_conflict, register_gnome_hotkeys, hide_window, load_config, save_config, set_history_filter, set_language, get_history, delete_history_entry, clear_history, export_history, retranscribe, get_audio_data])
         .on_window_event(|window, event| {
             // Перехватываем закрытие окна — скрываем вместо закрытия
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
