@@ -40,6 +40,19 @@ log()  { printf '\033[32m[build-deb]\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m[build-deb]\033[0m %s\n' "$*" >&2; }
 err()  { printf '\033[31m[build-deb]\033[0m %s\n' "$*" >&2; exit 1; }
 
+# Локальные env-переменные (HTTP/HTTPS-прокси, переключатели типа
+# BUILD_DEB_NO_FILTER). Файл .env.local в .gitignore, шаблон — .env.example.
+# `set -a` авто-экспортирует все присваивания во время source, чтобы они
+# наследовались в curl/cargo/tauri как env. В CI файла нет — шаг no-op.
+ENV_LOCAL="${REPO_ROOT}/.env.local"
+if [[ -f "${ENV_LOCAL}" ]]; then
+    log "Loading ${ENV_LOCAL}"
+    set -a
+    # shellcheck disable=SC1090
+    source "${ENV_LOCAL}"
+    set +a
+fi
+
 # Все 4 движка одновременно. ORT-фича — load-dynamic (gigaam-system-ort);
 # qwen3asr пользуется тем же ort'ом.
 APP_FEATURES='gigaam-system-ort,vosk,whisper,qwen3asr'
@@ -92,6 +105,34 @@ log "Phase 0/6: removing prior artifacts of v${CURRENT_VERSION} (older versions 
 # и каталог одной командой; артефакты других версий (с другим префиксом) не трогает.
 rm -rf "${REPO_ROOT}/target/release/bundle/deb/ArcanaGlyph_${CURRENT_VERSION}_"*
 rm -rf "${REPO_ROOT}/target/release/bundle/appimage/ArcanaGlyph_${CURRENT_VERSION}_"*
+# Каталог `ArcanaGlyph.AppDir/` linuxdeploy создаёт сам без версии в имени.
+# После прерванной сборки (Ctrl+C на phase output plugin appimage) он остаётся
+# полусобранным, и следующий запуск linuxdeploy падает с непрозрачным
+# "failed to run linuxdeploy". Сносим его явно.
+# Также `target/release/bundle/appimage_deb/` — промежуточный каталог
+# Tauri AppImage bundler'а (распакованная копия .deb для скармливания linuxdeploy).
+# Не используется между запусками, безопасно удалять.
+rm -rf "${REPO_ROOT}/target/release/bundle/appimage/ArcanaGlyph.AppDir"
+rm -rf "${REPO_ROOT}/target/release/bundle/appimage_deb"
+
+# ----- 0.5. AppImage runtime для linuxdeploy-plugin-appimage --------------------------
+# Плагин linuxdeploy-plugin-appimage сам скачивает runtime через свой внутренний
+# downloader, который НЕ следует за HTTP-редиректами. GitHub releases отдают 302 на
+# objects.githubusercontent.com — плагин падает с
+#   "Failed to download runtime: server returned status code 302"
+#   "Failed to run plugin: appimage (exit code: 1)"
+# Это не интермиттент — повторяется и в CI, и локально. Workaround: скачать runtime
+# самим через `curl -L` (умеет 302) и пробросить через env `LDAI_RUNTIME_FILE` —
+# плагин при наличии этой переменной не лезет в сеть, а копирует готовый файл.
+APPIMAGE_RUNTIME_URL="https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64"
+APPIMAGE_RUNTIME_FILE="${REPO_ROOT}/target/appimage-runtime-x86_64"
+if [[ ! -s "${APPIMAGE_RUNTIME_FILE}" ]]; then
+    log "Phase 0.5/6: downloading AppImage runtime (plugin-appimage не follow'ит 302)"
+    mkdir -p "$(dirname "${APPIMAGE_RUNTIME_FILE}")"
+    curl -fSL --retry 3 -o "${APPIMAGE_RUNTIME_FILE}" "${APPIMAGE_RUNTIME_URL}"
+    chmod +x "${APPIMAGE_RUNTIME_FILE}"
+fi
+export LDAI_RUNTIME_FILE="${APPIMAGE_RUNTIME_FILE}"
 
 # ----- 1. Pre-built нативные либы -----------------------------------------------------
 
@@ -155,12 +196,56 @@ rm -rf "${REPO_ROOT}/target/release/build/whisper-rs-sys-"* \
 # его через `-- ARGS` в нижележащий cargo. `--features` Tauri знает и форвардит сам.
 # APPIMAGE_EXTRACT_AND_RUN=1 — fallback на распаковку, если в системе нет рабочего
 # FUSE (Tauri использует appimagetool/linuxdeploy, оба сами AppImage).
-# `--verbose` критичен: при default log_level (Error) Tauri глотает stderr процесса
-# linuxdeploy — при падении печатает только обобщённое "failed to run linuxdeploy"
-# без полезной информации. С --verbose stderr попадает в лог.
-env "${NOAVX_WHISPER_ENV[@]}" \
-    APPIMAGE_EXTRACT_AND_RUN=1 \
-    cargo tauri build --verbose --bundles deb,appimage --features "${APP_FEATURES}" -- --no-default-features
+#
+# `--verbose` ОБЯЗАТЕЛЕН: без него Tauri-bundler одновременно делает две вещи:
+#   1) запускает `linuxdeploy --verbosity 3` (error-only) вместо `--verbosity 0`
+#      (debug). Плагины gtk/appimage в quiet-mode где-то возвращают non-zero exit;
+#   2) использует `cmd.output()` (pipe stdio) вместо `cmd.output_ok()` (TTY).
+# Из-за (1) сборка реально падает с непрозрачным "failed to run linuxdeploy".
+# Без `--verbose` `make dist` локально не работает — проверено эмпирически
+# 2026-05-08, см. linuxdeploy.rs в tauri-apps/tauri (логика ветвления по log_level).
+#
+# Платой за надёжность идут десятки тысяч строк шума от plugin-gtk
+# (`Copying file`, `Setting rpath`, `Calling strip on library`, `Deploying ...`).
+# Фильтруем их в pipe ниже. Реальные ошибки (`error`, `failed`, `fatal`,
+# `panic`, и cargo-сообщения типа `Compiling`/`Bundling`) под фильтр не попадают.
+# Установка `BUILD_DEB_NO_FILTER=1` отключает фильтр (нужно при дебаге).
+# Blacklist шумных строк из cargo tauri build --verbose. Под фильтр попадает:
+#   * `Debug [tauri_cli::...]` / `Debug [ignore::...]` / `Debug [globset]` —
+#     самое многословное от --verbose (gitignore-обход и т.п.).
+#   * `[gtk/stdout|stderr]`, `[appimage/stdout|stderr]` целиком — весь
+#     вывод плагинов linuxdeploy (полезное там только error, который попадёт
+#     через non-zero exit и наш err()).
+#   * `Copying file`, `Setting rpath`, `Calling strip`, `Deploying ...`,
+#     `Skipping deployment`, `Creating directory|symlink`, `-- ... --` —
+#     section-headers и progress от самого linuxdeploy без префикса.
+#   * Известные шумные WARNING'и плагинов (copyright/strip/AppStream/etc).
+#   * Продолжения путей на отдельных строках (terminal-wrap):
+#     /home/, /lib/, /usr/, /tmp/, /opt/, /var/, /etc/, /root/.
+# Реальные ошибки (`error[Eнn]`, `error: ...`, `failed to run linuxdeploy`,
+# `cannot find ...`, panics) под фильтр не попадают.
+# Полный лог в `target/build-deb.log` (Makefile dist оставляет файл при ошибке).
+TAURI_NOISE_FILTER='^(\s*$|\s*(Debug|Trace) \[|\[(gtk|appimage)/(stdout|stderr)\]|(Copying file|Setting rpath|Calling strip|Deploying (shared|copyright|dependencies|files|desktop|icon)|Skipping deployment|Creating (directory|symlink for file)|-- (Creating|Deploying|Copying|Running input|Running output)|linuxdeploy version|chmod: )|(WARNING: (Could not find copyright|Not calling strip|Existing AppRun|gtk-query-immodules|No desktop file specified|AppStream upstream metadata|Running in plugin mode))|['\''"]?/(home|lib|usr|tmp|opt|var|etc|root)/|: (Нет такого файла|No such file))'
+
+TAURI_BUILD_CMD=(
+    env "${NOAVX_WHISPER_ENV[@]}"
+    APPIMAGE_EXTRACT_AND_RUN=1
+    cargo tauri build --verbose --bundles deb,appimage
+    --features "${APP_FEATURES}"
+    -- --no-default-features
+)
+
+if [[ -n "${BUILD_DEB_NO_FILTER:-}" ]]; then
+    "${TAURI_BUILD_CMD[@]}"
+else
+    set +o pipefail
+    "${TAURI_BUILD_CMD[@]}" 2>&1 | grep -vE "${TAURI_NOISE_FILTER}"
+    TAURI_EXIT=${PIPESTATUS[0]}
+    set -o pipefail
+    if [[ ${TAURI_EXIT} -ne 0 ]]; then
+        err "cargo tauri build failed (exit ${TAURI_EXIT}). Rerun with BUILD_DEB_NO_FILTER=1 to see full output."
+    fi
+fi
 
 # ----- 4. Локализуем сгенерированный .deb ---------------------------------------------
 
@@ -322,20 +407,29 @@ fi
 
 # Перепакуем. APPIMAGE_EXTRACT_AND_RUN=1 — обходит FUSE если он недоступен
 # (например в Docker/CI без --privileged).
+# appimagetool печатает в stderr версию, "Generating squashfs", статистику
+# inode/files и `Please consider submitting your AppImage to AppImageHub`.
+# При успехе всё это шум; перенаправляем во временный файл и показываем
+# только при ошибке. Полный вывод всё равно сохраняется в target/build-deb.log
+# через tee из Makefile (если запуск был через `make dist`).
 log "Перепаковка AppImage…"
 rm -f "${APPIMAGE_FILE}"
-APPIMAGE_EXTRACT_AND_RUN=1 "${APPIMAGETOOL}" \
-    --no-appstream \
-    "${APPDIR}" "${APPIMAGE_FILE}" >/dev/null
+APPIMAGETOOL_LOG="$(mktemp)"
+if ! APPIMAGE_EXTRACT_AND_RUN=1 "${APPIMAGETOOL}" \
+        --no-appstream \
+        "${APPDIR}" "${APPIMAGE_FILE}" >"${APPIMAGETOOL_LOG}" 2>&1; then
+    cat "${APPIMAGETOOL_LOG}" >&2
+    rm -f "${APPIMAGETOOL_LOG}"
+    err "appimagetool repack failed"
+fi
+rm -f "${APPIMAGETOOL_LOG}"
 chmod 755 "${APPIMAGE_FILE}"
+
+# Чистим временную распаковку .deb.
+rm -rf "${EXTRACT_DIR}"
 
 log "Готово:"
 log "  ${DEB_FILE} ($(du -h "${DEB_FILE}" | awk '{print $1}'))"
 log "  ${APPIMAGE_FILE} ($(du -h "${APPIMAGE_FILE}" | awk '{print $1}'))"
-
-# Чистим временную распаковку.
-rm -rf "${EXTRACT_DIR}"
-
-log "Готово: ${DEB_FILE} ($(du -h "${DEB_FILE}" | awk '{print $1}'))"
-log "Содержимое:"
+log "Содержимое .deb:"
 dpkg-deb -c "${DEB_FILE}" | grep -E "(arcanaglyph|libonnxruntime|libvosk)" | awk '{print $1, $5, $6}'

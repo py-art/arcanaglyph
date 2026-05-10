@@ -30,14 +30,21 @@ install:
 	@VERSION=$$(grep '"version"' crates/arcanaglyph-app/tauri.conf.json | head -1 | sed 's/.*"version": *"//;s/".*//');\
 	DEB="target/release/bundle/deb/ArcanaGlyph_$${VERSION}_amd64.deb"; \
 	echo "${YELLOW}INFO : ${RESET}Пересобираю .deb v$${VERSION} (dev-режим — всегда пересобирать)${RESET}"; \
-	rm -f "$$DEB"; \
 	bash scripts/build-deb.sh || exit 1; \
+	if [ ! -f "$$DEB" ]; then \
+		echo "${RED}ERROR: $$DEB не найден после сборки — что-то пошло не так${RESET}" >&2; \
+		exit 1; \
+	fi; \
 	if pgrep -f "/usr/lib/arcanaglyph/arcanaglyph-(avx|noavx)" >/dev/null 2>&1; then \
 		echo "${YELLOW}INFO : ${RESET}ArcanaGlyph запущен — останавливаю перед apt install...${RESET}"; \
 		pkill -f "/usr/lib/arcanaglyph/arcanaglyph-(avx|noavx)" && sleep 1; \
 	fi; \
+	TMP_DIR=$$(mktemp -d); \
+	chmod 755 "$$TMP_DIR"; \
+	cp "$$DEB" "$$TMP_DIR/"; \
+	trap "rm -rf '$$TMP_DIR'" EXIT; \
 	echo "${GREEN}INFO : ${AZURE}Устанавливаю $$DEB (apt сам подтянет deps)${RESET}"; \
-	sudo apt install --reinstall -y "./$$DEB"; \
+	sudo apt install --reinstall -y "$$TMP_DIR/$$(basename $$DEB)"; \
 	echo "${GREEN}INFO : ${AZURE}Запускаю ArcanaGlyph...${RESET}"; \
 	nohup arcanaglyph >/dev/null 2>&1 &
 
@@ -88,7 +95,16 @@ all: fmt lint check test
 ##############################################################################
 .PHONY: dist   ## Build self-contained .deb + .AppImage (универсальные для AVX/no-AVX x86_64)
 dist:
-	bash scripts/build-deb.sh
+	@mkdir -p target
+	@bash -c 'set -o pipefail; \
+		bash scripts/build-deb.sh 2>&1 | tee target/build-deb.log; \
+		EXIT=$${PIPESTATUS[0]}; \
+		if [ $$EXIT -eq 0 ]; then \
+			rm -f target/build-deb.log; \
+		else \
+			printf "\n${YELLOW}Полный лог сохранён: target/build-deb.log${RESET}\n" >&2; \
+			exit $$EXIT; \
+		fi'
 
 .PHONY: clean  ## Clean the build cache
 clean:

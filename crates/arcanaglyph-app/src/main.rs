@@ -744,6 +744,25 @@ fn is_gnome() -> bool {
         .unwrap_or(false)
 }
 
+/// Tauri-команда: вероятно ли всплывёт XDG popup при первом нажатии Ctrl+Ё.
+/// UI использует это чтобы показать однократный баннер «Дать разрешение»
+/// до первого срабатывания горячей клавиши.
+#[tauri::command]
+fn check_portal_grant_needed() -> bool {
+    arcanaglyph_core::input::needs_portal_grant()
+}
+
+/// Tauri-команда: запросить XDG RemoteDesktop permission прямо сейчас
+/// (eager warmup). UI вызывает это по клику кнопки в баннере;
+/// popup всплывает в момент клика — пользователь даёт разрешение в
+/// expected моменте, а не при первом Ctrl+Ё.
+#[tauri::command]
+async fn grant_portal_now() -> Result<(), String> {
+    arcanaglyph_core::input::warmup_remote_desktop()
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// UUID нашего GNOME-расширения для виджета записи.
 const WIDGET_EXT_UUID: &str = "arcanaglyph-widget@arfi.tech";
 
@@ -1822,7 +1841,43 @@ fn setup_program_name() {
 #[cfg(not(target_os = "linux"))]
 fn setup_program_name() {}
 
+/// CLI: `arcanaglyph --grant-portal` — запускает только XDG RemoteDesktop
+/// warmup и выходит. Используется install.sh после установки .deb/.AppImage:
+/// popup от GNOME Shell всплывает в момент инсталляции (где пользователь
+/// ожидает диалогов), а не при первом Ctrl+Ё. На X11 / non-Linux — noop.
+fn run_grant_portal_and_exit() -> ! {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    tracing_subscriber::fmt().with_env_filter(filter).init();
+
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("Не удалось запустить async runtime: {e}");
+            std::process::exit(2);
+        }
+    };
+    match rt.block_on(arcanaglyph_core::input::warmup_remote_desktop()) {
+        Ok(()) => {
+            println!("XDG RemoteDesktop permission получен.");
+            println!("При следующем запуске приложения popup больше не появится.");
+            std::process::exit(0);
+        }
+        Err(e) => {
+            eprintln!("Не удалось получить XDG RemoteDesktop permission: {e}");
+            eprintln!("Это не блокирует работу — popup появится при первом Ctrl+Ё.");
+            std::process::exit(1);
+        }
+    }
+}
+
 fn main() {
+    // Раннее: --grant-portal subcommand. Должен сработать ДО Tauri-инициализации
+    // (нам не нужны окна / трей / engine — только portal warmup).
+    if std::env::args().any(|a| a == "--grant-portal") {
+        run_grant_portal_and_exit();
+    }
+
     // Инициализируем логирование. Дефолт — `info,whisper_rs=warn` (тихий whisper.cpp);
     // через `RUST_LOG` можно перебить (например `RUST_LOG=info,whisper_rs=trace` для
     // отладки whisper-инференса — увидим внутренние ggml/encoder сообщения).
@@ -2343,7 +2398,7 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![trigger, pause, cancel_transcription, active_supports_cancel, get_audio_level, is_recording, is_paused, is_model_loaded, get_loaded_models, get_compiled_engines, get_cpu_features, get_default_input_device_name, get_models, download_model, delete_model, is_wayland, is_gnome, widget_extension_status, install_widget_extension, disable_widget_extension, request_logout, check_hotkey_conflict, register_gnome_hotkeys, hide_window, load_config, save_config, set_history_filter, set_language, get_history, delete_history_entry, clear_history, export_history, retranscribe, get_audio_data])
+        .invoke_handler(tauri::generate_handler![trigger, pause, cancel_transcription, active_supports_cancel, get_audio_level, is_recording, is_paused, is_model_loaded, get_loaded_models, get_compiled_engines, get_cpu_features, get_default_input_device_name, get_models, download_model, delete_model, is_wayland, is_gnome, check_portal_grant_needed, grant_portal_now, widget_extension_status, install_widget_extension, disable_widget_extension, request_logout, check_hotkey_conflict, register_gnome_hotkeys, hide_window, load_config, save_config, set_history_filter, set_language, get_history, delete_history_entry, clear_history, export_history, retranscribe, get_audio_data])
         .on_window_event(|window, event| {
             // Перехватываем закрытие окна — скрываем вместо закрытия
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

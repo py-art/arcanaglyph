@@ -3,6 +3,12 @@
 NOTE.md
 /.claude-memory/
 
+# Локальные env-переменные для сборочного pipeline (HTTP_PROXY и т.п.).
+# Шаблон лежит в .env.example. См. начало scripts/build-deb.sh — он source'ит
+# .env.local при наличии, чтобы локальная сборка подхватывала прокси/токены/
+# другие персональные настройки без правки коммитимых файлов.
+.env.local
+
 # Авто-качаемые pre-built нативные библиотеки.
 # libonnxruntime-noavx.so коммитим (self-build, 25 МБ),
 # остальные тащит scripts/prepare-bundled-libs.sh при сборке .deb.

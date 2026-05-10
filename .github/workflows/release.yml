@@ -91,9 +91,16 @@ jobs:
         # APPIMAGE_EXTRACT_AND_RUN на уровне шага — наследуется в каждый
         # subprocess (cargo, tauri-cli, linuxdeploy, plugin'ы); inline-копия
         # внутри build-deb.sh остаётся как страховка.
+        # BUILD_DEB_NO_FILTER=1 отключает фильтр шумных строк plugin-gtk, чтобы в CI
+        # был полный лог linuxdeploy для диагностики падений. Без флага — те же
+        # десятки тысяч `Copying file`/`Setting rpath` фильтруются (в CI это раздувает
+        # log artifact, но не ломает сборку). `--verbose` сам по себе теперь всегда
+        # включён в build-deb.sh — без него Tauri запускает linuxdeploy с
+        # `--verbosity 3` и сборка падает (см. комментарий в Phase 3).
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
           LIBRARY_PATH: ${{ github.workspace }}/assets/libs
+          BUILD_DEB_NO_FILTER: "1"
         run: bash scripts/build-deb.sh
 
       - name: Generate SHA256 checksums

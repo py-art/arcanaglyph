@@ -194,6 +194,60 @@ fn save_restore_token(token: &str) {
     }
 }
 
+/// Существует ли сохранённый restore_token RemoteDesktop сессии.
+/// На X11 / non-Linux всегда true (там portal не нужен).
+pub fn has_restore_token() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        restore_token_path().map(|p| p.exists()).unwrap_or(false)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
+    }
+}
+
+/// Вероятно ли потребуется portal-popup при первом нажатии Ctrl+Ё.
+/// Условие: Linux + Wayland + нет сохранённого restore_token.
+/// UI использует это, чтобы показать пользователю предупреждение однократно.
+pub fn needs_portal_grant() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        is_wayland() && !has_restore_token()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+/// Eager-инициализация XDG RemoteDesktop сессии. После успеха popup
+/// больше не появится — restore_token сохранён и будет переиспользован.
+/// Используется CLI-флагом `arcanaglyph --grant-portal` из install.sh:
+/// popup всплывает в момент инсталляции (где пользователь ожидает диалогов),
+/// а не при первом Ctrl+Ё внутри приложения.
+/// На X11 / non-Linux — noop, возвращает Ok(()).
+pub async fn warmup_remote_desktop() -> Result<(), ArcanaError> {
+    #[cfg(target_os = "linux")]
+    {
+        if !is_wayland() {
+            return Ok(());
+        }
+        let mutex = RD_SESSION.get_or_init(|| Mutex::new(None));
+        let mut guard = mutex.lock().await;
+        if guard.is_some() {
+            return Ok(());
+        }
+        let session = init_rd_session().await?;
+        *guard = Some(session);
+        Ok(())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(())
+    }
+}
+
 /// Инициализирует RemoteDesktop сессию.
 /// При первом вызове GNOME покажет диалог подтверждения.
 /// При последующих запусках используется сохранённый restore_token.
