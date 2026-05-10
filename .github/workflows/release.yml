@@ -29,11 +29,18 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend deps
-        # Запускаем явно ПЕРЕД tauri build, чтобы кэш node_modules был
-        # готов когда beforeBuildCommand стартанёт. `npm ci` строже
-        # `npm install` — fail при mismatch lockfile, что важно для
-        # воспроизводимости релизов.
+        # `npm ci` строже `npm install` — fail при mismatch lockfile,
+        # что важно для воспроизводимости релизов.
         run: npm --prefix frontend ci
+
+      - name: Build frontend
+        # Билдим frontend здесь явно, до tauri build. Нельзя полагаться
+        # на Tauri's beforeBuildCommand с relative path — в GH Actions
+        # repo лежит как /home/runner/work/<repo>/<repo>/, и Tauri
+        # резолвит `../../frontend` от `<repo>/<repo>/` → промахивается
+        # на один уровень. Строим явно — Tauri дальше просто читает
+        # уже-готовый frontend/dist/ через frontendDist.
+        run: npm --prefix frontend run build
 
       - name: Cache Cargo
         uses: actions/cache@v4
