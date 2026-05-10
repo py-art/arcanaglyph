@@ -23,7 +23,8 @@ declare global {
     i18n: {
       t: (path: string, vars?: Record<string, unknown>) => string;
       setLanguage: (lang: 'ru' | 'en') => void;
-      currentLanguage: () => 'ru' | 'en';
+      getLanguage: () => 'ru' | 'en';
+      applyI18n: (root?: HTMLElement) => void;
     };
   }
 }

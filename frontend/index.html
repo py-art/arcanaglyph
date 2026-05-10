@@ -715,6 +715,26 @@
         cursor: pointer; font-size: 1.2rem; padding: 0 0.25rem; line-height: 1;
       }
       .update-banner__close:hover { color: #c0caf5; }
+      .update-banner__progress {
+        flex: 1 1 auto;
+        height: 3px;
+        background: rgba(122, 162, 247, 0.12);
+        border-radius: 2px;
+        overflow: hidden;
+        position: relative;
+        min-width: 80px;
+      }
+      .update-banner__progress-bar {
+        position: absolute; top: 0; bottom: 0;
+        width: 30%;
+        background: #7aa2f7;
+        border-radius: 2px;
+        animation: update-progress-slide 1.4s ease-in-out infinite;
+      }
+      @keyframes update-progress-slide {
+        0%   { left: -30%; }
+        100% { left: 100%; }
+      }
 
       .about-actions {
         margin-top: 1.25rem;
@@ -1697,16 +1717,29 @@
     </div>
 
     <div class="update-banner" id="update-banner" role="alert">
-      <span class="update-banner__text">
+      <span class="update-banner__text" id="update-banner-text-available">
         <span data-i18n="update.banner_text">Доступно обновление</span>
         <strong id="update-banner-version">—</strong>
       </span>
-      <div class="update-banner__actions">
+      <span class="update-banner__text" id="update-banner-text-applying" hidden>
+        <span data-i18n="update.applying_text">Установка идёт…</span>
+        <strong id="update-banner-applying-version">—</strong>
+      </span>
+      <div class="update-banner__progress" id="update-banner-progress" hidden>
+        <div class="update-banner__progress-bar"></div>
+      </div>
+      <div class="update-banner__actions" id="update-banner-actions-available">
         <button class="update-banner__btn primary" id="update-banner-apply"
                 data-i18n="update.btn_apply">Обновить</button>
         <button class="update-banner__btn" id="update-banner-notes"
                 data-i18n="update.btn_notes">Что нового</button>
         <button class="update-banner__close" id="update-banner-dismiss"
+                title="Закрыть">×</button>
+      </div>
+      <div class="update-banner__actions" id="update-banner-actions-applying" hidden>
+        <button class="update-banner__btn primary" id="update-banner-restart"
+                data-i18n="update.btn_restart">Перезапустить</button>
+        <button class="update-banner__close" id="update-banner-dismiss-applying"
                 title="Закрыть">×</button>
       </div>
     </div>

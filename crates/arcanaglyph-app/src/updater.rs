@@ -47,6 +47,11 @@ pub struct UpdateState {
     /// Версия которую пользователь dismiss'нул крестиком. Если выйдет
     /// ещё более новая — баннер вернётся.
     pub dismissed_version: Option<String>,
+    /// Версия, для которой пользователь нажал «Обновить». Пока поле
+    /// заполнено и не совпадает с `APP_VERSION`, UI показывает баннер в
+    /// applying-режиме (прогресс + кнопка «Перезапустить»). Очищается
+    /// при старте, когда `APP_VERSION` догнал значение поля.
+    pub applying_version: Option<String>,
     /// ETag от GitHub Releases — позволяет получать 304 Not Modified
     /// и не сжигать rate-limit на одинаковых запросах.
     pub etag: Option<String>,
@@ -214,6 +219,7 @@ pub async fn check_for_update(db: &HistoryDB) -> Result<Option<UpdateInfo>, Arca
     Ok(info.filter(|i| {
         is_newer(&i.latest_version, APP_VERSION)
             && state.dismissed_version.as_deref() != Some(i.latest_version.as_str())
+            && state.applying_version.as_deref() != Some(i.latest_version.as_str())
     }))
 }
 
@@ -229,6 +235,9 @@ pub fn cached_pending_update(db: &HistoryDB) -> Option<UpdateInfo> {
     if state.dismissed_version.as_deref() == Some(latest_version.as_str()) {
         return None;
     }
+    if state.applying_version.as_deref() == Some(latest_version.as_str()) {
+        return None;
+    }
     Some(UpdateInfo {
         latest_version,
         release_url: state.latest_release_url.unwrap_or_default(),
@@ -242,6 +251,30 @@ pub fn dismiss(db: &HistoryDB, version: &str) -> Result<(), ArcanaError> {
     let mut state = read_state(db);
     state.dismissed_version = Some(version.to_string());
     write_state(db, &state)
+}
+
+/// Помечает версию как «устанавливается». UI переходит в applying-режим
+/// (прогресс + «Перезапустить»), баннер «Доступно» не показывается
+/// поверх. Сбрасывается при старте, когда `APP_VERSION` догнал значение.
+pub fn set_applying(db: &HistoryDB, version: &str) -> Result<(), ArcanaError> {
+    let mut state = read_state(db);
+    state.applying_version = Some(version.to_string());
+    write_state(db, &state)
+}
+
+/// Стирает applying-метку. Используется когда пользователь закрыл
+/// applying-баннер крестиком (передумал перезапускаться).
+pub fn clear_applying(db: &HistoryDB) -> Result<(), ArcanaError> {
+    let mut state = read_state(db);
+    state.applying_version = None;
+    write_state(db, &state)
+}
+
+/// Возвращает текущее значение applying_version (None если нет).
+/// Используется фронтом на mount баннера, чтобы восстановить
+/// applying-режим без ожидания emit'а.
+pub fn applying_version(db: &HistoryDB) -> Option<String> {
+    read_state(db).applying_version
 }
 
 #[cfg(test)]
@@ -298,5 +331,35 @@ mod tests {
         assert!(!is_newer("rc-foo", "1.6.9"));
         assert!(!is_newer("1.6.9", "rc-foo"));
         assert!(!is_newer("v1.7.0-rc1", "1.6.9"));
+    }
+
+    /// applying_version блокирует available-баннер: пока сидим в
+    /// applying-режиме, фоновый чекер не должен «переключать» UI
+    /// обратно в available для той же версии.
+    #[test]
+    fn cached_pending_skips_when_applying() {
+        let info = UpdateInfo {
+            latest_version: "9.9.9".into(),
+            release_url: "https://example.com".into(),
+            published_at: "2026-05-10T00:00:00Z".into(),
+        };
+
+        let state_idle = UpdateState {
+            latest_known: Some(info.latest_version.clone()),
+            latest_release_url: Some(info.release_url.clone()),
+            latest_published_at: Some(info.published_at.clone()),
+            ..Default::default()
+        };
+        assert!(
+            state_idle.applying_version.is_none(),
+            "baseline: applying_version пуст"
+        );
+
+        let state_applying = UpdateState {
+            applying_version: Some(info.latest_version.clone()),
+            ..state_idle.clone()
+        };
+        let blocked = state_applying.applying_version.as_deref() == Some(info.latest_version.as_str());
+        assert!(blocked, "при applying_version=latest баннер не показываем");
     }
 }
