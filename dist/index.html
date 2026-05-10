@@ -652,6 +652,37 @@
       .toast--error { background: #2e1a1a; border: 1px solid #f7768e; color: #f7768e; }
       .toast--warning { background: #2e2918; border: 1px solid #e0af68; color: #e0af68; }
 
+      .portal-banner {
+        position: fixed;
+        top: 2.5rem;
+        left: 50%;
+        transform: translateX(-50%);
+        display: none;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.55rem 0.9rem;
+        background: #2e2918;
+        border: 1px solid #e0af68;
+        border-radius: 8px;
+        color: #e0af68;
+        font-size: 0.82rem;
+        z-index: 150;
+        max-width: 92%;
+      }
+      .portal-banner.visible { display: flex; }
+      .portal-banner__text { line-height: 1.35; }
+      .portal-banner__btn {
+        background: #e0af68; color: #1a1b26; border: none;
+        padding: 0.32rem 0.7rem; border-radius: 6px;
+        cursor: pointer; font-weight: 600; font-size: 0.8rem;
+      }
+      .portal-banner__btn:hover { background: #f0c078; }
+      .portal-banner__btn:disabled { opacity: 0.6; cursor: default; }
+      .portal-banner__close {
+        background: transparent; color: #e0af68; border: none;
+        cursor: pointer; font-size: 1.1rem; padding: 0 0.25rem; line-height: 1;
+      }
+
       .export-dropdown {
         position: relative;
         flex: 1;
@@ -1281,7 +1312,7 @@
           </svg>
         </div>
         <div class="about-title">ArcanaGlyph</div>
-        <div class="about-version">v1.6.8</div>
+        <div class="about-version">v1.6.9</div>
         <div class="about-divider"></div>
         <div class="about-desc" data-i18n="about.desc">
           Голосовой ввод текста
@@ -1617,6 +1648,12 @@
       </div>
     </div>
 
+    <div class="portal-banner" id="portal-banner" role="alert">
+      <span class="portal-banner__text">При первом нажатии Ctrl+Ё система запросит разрешение на ввод. Можно дать его сейчас.</span>
+      <button class="portal-banner__btn" id="portal-banner-grant">Дать разрешение</button>
+      <button class="portal-banner__close" id="portal-banner-close" title="Закрыть">×</button>
+    </div>
+
     <div class="toast" id="toast"></div>
 
     <script>
@@ -1634,6 +1671,39 @@
         clearTimeout(toastTimer);
         toastTimer = setTimeout(() => toastEl.classList.remove('visible'), ms);
       }
+
+      /* --- XDG portal grant banner.
+             Показывается один раз на Wayland-сессии без сохранённого restore_token.
+             Кнопка «Дать разрешение» вызывает grant_portal_now → popup всплывает
+             в expected момент (по клику пользователя), а не при первом Ctrl+Ё. --- */
+      (async function setupPortalBanner() {
+        if (localStorage.getItem('portalBannerDismissed') === '1') return;
+        let needed = false;
+        try { needed = await invoke('check_portal_grant_needed'); } catch (_) { return; }
+        if (!needed) return;
+        const banner = document.getElementById('portal-banner');
+        const grantBtn = document.getElementById('portal-banner-grant');
+        const closeBtn = document.getElementById('portal-banner-close');
+        banner.classList.add('visible');
+        grantBtn.addEventListener('click', async () => {
+          grantBtn.disabled = true;
+          grantBtn.textContent = 'Запрос...';
+          try {
+            await invoke('grant_portal_now');
+            banner.classList.remove('visible');
+            localStorage.setItem('portalBannerDismissed', '1');
+            showToast('Разрешение получено', 'success', 3000);
+          } catch (e) {
+            grantBtn.disabled = false;
+            grantBtn.textContent = 'Повторить';
+            showToast('Не удалось получить разрешение: ' + e, 'error', 5000);
+          }
+        });
+        closeBtn.addEventListener('click', () => {
+          banner.classList.remove('visible');
+          localStorage.setItem('portalBannerDismissed', '1');
+        });
+      })();
 
       /* --- Кнопки titlebar.
              Failsafe: если invoke() сломан (баг IPC) — пытаемся напрямую через webview API,

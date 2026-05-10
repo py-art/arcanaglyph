@@ -3,7 +3,7 @@
 #
 # Usage:
 #   curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | bash
-#   curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | VERSION=1.6.8 bash
+#   curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | VERSION=1.6.9 bash
 #
 # Что делает:
 #   1. Узнаёт URL последнего (или указанного через VERSION) релиза из GitHub API.
@@ -227,6 +227,21 @@ case "${INSTALLER}" in
     deb)      install_deb ;;
     appimage) install_appimage ;;
 esac
+
+# ----- post-install: pre-grant XDG RemoteDesktop on Wayland ---------------------
+# Wayland-only задача: при первом нажатии Ctrl+Ё внутри приложения GNOME
+# показывает popup «Дать доступ» (XDG RemoteDesktop portal). Делаем popup
+# здесь, в момент инсталляции, где пользователь ожидает диалогов. Best-effort:
+# не падаем, если запустить не получилось (нет DISPLAY, нет binary в PATH,
+# X11-сессия и т.д.) — приложение попросит разрешение из UI самостоятельно.
+if [ "${XDG_SESSION_TYPE:-}" = "wayland" ] && command -v "${APP_NAME}" >/dev/null 2>&1; then
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send "ArcanaGlyph" "Сейчас система спросит разрешение на ввод текста — нажмите «Дать доступ»." 2>/dev/null || true
+    fi
+    info "Requesting XDG RemoteDesktop permission (popup может появиться)…"
+    "${APP_NAME}" --grant-portal 2>&1 | sed 's/^/    /' || \
+        warn "Pre-grant не удался — приложение попросит разрешение из UI при первом запуске."
+fi
 
 cat <<EOF
 
