@@ -177,6 +177,17 @@
         pause_conflict: 'Pause ({hotkey}): занята — {holder}',
         conflicts_prompt: 'Обнаружены конфликты клавиш:\n\n{list}\n\nВсё равно сохранить?',
       },
+      update: {
+        banner_text: 'Доступно обновление',
+        btn_apply: 'Обновить',
+        btn_notes: 'Что нового',
+        check_now_btn: 'Проверить обновления',
+        toast_terminal_started: 'Установка запущена в терминале. После завершения перезапустите ArcanaGlyph.',
+        toast_apply_failed: 'Не удалось запустить установку: {err}',
+        toast_available: 'Доступно обновление {v}, см. баннер внизу',
+        toast_up_to_date: 'Установлена последняя версия',
+        toast_check_failed: 'Проверка обновлений не удалась: {err}',
+      },
     },
     en: {
       status: {
@@ -347,6 +358,17 @@
         trigger_conflict: 'Trigger ({hotkey}): taken — {holder}',
         pause_conflict: 'Pause ({hotkey}): taken — {holder}',
         conflicts_prompt: 'Hotkey conflicts detected:\n\n{list}\n\nSave anyway?',
+      },
+      update: {
+        banner_text: 'Update available:',
+        btn_apply: 'Update',
+        btn_notes: "What's new",
+        check_now_btn: 'Check for updates',
+        toast_terminal_started: 'Installer started in terminal. Restart ArcanaGlyph after it finishes.',
+        toast_apply_failed: 'Failed to start update: {err}',
+        toast_available: 'Update {v} available, see the banner at the bottom',
+        toast_up_to_date: 'You are on the latest version',
+        toast_check_failed: 'Update check failed: {err}',
       },
     },
   };

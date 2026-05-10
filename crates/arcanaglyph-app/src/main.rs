@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod tray;
+mod updater;
 
 use arcanaglyph_core::config::TranscriberType;
 use arcanaglyph_core::history::HistoryDB;
@@ -761,6 +762,162 @@ async fn grant_portal_now() -> Result<(), String> {
     arcanaglyph_core::input::warmup_remote_desktop()
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Tauri-команда: текущая версия приложения (читается из CARGO_PKG_VERSION
+/// через updater::APP_VERSION). UI использует её в About-секции вместо
+/// захардкоженной строки — после bump'а версии HTML не нужно править.
+#[tauri::command]
+fn get_app_version() -> &'static str {
+    updater::APP_VERSION
+}
+
+/// Tauri-команда: ручная проверка обновлений (кнопка в About). Делает
+/// HTTP-запрос к GitHub API, обновляет state, возвращает UpdateInfo
+/// если есть newer (and not dismissed).
+#[tauri::command]
+async fn check_updates_now(
+    history_db: tauri::State<'_, Arc<HistoryDB>>,
+) -> Result<Option<updater::UpdateInfo>, String> {
+    let db = history_db.inner().clone();
+    updater::check_for_update(&db).await.map_err(|e| e.to_string())
+}
+
+/// Tauri-команда: записать `version` в `dismissed_version`. Баннер
+/// для этой версии больше не появится, пока не выйдет ещё более новая.
+#[tauri::command]
+fn dismiss_update(
+    version: String,
+    history_db: tauri::State<'_, Arc<HistoryDB>>,
+) -> Result<(), String> {
+    updater::dismiss(history_db.inner(), &version).map_err(|e| e.to_string())
+}
+
+/// Tauri-команда: открыть URL в браузере. Используется кнопкой
+/// «Что нового» — ведёт на release page.
+#[tauri::command]
+fn open_release_notes(url: String) -> Result<(), String> {
+    std::process::Command::new("xdg-open")
+        .arg(&url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("xdg-open: {e}"))
+}
+
+/// Возвращает первый найденный terminal-emulator из known list.
+/// Использует `<term> --version` спавн-проверку (без `which` crate).
+fn detect_terminal() -> Option<&'static str> {
+    const TERMINALS: &[&str] = &[
+        "gnome-terminal",
+        "konsole",
+        "kitty",
+        "alacritty",
+        "tilix",
+        "xterm",
+    ];
+    for &t in TERMINALS {
+        let ok = std::process::Command::new(t)
+            .arg("--version")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            return Some(t);
+        }
+    }
+    None
+}
+
+/// Per-terminal CLI-аргументы для запуска `bash -c <cmd>`.
+fn terminal_args(terminal: &str, bash_cmd: &str) -> Vec<String> {
+    let cmd = bash_cmd.to_string();
+    match terminal {
+        // gnome-terminal/tilix принимают подкоманду после `--`.
+        "gnome-terminal" | "tilix" => {
+            vec!["--".into(), "bash".into(), "-c".into(), cmd]
+        }
+        // konsole закрывает окно сразу после exit команды без --noclose.
+        "konsole" => vec![
+            "--noclose".into(),
+            "-e".into(),
+            "bash".into(),
+            "-c".into(),
+            cmd,
+        ],
+        // kitty / alacritty / xterm: -e и далее команда + args.
+        _ => vec!["-e".into(), "bash".into(), "-c".into(), cmd],
+    }
+}
+
+/// Tauri-команда: запустить установку новой версии. Скачиваем install.sh
+/// в temp-файл, спавним терминал с `bash <tmp>` (не `curl|bash` — это
+/// устраняет PTY-passthrough проблемы для sudo внутри install.sh).
+/// При отсутствии терминала возвращаем ошибку с инструкцией для UI.
+#[tauri::command]
+async fn apply_update() -> Result<(), String> {
+    let terminal = detect_terminal().ok_or_else(|| {
+        format!(
+            "Терминал не найден. Запустите вручную:\n  curl -fsSL {} | bash",
+            updater::INSTALL_URL
+        )
+    })?;
+
+    // Скачиваем install.sh.
+    let body = reqwest::Client::builder()
+        .user_agent(format!("arcanaglyph/{}", updater::APP_VERSION))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("HTTP client: {e}"))?
+        .get(updater::INSTALL_URL)
+        .send()
+        .await
+        .map_err(|e| format!("Скачивание install.sh: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("install.sh HTTP: {e}"))?
+        .text()
+        .await
+        .map_err(|e| format!("Чтение install.sh: {e}"))?;
+
+    // Сохраняем во временный файл (.sh suffix для удобства, не функционально).
+    let tmp = tempfile::Builder::new()
+        .prefix("arcanaglyph-update-")
+        .suffix(".sh")
+        .tempfile()
+        .map_err(|e| format!("tempfile: {e}"))?;
+    use std::io::Write;
+    {
+        let mut handle = tmp.as_file();
+        handle
+            .write_all(body.as_bytes())
+            .map_err(|e| format!("Запись install.sh: {e}"))?;
+    }
+    // .keep() оставляет файл на диске после drop — терминал должен успеть
+    // его прочитать. Файл лежит в /tmp/, очистится при reboot.
+    let path = tmp
+        .into_temp_path()
+        .keep()
+        .map_err(|e| format!("temp keep: {e}"))?;
+
+    // Wrapper держит окно открытым после exit, чтобы пользователь увидел
+    // сообщение об ошибке если apt/sudo не дошёл до конца.
+    let bash_cmd = format!(
+        "bash {} ; ec=$?; echo; echo \"Exit: $ec\"; echo 'Press Enter to close'; read",
+        path.display()
+    );
+    let args = terminal_args(terminal, &bash_cmd);
+
+    std::process::Command::new(terminal)
+        .args(&args)
+        .spawn()
+        .map_err(|e| format!("Запуск {terminal}: {e}"))?;
+
+    Ok(())
 }
 
 /// UUID нашего GNOME-расширения для виджета записи.
@@ -2073,7 +2230,59 @@ fn main() {
             let audio_cache = CoreConfig::audio_cache_dir()
                 .ok_or_else(|| "Не удалось определить путь кэша".to_string())?;
             let history_db = Arc::new(HistoryDB::new(&db_path, audio_cache).map_err(|e| e.to_string())?);
-            app.manage(history_db);
+            app.manage(history_db.clone());
+
+            // === Update checker ===
+            // 1. Если в state уже знаем про более свежий релиз — эмитим
+            //    `update://available` сразу, чтобы UI получил баннер до
+            //    первой фоновой проверки (которая через 60 секунд).
+            if let Some(info) = updater::cached_pending_update(&history_db) {
+                let _ = app.handle().emit("update://available", info);
+            }
+            // 2. Фоновый чекер: первый запрос через 60с (даём engine
+            //    догрузиться, не конкурируя за сеть с download_model'ями),
+            //    далее sleep 24h в loop'е. На 403 / network errors —
+            //    exponential backoff до 7 дней. Cold-start gate: пропускаем
+            //    fetch если last_check_at < 23h назад.
+            let app_handle_updater = app.handle().clone();
+            let history_db_updater = Arc::clone(&history_db);
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                let mut backoff = std::time::Duration::from_secs(86400);
+                loop {
+                    let state = updater::read_state(&history_db_updater);
+                    let now = updater::unix_now();
+                    let should_check = state
+                        .last_check_at
+                        .map(|t| now - t >= 23 * 3600)
+                        .unwrap_or(true);
+                    if should_check {
+                        match updater::check_for_update(&history_db_updater).await {
+                            Ok(Some(info)) => {
+                                tracing::info!(
+                                    "Update available: {}",
+                                    info.latest_version
+                                );
+                                let _ = app_handle_updater
+                                    .emit("update://available", info);
+                                backoff = std::time::Duration::from_secs(86400);
+                            }
+                            Ok(None) => {
+                                tracing::debug!("Update check: no new release");
+                                backoff = std::time::Duration::from_secs(86400);
+                            }
+                            Err(e) => {
+                                tracing::warn!("Update check failed: {}", e);
+                                backoff = (backoff * 2)
+                                    .min(std::time::Duration::from_secs(7 * 86400));
+                            }
+                        }
+                    } else {
+                        tracing::debug!("Update check skipped (< 23h since last)");
+                    }
+                    tokio::time::sleep(backoff).await;
+                }
+            });
 
             // Скачивание модели и загрузка engine в фоне.
             // Выполняем СТРОГО последовательно: сначала убеждаемся, что модель активного
@@ -2398,7 +2607,7 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![trigger, pause, cancel_transcription, active_supports_cancel, get_audio_level, is_recording, is_paused, is_model_loaded, get_loaded_models, get_compiled_engines, get_cpu_features, get_default_input_device_name, get_models, download_model, delete_model, is_wayland, is_gnome, check_portal_grant_needed, grant_portal_now, widget_extension_status, install_widget_extension, disable_widget_extension, request_logout, check_hotkey_conflict, register_gnome_hotkeys, hide_window, load_config, save_config, set_history_filter, set_language, get_history, delete_history_entry, clear_history, export_history, retranscribe, get_audio_data])
+        .invoke_handler(tauri::generate_handler![trigger, pause, cancel_transcription, active_supports_cancel, get_audio_level, is_recording, is_paused, is_model_loaded, get_loaded_models, get_compiled_engines, get_cpu_features, get_default_input_device_name, get_models, download_model, delete_model, is_wayland, is_gnome, check_portal_grant_needed, grant_portal_now, get_app_version, check_updates_now, dismiss_update, open_release_notes, apply_update, widget_extension_status, install_widget_extension, disable_widget_extension, request_logout, check_hotkey_conflict, register_gnome_hotkeys, hide_window, load_config, save_config, set_history_filter, set_language, get_history, delete_history_entry, clear_history, export_history, retranscribe, get_audio_data])
         .on_window_event(|window, event| {
             // Перехватываем закрытие окна — скрываем вместо закрытия
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

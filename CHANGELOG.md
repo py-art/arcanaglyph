@@ -8,6 +8,23 @@
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-05-10
+
+### Добавлено
+
+- Авто-проверка обновлений: фоновый чекер раз в 24 часа (с cold-start
+  gate'ом, чтобы частые перезапуски не сжигали GitHub API rate limit).
+- Баннер внизу главной страницы «Доступно обновление X.Y.Z» с кнопками
+  «Обновить» (запуск `install.sh` в spawned-терминале:
+  gnome-terminal/konsole/kitty/...), «Что нового» (release page в
+  браузере через `xdg-open`), «×» (скрыть до следующей новой версии).
+- Кнопка «Проверить обновления» в разделе «О приложении» — fallback
+  на случай когда фоновый чекер не сработал (нет интернета на старте,
+  прокси, и т.п.).
+- Версия в About-секции теперь читается из бинарника
+  (`get_app_version`), а не хардкодится в HTML — после bump'а версии
+  не нужно править HTML.
+
 ## [1.6.9] - 2026-05-10
 
 ### Добавлено
@@ -29,7 +46,7 @@
   gdk-pixbuf). На чистом ubuntu-runner'е соответствующих `-dev` пакетов
   не было. Расширен список deps в `release.yml`:
   - `librsvg2-dev` — `librsvg-2.0.pc` (без него падал `there is no 'libdir'
-    variable for 'librsvg-2.0'`).
+variable for 'librsvg-2.0'`).
   - `libpango1.0-dev` — `pango.pc` / `pangocairo.pc` / `pangoft2.pc`.
   - `libgdk-pixbuf-2.0-dev` — `gdk-pixbuf-2.0.pc`.
   - `libgtk-3-bin` — утилита `gtk-query-immodules-3.0` (без неё IM-модули
@@ -42,7 +59,7 @@
 ### Исправлено
 
 - Сборка `.AppImage` в CI: linuxdeploy падал с `Could not find dependency:
-  libvosk.so` при анализе ELF-зависимостей бинаря. У нас `libvosk.so` лежит
+libvosk.so` при анализе ELF-зависимостей бинаря. У нас `libvosk.so` лежит
   в `assets/libs/`, но это видно только линкеру (через `LIBRARY_PATH` при
   `cargo build`); linuxdeploy ищет либу в runtime linker paths
   (`/usr/lib`, `/usr/local/lib` и т.п.). Локально она была в `/usr/local/lib/`

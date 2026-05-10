@@ -683,6 +683,44 @@
         cursor: pointer; font-size: 1.1rem; padding: 0 0.25rem; line-height: 1;
       }
 
+      .update-banner {
+        position: fixed;
+        bottom: 0; left: 0; right: 0;
+        display: none;
+        z-index: 250;
+        background: #1f2335; border-top: 1px solid #292e42;
+        padding: 0.65rem 1rem;
+        color: #c0caf5; font-size: 0.85rem;
+        align-items: center; justify-content: space-between;
+        gap: 0.75rem;
+      }
+      .update-banner.visible { display: flex; }
+      .update-banner__text { line-height: 1.35; }
+      .update-banner__text strong { color: #7aa2f7; font-weight: 600; }
+      .update-banner__actions { display: flex; gap: 0.5rem; align-items: center; }
+      .update-banner__btn {
+        background: transparent; color: #c0caf5;
+        border: 1px solid #565f89; border-radius: 6px;
+        padding: 0.32rem 0.75rem; font-size: 0.8rem;
+        cursor: pointer; font-weight: 500;
+      }
+      .update-banner__btn:hover { background: rgba(122, 162, 247, 0.1); border-color: #7aa2f7; }
+      .update-banner__btn.primary {
+        background: #7aa2f7; color: #1a1b26; border-color: #7aa2f7; font-weight: 600;
+      }
+      .update-banner__btn.primary:hover { background: #89b4fa; }
+      .update-banner__btn:disabled { opacity: 0.6; cursor: default; }
+      .update-banner__close {
+        background: transparent; color: #565f89; border: none;
+        cursor: pointer; font-size: 1.2rem; padding: 0 0.25rem; line-height: 1;
+      }
+      .update-banner__close:hover { color: #c0caf5; }
+
+      .about-actions {
+        margin-top: 1.25rem;
+        display: flex; justify-content: center;
+      }
+
       .export-dropdown {
         position: relative;
         flex: 1;
@@ -1312,7 +1350,7 @@
           </svg>
         </div>
         <div class="about-title">ArcanaGlyph</div>
-        <div class="about-version">v1.6.9</div>
+        <div class="about-version" id="about-version">—</div>
         <div class="about-divider"></div>
         <div class="about-desc" data-i18n="about.desc">
           Голосовой ввод текста
@@ -1329,6 +1367,10 @@
         </div>
         <div class="about-privacy" data-i18n="about.privacy">
           Вся транскрибация — локально, без облака
+        </div>
+        <div class="about-actions">
+          <button class="save-btn" id="check-updates-btn"
+                  data-i18n="update.check_now_btn">Проверить обновления</button>
         </div>
       </div>
     </div>
@@ -1654,6 +1696,21 @@
       <button class="portal-banner__close" id="portal-banner-close" title="Закрыть">×</button>
     </div>
 
+    <div class="update-banner" id="update-banner" role="alert">
+      <span class="update-banner__text">
+        <span data-i18n="update.banner_text">Доступно обновление</span>
+        <strong id="update-banner-version">—</strong>
+      </span>
+      <div class="update-banner__actions">
+        <button class="update-banner__btn primary" id="update-banner-apply"
+                data-i18n="update.btn_apply">Обновить</button>
+        <button class="update-banner__btn" id="update-banner-notes"
+                data-i18n="update.btn_notes">Что нового</button>
+        <button class="update-banner__close" id="update-banner-dismiss"
+                title="Закрыть">×</button>
+      </div>
+    </div>
+
     <div class="toast" id="toast"></div>
 
     <script>
@@ -1702,6 +1759,82 @@
         closeBtn.addEventListener('click', () => {
           banner.classList.remove('visible');
           localStorage.setItem('portalBannerDismissed', '1');
+        });
+      })();
+
+      /* --- Update banner.
+             Слушает `update://available` от backend (фоновый чекер раз в 24ч
+             + cached emit на старте). Кнопки: Обновить → apply_update;
+             Что нового → open_release_notes; × → dismiss_update. --- */
+      (function setupUpdateBanner() {
+        const banner = document.getElementById('update-banner');
+        const versionEl = document.getElementById('update-banner-version');
+        const applyBtn = document.getElementById('update-banner-apply');
+        const notesBtn = document.getElementById('update-banner-notes');
+        const dismissBtn = document.getElementById('update-banner-dismiss');
+        let currentInfo = null;
+
+        function show(info) {
+          currentInfo = info;
+          versionEl.textContent = info.latest_version;
+          banner.classList.add('visible');
+        }
+        function hide() { banner.classList.remove('visible'); }
+
+        applyBtn.addEventListener('click', async () => {
+          applyBtn.disabled = true;
+          try {
+            await invoke('apply_update');
+            showToast(i18n.t('update.toast_terminal_started'), 'success', 5000);
+          } catch (e) {
+            showToast(i18n.t('update.toast_apply_failed', { err: String(e) }), 'error', 6000);
+          } finally {
+            applyBtn.disabled = false;
+          }
+        });
+        notesBtn.addEventListener('click', async () => {
+          if (!currentInfo || !currentInfo.release_url) return;
+          try { await invoke('open_release_notes', { url: currentInfo.release_url }); }
+          catch (e) { showToast(String(e), 'error', 4000); }
+        });
+        dismissBtn.addEventListener('click', async () => {
+          if (!currentInfo) { hide(); return; }
+          try { await invoke('dismiss_update', { version: currentInfo.latest_version }); }
+          catch (_) { /* swallow — UI всё равно скрываем */ }
+          hide();
+        });
+
+        listen('update://available', (e) => show(e.payload));
+      })();
+
+      /* --- About: версия из бинарника + manual update check. --- */
+      (async function setupAboutPage() {
+        try {
+          const v = await invoke('get_app_version');
+          document.getElementById('about-version').textContent = 'v' + v;
+        } catch (_) { /* keep '—' placeholder */ }
+
+        const btn = document.getElementById('check-updates-btn');
+        if (!btn) return;
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          try {
+            const info = await invoke('check_updates_now');
+            if (info) {
+              showToast(i18n.t('update.toast_available', { v: info.latest_version }),
+                        'success', 4000);
+              // Backend не делает автоэмит из этой команды — сами показываем баннер.
+              const banner = document.getElementById('update-banner');
+              document.getElementById('update-banner-version').textContent = info.latest_version;
+              banner.classList.add('visible');
+            } else {
+              showToast(i18n.t('update.toast_up_to_date'), 'success', 3000);
+            }
+          } catch (err) {
+            showToast(i18n.t('update.toast_check_failed', { err: String(err) }), 'error', 5000);
+          } finally {
+            btn.disabled = false;
+          }
         });
       })();
 

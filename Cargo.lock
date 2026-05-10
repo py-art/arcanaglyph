@@ -102,7 +102,7 @@ dependencies = [
 
 [[package]]
 name = "arcanaglyph-app"
-version = "1.6.9"
+version = "1.7.0"
 dependencies = [
  "arcanaglyph-core",
  "base64 0.22.1",
@@ -117,6 +117,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-global-shortcut",
  "tauri-plugin-single-instance",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -125,7 +126,7 @@ dependencies = [
 
 [[package]]
 name = "arcanaglyph-core"
-version = "1.6.9"
+version = "1.7.0"
 dependencies = [
  "arboard",
  "ashpd",
