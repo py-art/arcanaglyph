@@ -17,6 +17,24 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup Node.js
+        # Frontend собирается через Vite (см. frontend/), Tauri дёргает
+        # `npm run build` через `beforeBuildCommand` в tauri.conf.json.
+        # Node 22 LTS — Node 20 deprecated на runner'ах GitHub Actions
+        # (cutoff сентябрь 2026, заменяем заранее).
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        # Запускаем явно ПЕРЕД tauri build, чтобы кэш node_modules был
+        # готов когда beforeBuildCommand стартанёт. `npm ci` строже
+        # `npm install` — fail при mismatch lockfile, что важно для
+        # воспроизводимости релизов.
+        run: npm --prefix frontend ci
+
       - name: Cache Cargo
         uses: actions/cache@v4
         with:

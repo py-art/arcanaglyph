@@ -1,0 +1,1718 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ArcanaGlyph</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html { overflow: hidden; }
+      /* Восстанавливаем поведение HTML-атрибута `hidden`: `display: flex/block`
+         в `.setting-row` / `.position-picker-hint` иначе перебивает user-agent
+         `[hidden] { display: none }` (одинаковая специфичность, выигрывает
+         объявленный позже класс). Без этого toggle/hint видны на X11. */
+      [hidden] { display: none !important; }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background: #1a1b26;
+        color: #c0caf5;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-height: 100vh;
+        padding: 0;
+        user-select: none;
+        overflow: hidden;
+      }
+
+      /* === Кастомный titlebar === */
+      .titlebar {
+        width: 100%;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        -webkit-app-region: drag;
+        flex-shrink: 0;
+        background: #16161e;
+      }
+      .titlebar-icon {
+        width: 18px;
+        height: 18px;
+        margin-left: 10px;
+        -webkit-app-region: no-drag;
+        pointer-events: none;
+      }
+      .titlebar-btns {
+        display: flex;
+        -webkit-app-region: no-drag;
+        height: 100%;
+      }
+      .titlebar-btn {
+        width: 40px;
+        height: 100%;
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.15s;
+      }
+      .titlebar-btn svg {
+        width: 12px;
+        height: 12px;
+        stroke: #565f89;
+        stroke-width: 1.5;
+        fill: none;
+      }
+      .titlebar-btn:hover svg { stroke: #c0caf5; }
+      .titlebar-btn:hover { background: rgba(255,255,255,0.06); }
+      .btn-close:hover { background: #f7768e; }
+      .btn-close:hover svg { stroke: #fff; }
+
+      .content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        flex: 1;
+        width: 100%;
+        padding: 1rem 1rem 1rem;
+      }
+
+      h1 {
+        font-size: 1.3rem;
+        color: #89b4fa;
+        font-weight: 600;
+        margin-bottom: 1.5rem;
+      }
+
+      /* === Микрофон === */
+      .mic-wrap {
+        position: relative;
+        width: 120px;
+        height: 120px;
+        margin-bottom: 0.8rem;
+      }
+      .mic-glow {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        background: rgba(122, 162, 247, 0.1);
+        transition: background 0.3s;
+      }
+      .mic-glow.recording {
+        background: rgba(247, 118, 142, 0.18);
+        animation: glow-pulse 1.5s ease-in-out infinite;
+      }
+      @keyframes glow-pulse {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.15); opacity: 0.5; }
+      }
+      .mic-btn {
+        position: absolute;
+        inset: 15px;
+        border-radius: 50%;
+        background: #1f2335;
+        border: 3px solid #7aa2f7;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: border-color 0.3s, background 0.3s;
+      }
+      .mic-btn:hover { border-color: #89b4fa; }
+      .mic-btn.recording {
+        border-color: #f7768e;
+        background: rgba(247, 118, 142, 0.1);
+      }
+      .mic-btn svg {
+        width: 36px;
+        height: 36px;
+        fill: #7aa2f7;
+        transition: fill 0.3s;
+      }
+      .mic-btn.recording svg { fill: #f7768e; }
+
+      /* === Статус === */
+      #status {
+        font-size: 0.95rem;
+        color: #7aa2f7;
+        font-weight: 500;
+        margin-bottom: 1.2rem;
+      }
+      #status.recording { color: #f7768e; }
+      .model-badge {
+        font-size: 0.7rem !important;
+        color: #565f89 !important;
+        font-weight: 400 !important;
+        margin-top: -0.6rem;
+        margin-bottom: 0.8rem;
+      }
+
+      /* === Уровень === */
+      .level-bar {
+        width: 85%;
+        max-width: 320px;
+        height: 6px;
+        background: #1f2335;
+        border-radius: 3px;
+        overflow: hidden;
+        margin-bottom: 1rem;
+        visibility: hidden;
+      }
+      .level-bar.active { visibility: visible; }
+      .level-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #9ece6a 0%, #7aa2f7 50%, #f7768e 100%);
+        border-radius: 3px;
+        transition: width 0.12s;
+      }
+
+      /* === Таймер === */
+      #timer {
+        font-size: 2.2rem;
+        font-weight: 300;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 3px;
+        color: #c0caf5;
+        margin-bottom: 1.5rem;
+        visibility: hidden;
+      }
+      #timer.active { visibility: visible; }
+
+      /* === Кнопки паузы/стоп === */
+      .controls {
+        display: flex;
+        gap: 1.5rem;
+        align-items: center;
+        margin-bottom: 1.5rem;
+        visibility: hidden;
+      }
+      .controls.active { visibility: visible; }
+
+      .ctrl-btn {
+        width: 52px;
+        height: 52px;
+        border-radius: 50%;
+        border: none;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: opacity 0.2s;
+      }
+      .ctrl-btn:hover { opacity: 0.85; }
+
+      .pause-btn { background: #ff9e64; }
+      .pause-btn.resume { background: #9ece6a; }
+      .pause-btn svg { width: 20px; height: 20px; fill: #1a1b26; }
+
+      .stop-btn { background: #f7768e; }
+      .stop-icon {
+        width: 18px;
+        height: 18px;
+        background: #1a1b26;
+        border-radius: 3px;
+      }
+
+      /* === Результат === */
+      .result-wrap {
+        position: relative;
+        width: 90%;
+        max-width: 360px;
+        display: none;
+        margin-top: 0.8rem;
+      }
+      .result-wrap.visible { display: block; }
+      #result {
+        font-size: 0.9rem;
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 10px;
+        padding: 0.8rem 1rem;
+        word-wrap: break-word;
+        white-space: pre-wrap;
+        color: #a9b1d6;
+        line-height: 1.5;
+        text-align: justify;
+        user-select: text;
+        max-height: 200px;
+        overflow: hidden;
+      }
+      #result.scrollable { overflow-y: auto; }
+      .copy-btn {
+        position: absolute;
+        top: -12px;
+        right: -12px;
+        width: 28px;
+        height: 28px;
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 50%;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s, border-color 0.2s;
+      }
+      .copy-btn:hover { background: #292e42; border-color: #7aa2f7; }
+      .copy-btn svg { width: 13px; height: 13px; fill: #565f89; }
+      .copy-btn.copied svg { fill: #9ece6a; }
+
+      /* === Ошибка === */
+      #result.error {
+        border-color: #f7768e;
+        color: #f7768e;
+      }
+
+      /* === Гамбургер-меню (в titlebar, слева) === */
+      .menu-btn {
+        width: 32px;
+        height: 100%;
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        -webkit-app-region: no-drag;
+        color: #565f89;
+        transition: color 0.15s;
+        margin-left: 4px;
+        padding: 0;
+      }
+      .menu-btn:hover { color: #c0caf5; }
+      .menu-btn svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.5; fill: none; }
+      .menu-btn .back-text { display: none; }
+      .menu-btn.back svg { display: none; }
+      .menu-btn.back .back-text {
+        display: inline;
+        color: #7aa2f7;
+        font-size: 0.75rem;
+        white-space: nowrap;
+      }
+      .menu-btn.back { width: auto; padding: 0 6px; }
+      /* Иконка по центру titlebar */
+      .titlebar-icon-center {
+        height: 18px;
+        margin: 0 auto;
+        pointer-events: none;
+      }
+
+      /* === Страница меню === */
+      .menu-page, .settings-page {
+        display: none;
+        flex-direction: column;
+        width: 100%;
+        height: calc(100vh - 32px);
+        padding: 1rem 1rem 0;
+        overflow-y: scroll;
+      }
+      .menu-page.visible, .settings-page.visible { display: flex; }
+
+      .menu-page h2, .settings-page h2 {
+        font-size: 1.1rem;
+        color: #bb9af7;
+        margin-bottom: 1rem;
+      }
+
+      /* Полоса прокрутки в стиле Tokyo Night */
+      .settings-page::-webkit-scrollbar { width: 6px; }
+      .settings-page::-webkit-scrollbar-track { background: transparent; }
+      .settings-page::-webkit-scrollbar-thumb { background: #292e42; border-radius: 3px; }
+      .settings-page::-webkit-scrollbar-thumb:hover { background: #565f89; }
+
+      .menu-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0.7rem 1rem;
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 8px;
+        cursor: pointer;
+        color: #c0caf5;
+        font-size: 0.9rem;
+        transition: background 0.15s, border-color 0.15s;
+        margin-bottom: 0.5rem;
+      }
+      .menu-item:hover { background: #292e42; border-color: #7aa2f7; }
+      .menu-item svg { width: 18px; height: 18px; stroke: #7aa2f7; stroke-width: 1.5; fill: none; }
+
+      /* === Настройки === */
+      .setting-group {
+        margin-bottom: 0.8rem;
+      }
+      .setting-group label {
+        display: block;
+        font-size: 0.85rem;
+        color: #c0caf5;
+        margin-bottom: 0.3rem;
+      }
+      .setting-group input[type="text"],
+      .setting-group input[type="number"] {
+        width: 100%;
+        height: 38px;
+        padding: 0 0.6rem;
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 6px;
+        color: #c0caf5;
+        font-size: 0.85rem;
+        font-family: inherit;
+        outline: none;
+        transition: border-color 0.15s;
+      }
+      .setting-group input:focus { border-color: #7aa2f7; }
+      /* Скрываем нативные стрелки number-input */
+      .setting-group input[type="number"]::-webkit-inner-spin-button,
+      .setting-group input[type="number"]::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        appearance: none;
+        margin: 0;
+      }
+      /* Обёртка для number-input с кастомными стрелками */
+      .number-input-wrap {
+        position: relative;
+      }
+      .number-input-wrap input { padding-right: 1.8rem; }
+      .number-input-arrows {
+        position: absolute;
+        right: 6px;
+        top: 50%;
+        transform: translateY(-50%);
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        cursor: pointer;
+      }
+      .number-input-arrows .arrow-up,
+      .number-input-arrows .arrow-down {
+        width: 0;
+        height: 0;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+      }
+      .number-input-arrows .arrow-up {
+        border-bottom: 5px solid #565f89;
+      }
+      .number-input-arrows .arrow-down {
+        border-top: 5px solid #565f89;
+      }
+      .number-input-arrows .arrow-up:hover { border-bottom-color: #7aa2f7; }
+      .number-input-arrows .arrow-down:hover { border-top-color: #7aa2f7; }
+
+      /* Кастомный dropdown (замена <select>) */
+      .custom-select {
+        position: relative;
+        width: 100%;
+      }
+      .custom-select-trigger {
+        width: 100%;
+        height: 38px;
+        padding: 0 28px 0 0.6rem;
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 6px;
+        color: #c0caf5;
+        font-size: 0.85rem;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        transition: border-color 0.15s;
+        user-select: none;
+      }
+      .custom-select-trigger::after {
+        content: '';
+        position: absolute;
+        right: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        border: 4px solid transparent;
+        border-top-color: #565f89;
+      }
+      .custom-select.open .custom-select-trigger { border-color: #7aa2f7; }
+      .custom-select.open .custom-select-trigger::after {
+        border-top-color: transparent;
+        border-bottom-color: #565f89;
+        transform: translateY(-80%);
+      }
+      .custom-select-options {
+        display: none;
+        background: #1f2335;
+        border: 1px solid #7aa2f7;
+        border-radius: 6px;
+        max-height: 200px;
+        overflow-y: auto;
+      }
+      /* Когда dropdown портирован в body — fixed позиция */
+      .custom-select-options.portal {
+        display: block;
+        position: fixed;
+        z-index: 10000;
+      }
+      /* Когда НЕ портирован (fallback) */
+      .custom-select.open .custom-select-options:not(.portal) {
+        display: block;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        z-index: 1000;
+      }
+      .custom-select-option {
+        padding: 0.5rem 0.6rem;
+        color: #c0caf5;
+        font-size: 0.85rem;
+        cursor: pointer;
+        transition: background 0.1s;
+      }
+      .custom-select-option:hover { background: #292e42; }
+      .custom-select-option.selected { background: #292e42; color: #7aa2f7; }
+      /* Опция движка, не включённого в текущую сборку: серая, некликабельная,
+         с пометкой «не собрано» (через ::after, текст из i18n). */
+      .custom-select-option.option--disabled {
+        color: #565f89;
+        cursor: not-allowed;
+        pointer-events: none;
+        font-style: italic;
+      }
+      .custom-select-option.option--disabled::after {
+        content: attr(data-disabled-label);
+        margin-left: 0.5rem;
+        opacity: 0.7;
+        font-size: 0.75rem;
+      }
+
+      .setting-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.5rem 0;
+      }
+      .setting-row label {
+        font-size: 0.85rem;
+        color: #c0caf5;
+        margin: 0;
+      }
+
+      /* Чекбокс-переключатель */
+      .toggle {
+        position: relative;
+        width: 36px;
+        height: 20px;
+        background: #292e42;
+        border-radius: 10px;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      .toggle.on { background: #7aa2f7; }
+      .toggle::after {
+        content: '';
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 14px;
+        height: 14px;
+        background: #c0caf5;
+        border-radius: 50%;
+        transition: transform 0.2s;
+      }
+      .toggle.on::after { transform: translateX(16px); }
+      .toggle.locked { cursor: default; pointer-events: none; }
+
+      /* Подсветка изменённых полей */
+      .setting-group.changed input,
+      .setting-group.changed .custom-select-trigger {
+        border-color: #ff9e64;
+      }
+      .setting-row.changed .toggle {
+        box-shadow: 0 0 0 2px #ff9e64;
+      }
+
+      /* Picker позиции виджета записи: миниатюра экрана с 9 точками-якорями */
+      .position-picker {
+        margin-top: 4px;
+      }
+      .position-picker-screen {
+        position: relative;
+        width: 200px;
+        height: 120px;
+        background: #16161e;
+        border: 2px solid #292e42;
+        border-radius: 8px;
+      }
+      .position-picker-dot {
+        position: absolute;
+        width: 14px;
+        height: 14px;
+        margin: -7px 0 0 -7px;
+        border-radius: 50%;
+        background: transparent;
+        border: 2px solid #565f89;
+        cursor: pointer;
+        transition: background 0.15s, border-color 0.15s, transform 0.15s;
+      }
+      .position-picker-dot:hover {
+        border-color: #7aa2f7;
+        transform: scale(1.2);
+      }
+      .position-picker-dot.active {
+        background: #7aa2f7;
+        border-color: #7aa2f7;
+      }
+      .position-picker-dot[data-pos="top-left"]      { top: 14px; left: 14px; }
+      .position-picker-dot[data-pos="top-center"]    { top: 14px; left: 50%; }
+      .position-picker-dot[data-pos="top-right"]     { top: 14px; left: calc(100% - 14px); }
+      .position-picker-dot[data-pos="middle-left"]   { top: 50%;  left: 14px; }
+      .position-picker-dot[data-pos="middle-center"] { top: 50%;  left: 50%; }
+      .position-picker-dot[data-pos="middle-right"]  { top: 50%;  left: calc(100% - 14px); }
+      .position-picker-dot[data-pos="bottom-left"]   { top: calc(100% - 14px); left: 14px; }
+      .position-picker-dot[data-pos="bottom-center"] { top: calc(100% - 14px); left: 50%; }
+      .position-picker-dot[data-pos="bottom-right"]  { top: calc(100% - 14px); left: calc(100% - 14px); }
+      .position-picker-hint {
+        display: block;
+        margin-top: 6px;
+        color: #565f89;
+        font-size: 11px;
+      }
+      .setting-group.changed .position-picker-screen {
+        border-color: #ff9e64;
+      }
+
+      /* Кнопки сохранения/отмены — фиксированы внизу */
+      .save-area {
+        position: sticky;
+        bottom: 0;
+        background: #1a1b26;
+        padding: 0.8rem 0 1rem;
+        margin-top: auto;
+      }
+      .save-buttons {
+        display: flex;
+        gap: 0.5rem;
+      }
+      .save-btn, .cancel-btn {
+        flex: 1;
+        padding: 0.7rem;
+        border: none;
+        border-radius: 8px;
+        font-size: 0.9rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: background 0.2s, opacity 0.2s;
+      }
+      .save-btn:disabled {
+        background: #292e42;
+        color: #565f89;
+        cursor: default;
+      }
+      .save-btn:not(:disabled) {
+        background: #7aa2f7;
+        color: #1a1b26;
+      }
+      .save-btn:not(:disabled):hover { opacity: 0.9; }
+
+      .cancel-btn {
+        background: transparent;
+        border: 1px solid #292e42 !important;
+        color: #565f89;
+        cursor: default;
+      }
+      .cancel-btn:not(:disabled) {
+        border-color: #ff9e64 !important;
+        color: #ff9e64;
+        cursor: pointer;
+      }
+      .cancel-btn:not(:disabled):hover { background: rgba(255, 158, 100, 0.1); }
+      .cancel-btn--danger:not(:disabled) { border-color: #f7768e !important; color: #f7768e; }
+      .cancel-btn--danger:not(:disabled):hover { background: rgba(247, 118, 142, 0.1); }
+
+      .toast {
+        position: fixed;
+        bottom: 5rem;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 0.6rem 1.2rem;
+        border-radius: 8px;
+        font-size: 0.85rem;
+        z-index: 200;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s;
+        max-width: 90%;
+        text-align: center;
+      }
+      .toast.visible { opacity: 1; }
+      .toast--success { background: #1a2e1a; border: 1px solid #9ece6a; color: #9ece6a; }
+      .toast--error { background: #2e1a1a; border: 1px solid #f7768e; color: #f7768e; }
+      .toast--warning { background: #2e2918; border: 1px solid #e0af68; color: #e0af68; }
+
+      .portal-banner {
+        position: fixed;
+        top: 2.5rem;
+        left: 50%;
+        transform: translateX(-50%);
+        display: none;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.55rem 0.9rem;
+        background: #2e2918;
+        border: 1px solid #e0af68;
+        border-radius: 8px;
+        color: #e0af68;
+        font-size: 0.82rem;
+        z-index: 150;
+        max-width: 92%;
+      }
+      .portal-banner.visible { display: flex; }
+      .portal-banner__text { line-height: 1.35; }
+      .portal-banner__btn {
+        background: #e0af68; color: #1a1b26; border: none;
+        padding: 0.32rem 0.7rem; border-radius: 6px;
+        cursor: pointer; font-weight: 600; font-size: 0.8rem;
+      }
+      .portal-banner__btn:hover { background: #f0c078; }
+      .portal-banner__btn:disabled { opacity: 0.6; cursor: default; }
+      .portal-banner__close {
+        background: transparent; color: #e0af68; border: none;
+        cursor: pointer; font-size: 1.1rem; padding: 0 0.25rem; line-height: 1;
+      }
+
+      .update-banner {
+        position: fixed;
+        bottom: 0; left: 0; right: 0;
+        display: none;
+        z-index: 250;
+        background: #1f2335; border-top: 1px solid #292e42;
+        padding: 0.65rem 1rem;
+        color: #c0caf5; font-size: 0.85rem;
+        align-items: center; justify-content: space-between;
+        gap: 0.75rem;
+      }
+      .update-banner.visible { display: flex; }
+      .update-banner__text { line-height: 1.35; }
+      .update-banner__text strong { color: #7aa2f7; font-weight: 600; }
+      .update-banner__actions { display: flex; gap: 0.5rem; align-items: center; }
+      .update-banner__btn {
+        background: transparent; color: #c0caf5;
+        border: 1px solid #565f89; border-radius: 6px;
+        padding: 0.32rem 0.75rem; font-size: 0.8rem;
+        cursor: pointer; font-weight: 500;
+      }
+      .update-banner__btn:hover { background: rgba(122, 162, 247, 0.1); border-color: #7aa2f7; }
+      .update-banner__btn.primary {
+        background: #7aa2f7; color: #1a1b26; border-color: #7aa2f7; font-weight: 600;
+      }
+      .update-banner__btn.primary:hover { background: #89b4fa; }
+      .update-banner__btn:disabled { opacity: 0.6; cursor: default; }
+      .update-banner__close {
+        background: transparent; color: #565f89; border: none;
+        cursor: pointer; font-size: 1.2rem; padding: 0 0.25rem; line-height: 1;
+      }
+      .update-banner__close:hover { color: #c0caf5; }
+
+      .about-actions {
+        margin-top: 1.25rem;
+        display: flex; justify-content: center;
+      }
+
+      .export-dropdown {
+        position: relative;
+        flex: 1;
+      }
+      .export-dropdown > .save-btn { width: 100%; }
+      .export-dropdown-menu {
+        display: none;
+        position: absolute;
+        bottom: 100%;
+        left: 0;
+        right: 0;
+        margin-bottom: 4px;
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 8px;
+        overflow: hidden;
+        z-index: 100;
+      }
+      .export-dropdown-menu.visible { display: block; }
+      .export-dropdown-item {
+        padding: 0.6rem 1rem;
+        color: #c0caf5;
+        cursor: pointer;
+        text-align: center;
+        font-size: 0.9rem;
+      }
+      .export-dropdown-item:hover { background: #292e42; }
+
+      .save-notice {
+        text-align: center;
+        font-size: 0.75rem;
+        color: #9ece6a;
+        margin-top: 0.5rem;
+        display: none;
+      }
+      .save-notice.visible { display: block; }
+
+      /* === Табы настроек === */
+      .settings-tabs {
+        display: flex;
+        gap: 0;
+        margin-bottom: 1rem;
+        border-bottom: 1px solid #292e42;
+      }
+      .settings-tab {
+        padding: 0.5rem 1rem;
+        font-size: 0.85rem;
+        color: #565f89;
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        transition: color 0.15s, border-color 0.15s;
+        user-select: none;
+      }
+      .settings-tab:hover { color: #c0caf5; }
+      .settings-tab.active {
+        color: #7aa2f7;
+        border-bottom-color: #7aa2f7;
+      }
+      .settings-tab-content { display: none; }
+      .settings-tab-content.active { display: block; }
+
+      /* === Композер горячих клавиш === */
+      .hotkey-composer {
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 6px;
+        padding: 0.6rem;
+        transition: border-color 0.15s;
+      }
+      .setting-group.changed .hotkey-composer { border-color: #ff9e64; }
+      .hotkey-mods {
+        display: flex;
+        gap: 0.3rem;
+        margin-bottom: 0.4rem;
+      }
+      .hotkey-mod {
+        padding: 0.25rem 0.5rem;
+        background: #292e42;
+        border: 1px solid #292e42;
+        border-radius: 4px;
+        color: #565f89;
+        font-size: 0.75rem;
+        cursor: pointer;
+        transition: all 0.15s;
+        user-select: none;
+      }
+      .hotkey-mod:hover { border-color: #7aa2f7; color: #c0caf5; }
+      .hotkey-mod.active {
+        background: rgba(122, 162, 247, 0.15);
+        border-color: #7aa2f7;
+        color: #7aa2f7;
+      }
+      .hotkey-key-row {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+      }
+      .hotkey-plus {
+        color: #565f89;
+        font-size: 0.85rem;
+      }
+      .hotkey-key-input {
+        flex: 1;
+        height: 32px;
+        padding: 0 0.5rem;
+        background: #292e42;
+        border: 1px solid #292e42;
+        border-radius: 4px;
+        color: #c0caf5;
+        font-size: 0.85rem;
+        outline: none;
+        transition: border-color 0.15s;
+      }
+      .hotkey-key-input:focus { border-color: #7aa2f7; }
+      .hotkey-key-input.recording {
+        border-color: #ff9e64;
+        animation: hotkey-pulse 1s ease-in-out infinite;
+      }
+      @keyframes hotkey-pulse {
+        0%, 100% { border-color: #ff9e64; }
+        50% { border-color: #292e42; }
+      }
+      .hotkey-key-input::placeholder { color: #565f89; }
+      .hotkey-record-btn, .hotkey-clear-btn {
+        background: none;
+        border: 1px solid #292e42;
+        border-radius: 4px;
+        color: #565f89;
+        font-size: 0.85rem;
+        padding: 0.15rem 0.4rem;
+        cursor: pointer;
+        transition: color 0.15s, border-color 0.15s;
+      }
+      .hotkey-record-btn:hover { color: #7aa2f7; border-color: #7aa2f7; }
+      .hotkey-clear-btn:hover { color: #f7768e; border-color: #f7768e; }
+      .hotkey-preview {
+        margin-top: 0.4rem;
+        font-size: 0.75rem;
+        color: #565f89;
+        min-height: 1em;
+      }
+      .hotkey-preview:not([data-value=""]) { color: #9ece6a; }
+      .wayland-warning {
+        margin-top: 1rem;
+        padding: 0.6rem 0.8rem;
+        background: rgba(255, 158, 100, 0.08);
+        border: 1px solid rgba(255, 158, 100, 0.25);
+        border-radius: 6px;
+        font-size: 0.8rem;
+        color: #ff9e64;
+        line-height: 1.4;
+      }
+
+      /* === Путь с кнопкой выбора === */
+      .path-input-row {
+        display: flex;
+        gap: 0.4rem;
+        align-items: center;
+      }
+      .path-input-row input {
+        flex: 1;
+        min-width: 0;
+      }
+      .path-pick-btn {
+        padding: 0.35rem 0.5rem;
+        background: #292e42;
+        border: 1px solid #3b4261;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.85rem;
+        line-height: 1;
+        transition: background 0.15s;
+        flex-shrink: 0;
+      }
+      .path-pick-btn:hover { background: rgba(122, 162, 247, 0.15); }
+      .model-card-path {
+        display: flex;
+        gap: 0.4rem;
+        align-items: center;
+        margin-top: 0.4rem;
+      }
+      .model-card-path input {
+        flex: 1;
+        min-width: 0;
+        font-size: 0.75rem;
+        padding: 0.25rem 0.4rem;
+        background: #1a1b26;
+        border: 1px solid #292e42;
+        border-radius: 4px;
+        color: #a9b1d6;
+        text-overflow: ellipsis;
+        overflow: hidden;
+        cursor: default;
+      }
+      .model-card-path .path-pick-btn {
+        padding: 0.2rem 0.35rem;
+        font-size: 0.75rem;
+      }
+
+      /* === Карточки моделей === */
+      .models-section-title {
+        font-size: 0.85rem;
+        color: #bb9af7;
+        margin: 1rem 0 0.6rem;
+      }
+      .model-card {
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 8px;
+        padding: 0.8rem;
+        margin-bottom: 0.6rem;
+      }
+      .model-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .model-card-name {
+        font-size: 0.9rem;
+        color: #c0caf5;
+        font-weight: 500;
+      }
+      .model-card-size {
+        font-size: 0.75rem;
+        color: #565f89;
+      }
+      .model-card-desc {
+        font-size: 0.8rem;
+        color: #565f89;
+        margin: 0.4rem 0;
+        line-height: 1.3;
+      }
+      .model-card-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 0.4rem;
+      }
+      .model-card-status {
+        font-size: 0.75rem;
+      }
+      .model-card-status.found { color: #9ece6a; }
+      .model-card-status.missing { color: #f7768e; }
+      .model-card-status.unavailable { color: #565f89; }
+      /* Карточка модели, чей backend не включён в текущей сборке (cargo feature off).
+         Серее, чтобы не путалась с установленной/неустановленной — поля и кнопки
+         блокируются на JS-стороне (renderModelCards). */
+      .model-card.unavailable { opacity: 0.55; }
+      .model-card.unavailable .model-card-name::after {
+        content: ' · ' attr(data-unavailable-label);
+        font-size: 0.7rem;
+        color: #565f89;
+        font-weight: 400;
+      }
+      .model-download-btn {
+        padding: 0.3rem 0.7rem;
+        background: #292e42;
+        border: 1px solid #7aa2f7;
+        border-radius: 6px;
+        color: #7aa2f7;
+        font-size: 0.75rem;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .model-download-btn:hover { background: rgba(122, 162, 247, 0.15); }
+      .model-download-btn:disabled { color: #565f89; border-color: #292e42; cursor: default; }
+      .model-delete-btn {
+        padding: 0.3rem 0.7rem;
+        background: #292e42;
+        border: 1px solid #f7768e;
+        border-radius: 6px;
+        color: #f7768e;
+        font-size: 0.75rem;
+        cursor: pointer;
+        margin-left: 0.4rem;
+        transition: background 0.15s;
+      }
+      .model-delete-btn:hover { background: rgba(247, 118, 142, 0.15); }
+      .model-progress {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-top: 0.5rem;
+      }
+      .model-progress-bar {
+        flex: 1;
+        height: 4px;
+        background: #292e42;
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .model-progress-fill {
+        height: 100%;
+        width: 0%;
+        background: #7aa2f7;
+        border-radius: 2px;
+        transition: width 0.3s;
+      }
+      .model-progress-text {
+        font-size: 0.7rem;
+        color: #565f89;
+        min-width: 2.5rem;
+        text-align: right;
+      }
+
+      /* === О приложении === */
+      .about-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 1.5rem 1rem 2rem;
+        text-align: center;
+      }
+      .about-logo {
+        margin-bottom: 1rem;
+        filter: drop-shadow(0 0 12px rgba(122, 162, 247, 0.3));
+      }
+      .about-title {
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: #c0caf5;
+        letter-spacing: 0.5px;
+      }
+      .about-version {
+        font-size: 0.8rem;
+        color: #565f89;
+        margin-top: 0.2rem;
+        font-family: monospace;
+      }
+      .about-divider {
+        width: 60px;
+        height: 1px;
+        background: #292e42;
+        margin: 1rem 0;
+      }
+      .about-desc {
+        font-size: 0.9rem;
+        color: #7aa2f7;
+        font-weight: 500;
+      }
+      .about-sub {
+        font-size: 0.8rem;
+        color: #565f89;
+        margin-top: 0.5rem;
+        line-height: 1.5;
+      }
+      .about-engines {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 0.4rem;
+        margin-top: 1.2rem;
+      }
+      .about-engine-badge {
+        padding: 0.25rem 0.6rem;
+        background: rgba(122, 162, 247, 0.1);
+        border: 1px solid rgba(122, 162, 247, 0.2);
+        border-radius: 12px;
+        font-size: 0.7rem;
+        color: #7aa2f7;
+      }
+      .about-privacy {
+        font-size: 0.75rem;
+        color: #9ece6a;
+        margin-top: 1rem;
+      }
+      .about-tech {
+        font-size: 0.7rem;
+        color: #565f89;
+        font-family: monospace;
+      }
+      .about-link {
+        font-size: 0.7rem;
+        color: #7aa2f7;
+        margin-top: 0.3rem;
+        opacity: 0.7;
+      }
+
+      /* === Модальный диалог === */
+      .modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 20000;
+        align-items: center;
+        justify-content: center;
+      }
+      .modal-overlay.visible { display: flex; }
+      .modal-box {
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 12px;
+        padding: 1.5rem;
+        max-width: 300px;
+        width: 90%;
+        text-align: center;
+      }
+      .modal-box p {
+        color: #c0caf5;
+        font-size: 0.9rem;
+        margin-bottom: 1.2rem;
+        line-height: 1.4;
+      }
+      .modal-buttons {
+        display: flex;
+        gap: 0.5rem;
+      }
+      .modal-btn {
+        flex: 1;
+        padding: 0.5rem;
+        border: none;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: opacity 0.15s;
+      }
+      .modal-btn:hover { opacity: 0.85; }
+      .modal-btn.cancel {
+        background: #292e42;
+        color: #565f89;
+      }
+      .modal-btn.confirm {
+        background: #f7768e;
+        color: #1a1b26;
+      }
+
+      /* === История === */
+      .hist-entry {
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 8px;
+        padding: 0.6rem 0.8rem;
+        margin-bottom: 0.5rem;
+        position: relative;
+      }
+      .hist-meta {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0.3rem;
+        font-size: 0.72rem;
+        color: #565f89;
+        min-height: 24px;
+      }
+      .hist-model {
+        background: #292e42;
+        padding: 1px 6px;
+        border-radius: 4px;
+        color: #7aa2f7;
+        font-size: 0.7rem;
+      }
+      .hist-text {
+        font-size: 0.82rem;
+        color: #a9b1d6;
+        line-height: 1.4;
+        word-wrap: break-word;
+        white-space: pre-wrap;
+      }
+      .hist-actions {
+        display: flex;
+        gap: 0.3rem;
+        margin-left: auto;
+        flex-shrink: 0;
+      }
+      .hist-btn {
+        width: 24px;
+        height: 24px;
+        background: transparent;
+        border: 1px solid #292e42;
+        border-radius: 4px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.15s, border-color 0.15s;
+      }
+      .hist-btn:hover { background: #292e42; border-color: #7aa2f7; }
+      .hist-btn.delete:hover { border-color: #f7768e; }
+      .hist-btn svg { width: 12px; height: 12px; fill: #565f89; }
+      .hist-btn:hover svg { fill: #c0caf5; }
+      .hist-btn.delete:hover svg { fill: #f7768e; }
+      .hist-btn.play:hover svg { fill: #9ece6a; }
+      .hist-btn.play.playing { border-color: #f7768e; }
+      .hist-btn.play.playing svg { fill: #f7768e; }
+
+      .hist-entry .custom-select-trigger.original {
+        border-color: #9ece6a;
+        color: #9ece6a;
+      }
+
+      .hist-retranscribe-btn {
+        width: 100%;
+        padding: 0.5rem;
+        background: transparent;
+        border: 1px solid #7aa2f7;
+        border-radius: 6px;
+        color: #7aa2f7;
+        font-size: 0.82rem;
+        cursor: pointer;
+        transition: background 0.15s;
+        margin: 0.3rem 0;
+      }
+      .hist-retranscribe-btn:hover { background: rgba(122, 162, 247, 0.1); }
+      .hist-retranscribe-btn:disabled { color: #565f89; border-color: #292e42; cursor: default; }
+
+      .hist-pagination {
+        display: none;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.8rem 0;
+      }
+      .hist-pagination.visible { display: flex; }
+      .hist-page-info {
+        color: #565f89;
+        font-size: 0.8rem;
+      }
+
+      .hist-page-btn {
+        background: #1f2335;
+        border: 1px solid #292e42;
+        border-radius: 6px;
+        color: #c0caf5;
+        padding: 4px 12px;
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .hist-page-btn:hover:not(:disabled) { background: #292e42; }
+      .hist-page-btn:disabled { color: #565f89; cursor: default; }
+    </style>
+    <script src="/i18n.js"></script>
+  </head>
+  <body>
+
+    <!-- Кастомный titlebar.
+         data-tauri-drag-region на родителе — нативный Tauri-drag через X11 _NET_WM_MOVERESIZE
+         (без global input grab, в отличие от ручного startDragging() который ломал
+         последующие click events на webkit2gtk-4.1).
+         data-tauri-drag-region="false" на кнопках — обязательно, иначе на webkit2gtk
+         кнопки могут "съедаться" drag-region и click до handler'а не доходит. -->
+    <div class="titlebar" data-tauri-drag-region>
+      <button class="menu-btn" id="menu-btn" data-tauri-drag-region="false" data-i18n-title="menu.title">
+        <svg viewBox="0 0 16 16"><line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="14" y2="8"/><line x1="2" y1="12" x2="14" y2="12"/></svg>
+        <span class="back-text" data-i18n="titlebar.back">← Назад</span>
+      </button>
+      <div class="titlebar-btns" data-tauri-drag-region="false">
+        <button class="titlebar-btn btn-minimize" id="tb-min" data-tauri-drag-region="false" data-i18n-title="titlebar.minimize">
+          <svg viewBox="0 0 12 12"><line x1="2" y1="6" x2="10" y2="6"/></svg>
+        </button>
+        <button class="titlebar-btn btn-maximize" id="tb-max" data-tauri-drag-region="false" data-i18n-title="titlebar.maximize">
+          <svg viewBox="0 0 12 12"><rect x="2" y="2" width="8" height="8" rx="1"/></svg>
+        </button>
+        <button class="titlebar-btn btn-close" id="tb-close" data-tauri-drag-region="false" data-i18n-title="titlebar.close">
+          <svg viewBox="0 0 12 12"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="content">
+    <h1>ArcanaGlyph</h1>
+
+    <!-- Микрофон -->
+    <div class="mic-wrap">
+      <div class="mic-glow" id="mic-glow"></div>
+      <div class="mic-btn" id="mic-btn">
+        <svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+      </div>
+    </div>
+
+    <p id="status" data-i18n="status.loading">Загрузка модели...</p>
+    <p id="model-badge" class="model-badge"></p>
+
+    <!-- Результат (сразу под статусом) -->
+    <div class="result-wrap" id="result-wrap">
+      <div id="result"></div>
+      <button class="copy-btn" id="copy-btn" data-i18n-title="mic.copy">
+        <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+      </button>
+    </div>
+
+    <!-- Уровень звука -->
+    <div class="level-bar" id="level-bar">
+      <div class="level-fill" id="level-fill"></div>
+    </div>
+
+    <!-- Таймер -->
+    <div id="timer">00:00</div>
+
+    <!-- Кнопки паузы / стоп -->
+    <div class="controls" id="controls">
+      <button class="ctrl-btn pause-btn" id="pause-btn" data-i18n-title="mic.pause">
+        <svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+      </button>
+      <button class="ctrl-btn stop-btn" id="stop-btn" data-i18n-title="mic.stop">
+        <div class="stop-icon"></div>
+      </button>
+    </div>
+
+    </div><!-- .content -->
+
+    <!-- Страница меню -->
+    <div class="menu-page" id="menu-page">
+      <h2 data-i18n="menu.title">Меню</h2>
+      <div class="menu-item" id="menu-settings">
+        <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span data-i18n="menu.settings">Настройки</span>
+      </div>
+      <div class="menu-item" id="menu-history">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span data-i18n="menu.history">История</span>
+      </div>
+      <div class="menu-item" id="menu-about">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        <span data-i18n="menu.about">О приложении</span>
+      </div>
+    </div>
+
+    <!-- Страница «О приложении» -->
+    <div class="settings-page" id="about-page">
+      <div class="about-container">
+        <div class="about-logo">
+          <svg width="80" height="80" viewBox="0 0 80 80">
+            <circle cx="40" cy="40" r="34" fill="none" stroke="#7aa2f7" stroke-width="5.5" opacity="0.9"/>
+            <circle cx="40" cy="40" r="14" fill="#7aa2f7" opacity="0.9"/>
+          </svg>
+        </div>
+        <div class="about-title">ArcanaGlyph</div>
+        <div class="about-version" id="about-version">—</div>
+        <div class="about-divider"></div>
+        <div class="about-desc" data-i18n="about.desc">
+          Голосовой ввод текста
+        </div>
+        <div class="about-sub">
+          <span data-i18n="about.sub1">Нажмите горячую клавишу — говорите —</span><br>
+          <span data-i18n="about.sub2">нажмите ещё раз — текст вставится в активное окно</span>
+        </div>
+        <div class="about-engines">
+          <div class="about-engine-badge">GigaAM v3</div>
+          <div class="about-engine-badge">Whisper</div>
+          <div class="about-engine-badge">Vosk</div>
+          <div class="about-engine-badge">Qwen3-ASR</div>
+        </div>
+        <div class="about-privacy" data-i18n="about.privacy">
+          Вся транскрибация — локально, без облака
+        </div>
+        <div class="about-actions">
+          <button class="save-btn" id="check-updates-btn"
+                  data-i18n="update.check_now_btn">Проверить обновления</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Страница истории -->
+    <div class="settings-page" id="history-page">
+      <h2 data-i18n="history.title">История</h2>
+
+      <div class="setting-group">
+        <label data-i18n="history.period">Период</label>
+        <div class="custom-select" id="h-period" data-value="86400">
+          <div class="custom-select-trigger" data-i18n="period.24h">24 часа</div>
+          <div class="custom-select-options">
+            <div class="custom-select-option" data-value="1800" data-i18n="period.30min">30 минут</div>
+            <div class="custom-select-option" data-value="3600" data-i18n="period.1h">1 час</div>
+            <div class="custom-select-option" data-value="43200" data-i18n="period.12h">12 часов</div>
+            <div class="custom-select-option selected" data-value="86400" data-i18n="period.24h">24 часа</div>
+            <div class="custom-select-option" data-value="172800" data-i18n="period.2d">2 дня</div>
+            <div class="custom-select-option" data-value="604800" data-i18n="period.7d">7 дней</div>
+            <div class="custom-select-option" data-value="1296000" data-i18n="period.15d">15 дней</div>
+            <div class="custom-select-option" data-value="2592000" data-i18n="period.30d">30 дней</div>
+            <div class="custom-select-option" data-value="5184000" data-i18n="period.2m">2 месяца</div>
+            <div class="custom-select-option" data-value="15552000" data-i18n="period.6m">6 месяцев</div>
+            <div class="custom-select-option" data-value="31536000" data-i18n="period.1y">1 год</div>
+            <div class="custom-select-option" data-value="0" data-i18n="period.all">Все записи</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="history-list"></div>
+      <div id="history-empty" data-i18n="history.empty" style="display:none;text-align:center;color:#565f89;padding:2rem 0;">Записей нет</div>
+
+      <div id="history-pagination" class="hist-pagination">
+        <button class="hist-page-btn" id="h-prev" data-i18n="history.prev" disabled>← Пред</button>
+        <span id="h-page-info" class="hist-page-info"></span>
+        <button class="hist-page-btn" id="h-next" data-i18n="history.next" disabled>След →</button>
+      </div>
+
+      <div class="save-area">
+        <div class="save-buttons">
+          <button class="cancel-btn cancel-btn--danger" id="h-clear-btn" data-i18n="history.clear">Очистить историю</button>
+          <div class="export-dropdown">
+            <button class="save-btn" id="h-export-btn" data-i18n="history.export">Экспорт</button>
+            <div class="export-dropdown-menu" id="export-menu">
+              <div class="export-dropdown-item" data-format="csv">.csv</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Страница настроек -->
+    <div class="settings-page" id="settings-page">
+      <h2 data-i18n="settings.title">Настройки</h2>
+
+      <div class="settings-tabs">
+        <div class="settings-tab active" data-tab="general" data-i18n="settings.tabs.general">Основное</div>
+        <div class="settings-tab" data-tab="models" data-i18n="settings.tabs.models">Модели</div>
+        <div class="settings-tab" data-tab="hotkeys" data-i18n="settings.tabs.hotkeys">Клавиши</div>
+      </div>
+
+      <!-- Таб: Основное -->
+      <div class="settings-tab-content active" id="tab-general">
+        <div class="setting-group">
+          <label data-i18n="settings.language">Язык интерфейса</label>
+          <div class="custom-select" id="s-language" data-value="ru">
+            <div class="custom-select-trigger"></div>
+            <div class="custom-select-options">
+              <div class="custom-select-option" data-value="ru" data-i18n="settings.lang_ru">Русский</div>
+              <div class="custom-select-option" data-value="en" data-i18n="settings.lang_en">English</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <label data-i18n="settings.transcriber">Движок транскрибации</label>
+          <div class="custom-select" id="s-transcriber" data-value="vosk">
+            <div class="custom-select-trigger"></div>
+            <div class="custom-select-options">
+              <div class="custom-select-option" data-value="vosk" data-i18n="settings.t_vosk">Vosk — быстрый, менее точный</div>
+              <div class="custom-select-option" data-value="whisper-tiny" data-i18n="settings.t_whisper_tiny">Whisper Tiny — для слабых CPU</div>
+              <div class="custom-select-option" data-value="whisper-large" data-i18n="settings.t_whisper_large">Whisper Large V3 Turbo — точнее, нужен AVX2</div>
+              <div class="custom-select-option" data-value="gigaam" data-i18n="settings.t_gigaam">GigaAM v3 — лучший для русского</div>
+              <div class="custom-select-option" data-value="qwen3asr" data-i18n="settings.t_qwen3asr">Qwen3-ASR — мультиязычный</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <label data-i18n="settings.preload_vosk">Предзагрузка Vosk</label>
+          <div class="toggle" id="s-preload-vosk"></div>
+        </div>
+        <div class="setting-row">
+          <label data-i18n="settings.preload_whisper">Предзагрузка Whisper</label>
+          <div class="toggle" id="s-preload-whisper"></div>
+        </div>
+        <div class="setting-row">
+          <label data-i18n="settings.preload_gigaam">Предзагрузка GigaAM</label>
+          <div class="toggle" id="s-preload-gigaam"></div>
+        </div>
+        <div class="setting-row" style="margin-bottom:0.5rem;">
+          <label data-i18n="settings.preload_qwen3asr">Предзагрузка Qwen3-ASR</label>
+          <div class="toggle" id="s-preload-qwen3asr"></div>
+        </div>
+
+        <div class="setting-group">
+          <label data-i18n="settings.sample_rate">Частота дискретизации (Гц)</label>
+          <div class="custom-select" id="s-sample-rate" data-value="48000">
+            <div class="custom-select-trigger"></div>
+            <div class="custom-select-options">
+              <div class="custom-select-option" data-value="16000">16000</div>
+              <div class="custom-select-option" data-value="24000">24000</div>
+              <div class="custom-select-option" data-value="48000">48000</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <label data-i18n="settings.max_record">Таймаут записи (секунды)</label>
+          <div class="number-input-wrap">
+            <input type="number" id="s-max-record" min="5" max="120" />
+            <div class="number-input-arrows">
+              <div class="arrow-up"></div>
+              <div class="arrow-down"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <label data-i18n="settings.vad_enabled">Авто-стоп при тишине</label>
+          <div class="toggle" id="s-vad-enabled"></div>
+        </div>
+
+        <div class="setting-group">
+          <label data-i18n="settings.vad_silence">Тишина для авто-стопа (секунды)</label>
+          <div class="number-input-wrap">
+            <input type="number" id="s-vad-silence" min="1" max="30" />
+            <div class="number-input-arrows">
+              <div class="arrow-up"></div>
+              <div class="arrow-down"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <label data-i18n="settings.retention">Автоочистка записей</label>
+          <div class="custom-select" id="s-retention" data-value="0">
+            <div class="custom-select-trigger"></div>
+            <div class="custom-select-options">
+              <div class="custom-select-option" data-value="0" data-i18n="settings.retention_never">Хранить вечно</div>
+              <div class="custom-select-option" data-value="1" data-i18n="settings.retention_1h">1 час</div>
+              <div class="custom-select-option" data-value="12" data-i18n="settings.retention_12h">12 часов</div>
+              <div class="custom-select-option" data-value="24" data-i18n="settings.retention_1d">1 день</div>
+              <div class="custom-select-option" data-value="168" data-i18n="settings.retention_1w">1 неделя</div>
+              <div class="custom-select-option" data-value="720" data-i18n="settings.retention_30d">30 дней</div>
+              <div class="custom-select-option" data-value="4380" data-i18n="settings.retention_6m">Полгода</div>
+              <div class="custom-select-option" data-value="8760" data-i18n="settings.retention_1y">1 год</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <label data-i18n="settings.auto_type">Авто-вставка текста</label>
+          <div class="toggle" id="s-auto-type"></div>
+        </div>
+
+        <div class="setting-row">
+          <label data-i18n="settings.debug">Режим отладки</label>
+          <div class="toggle" id="s-debug"></div>
+        </div>
+
+        <div class="setting-row">
+          <label data-i18n="settings.remove_fillers">Удалять слова-паразиты</label>
+          <div class="toggle" id="s-remove-fillers"></div>
+        </div>
+
+        <div class="setting-group">
+          <label data-i18n="settings.mic_gain" data-i18n-title="settings.mic_gain_hint" title="1.0 = без усиления, 2.0 = +6 дБ, 5.0 = +14 дБ">Усиление микрофона</label>
+          <div class="number-input-wrap">
+            <input type="number" id="s-mic-gain" min="0.5" max="10" step="0.5" />
+            <div class="number-input-arrows">
+              <div class="arrow-up"></div>
+              <div class="arrow-down"></div>
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 0.78em; color: #7a8099;">
+            <span id="s-mic-active-device" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;" title="">—</span>
+            <button type="button" id="s-mic-refresh" data-i18n-title="settings.mic_refresh" title="Обновить активный микрофон" style="background: none; border: none; color: #7aa2f7; cursor: pointer; padding: 0; font-size: 1em; line-height: 1;">↻</button>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <label data-i18n="settings.autostart">Автозапуск при входе</label>
+          <div class="toggle" id="s-autostart"></div>
+        </div>
+
+        <div class="setting-row">
+          <label data-i18n="settings.start_minimized">Запуск в трей</label>
+          <div class="toggle" id="s-start-minimized"></div>
+        </div>
+
+        <div class="setting-row">
+          <label data-i18n="settings.show_tray">Иконка в трее</label>
+          <div class="toggle" id="s-show-tray"></div>
+        </div>
+
+        <div class="setting-row">
+          <label data-i18n="settings.show_widget">Виджет записи</label>
+          <div class="toggle" id="s-show-widget"></div>
+        </div>
+
+        <div class="setting-group">
+          <label data-i18n="settings.widget_position">Расположение виджета</label>
+          <div class="position-picker" id="s-widget-position" data-value="bottom-center">
+            <div class="position-picker-screen">
+              <div class="position-picker-dot" data-pos="top-left"></div>
+              <div class="position-picker-dot" data-pos="top-center"></div>
+              <div class="position-picker-dot" data-pos="top-right"></div>
+              <div class="position-picker-dot" data-pos="middle-left"></div>
+              <div class="position-picker-dot" data-pos="middle-center"></div>
+              <div class="position-picker-dot" data-pos="middle-right"></div>
+              <div class="position-picker-dot" data-pos="bottom-left"></div>
+              <div class="position-picker-dot active" data-pos="bottom-center"></div>
+              <div class="position-picker-dot" data-pos="bottom-right"></div>
+            </div>
+            <small class="position-picker-hint" id="s-widget-position-hint" data-i18n="settings.widget_position_hint" hidden>На Wayland система может проигнорировать выбор</small>
+          </div>
+        </div>
+
+        <!-- Toggle GNOME-расширения для точного позиционирования виджета на Wayland.
+             Виден только когда XDG_CURRENT_DESKTOP=GNOME и XDG_SESSION_TYPE=wayland. -->
+        <div class="setting-row" id="s-widget-ext-row" hidden>
+          <label data-i18n="settings.widget_ext">Точное позиционирование на Wayland (GNOME)</label>
+          <div class="toggle" id="s-widget-ext"></div>
+        </div>
+        <small class="position-picker-hint" id="s-widget-ext-hint" data-i18n="settings.widget_ext_hint" hidden>Установит и активирует GNOME-расширение для точного размещения виджета. После активации потребуется выйти и войти заново.</small>
+      </div>
+
+      <!-- Таб: Модели -->
+      <!-- Таб: Горячие клавиши -->
+      <div class="settings-tab-content" id="tab-hotkeys">
+        <div class="setting-group">
+          <label data-i18n="settings.hotkey_trigger">Запись (старт/стоп)</label>
+          <div class="hotkey-composer" id="hk-trigger">
+            <div class="hotkey-mods">
+              <button class="hotkey-mod" data-mod="Super">Super</button>
+              <button class="hotkey-mod" data-mod="Control">Ctrl</button>
+              <button class="hotkey-mod" data-mod="Alt">Alt</button>
+              <button class="hotkey-mod" data-mod="Shift">Shift</button>
+            </div>
+            <div class="hotkey-key-row">
+              <span class="hotkey-plus">+</span>
+              <input type="text" class="hotkey-key-input" data-i18n-placeholder="settings.hotkey_key_placeholder" placeholder="клавиша" readonly />
+              <button class="hotkey-record-btn" data-i18n-title="settings.hotkey_record_title">✎</button>
+              <button class="hotkey-clear-btn" data-i18n-title="settings.hotkey_clear_title">✕</button>
+            </div>
+            <div class="hotkey-preview" data-value=""></div>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <label data-i18n="settings.hotkey_pause">Пауза</label>
+          <div class="hotkey-composer" id="hk-pause">
+            <div class="hotkey-mods">
+              <button class="hotkey-mod" data-mod="Super">Super</button>
+              <button class="hotkey-mod" data-mod="Control">Ctrl</button>
+              <button class="hotkey-mod" data-mod="Alt">Alt</button>
+              <button class="hotkey-mod" data-mod="Shift">Shift</button>
+            </div>
+            <div class="hotkey-key-row">
+              <span class="hotkey-plus">+</span>
+              <input type="text" class="hotkey-key-input" data-i18n-placeholder="settings.hotkey_key_placeholder" placeholder="клавиша" readonly />
+              <button class="hotkey-record-btn" data-i18n-title="settings.hotkey_record_title">✎</button>
+              <button class="hotkey-clear-btn" data-i18n-title="settings.hotkey_clear_title">✕</button>
+            </div>
+            <div class="hotkey-preview" data-value=""></div>
+          </div>
+        </div>
+
+        <div class="wayland-warning" id="wayland-warning" data-i18n="settings.wayland_warning" style="display:none;">
+          Wayland: горячие клавиши регистрируются через GNOME Settings (gsettings).
+          При сохранении комбинации автоматически применяются в системе.
+        </div>
+      </div>
+
+      <!-- Таб: Модели -->
+      <div class="settings-tab-content" id="tab-models">
+        <div class="setting-group">
+          <label data-i18n="settings.models_base_dir">Базовый путь к моделям</label>
+          <div class="path-input-row">
+            <input type="text" id="s-models-base-dir" placeholder="~/.local/share/arcanaglyph/models" />
+            <button class="path-pick-btn" id="pick-base-dir" data-i18n-title="settings.pick_base_title">📁</button>
+          </div>
+        </div>
+
+        <div class="models-section-title" data-i18n="settings.models_title">Доступные модели</div>
+        <div id="model-cards-container"></div>
+      </div>
+
+      <div class="save-area">
+        <div class="save-buttons">
+          <button class="cancel-btn" id="cancel-btn" data-i18n="settings.cancel" disabled>Отменить</button>
+          <button class="save-btn" id="save-btn" data-i18n="settings.save" disabled>Сохранить</button>
+        </div>
+        <div class="save-notice" id="save-notice" data-i18n="settings.save_notice">Настройки сохранены. Применятся при следующей записи.</div>
+      </div>
+    </div>
+
+    <!-- Модальный диалог подтверждения -->
+    <div class="modal-overlay" id="modal-overlay">
+      <div class="modal-box">
+        <p id="modal-text"></p>
+        <div class="modal-buttons">
+          <button class="modal-btn cancel" id="modal-cancel" data-i18n="modal.cancel">Отмена</button>
+          <button class="modal-btn confirm" id="modal-confirm" data-i18n="modal.confirm_delete">Удалить</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="portal-banner" id="portal-banner" role="alert">
+      <span class="portal-banner__text">При первом нажатии Ctrl+Ё система запросит разрешение на ввод. Можно дать его сейчас.</span>
+      <button class="portal-banner__btn" id="portal-banner-grant">Дать разрешение</button>
+      <button class="portal-banner__close" id="portal-banner-close" title="Закрыть">×</button>
+    </div>
+
+    <div class="update-banner" id="update-banner" role="alert">
+      <span class="update-banner__text">
+        <span data-i18n="update.banner_text">Доступно обновление</span>
+        <strong id="update-banner-version">—</strong>
+      </span>
+      <div class="update-banner__actions">
+        <button class="update-banner__btn primary" id="update-banner-apply"
+                data-i18n="update.btn_apply">Обновить</button>
+        <button class="update-banner__btn" id="update-banner-notes"
+                data-i18n="update.btn_notes">Что нового</button>
+        <button class="update-banner__close" id="update-banner-dismiss"
+                title="Закрыть">×</button>
+      </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
