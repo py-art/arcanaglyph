@@ -179,7 +179,7 @@ fn default_true() -> bool {
 }
 
 fn default_vad_silence_secs() -> u64 {
-    7
+    15
 }
 
 fn default_retention_hours() -> u64 {
@@ -249,7 +249,7 @@ impl Default for CoreConfig {
             hotkey_pause: "Control+Shift+`".to_string(),
             debug: false,
             vad_enabled: true,
-            vad_silence_secs: 7,
+            vad_silence_secs: 15,
             remove_fillers: true,
             mic_gain: 1.0,
             mic_gain_per_device: HashMap::new(),
@@ -472,7 +472,7 @@ auto_type = false
             hotkey_pause: String::new(),
             debug: false,
             vad_enabled: true,
-            vad_silence_secs: 7,
+            vad_silence_secs: 15,
             remove_fillers: true,
             mic_gain: 1.0,
             mic_gain_per_device: HashMap::new(),

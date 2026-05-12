@@ -2219,10 +2219,10 @@ fn main() {
                         {
                             let sc_str = format!("{shortcut}");
                             if !pause_hk.is_empty() && sc_str == *pause_hk.as_ref() {
-                                tracing::info!("Горячая клавиша паузы: {}", sc_str);
+                                tracing::info!(source = "tauri-shortcut", "Горячая клавиша паузы: {}", sc_str);
                                 engine.pause();
                             } else if sc_str == *trigger_hk.as_ref() {
-                                tracing::info!("Горячая клавиша триггера: {}", sc_str);
+                                tracing::info!(source = "tauri-shortcut", "Горячая клавиша триггера: {}", sc_str);
                                 engine.trigger();
                             }
                         }
@@ -2675,10 +2675,19 @@ fn main() {
                 let mut buf = [0u8; 1024];
                 tracing::info!("Слушаю UDP-триггеры на порту 9002");
                 loop {
-                    if let Ok((n, _)) = udp_socket.recv_from(&mut buf).await
+                    if let Ok((n, src)) = udp_socket.recv_from(&mut buf).await
                         && let Some(engine) = engine_udp.get()
                     {
                         let msg = String::from_utf8_lossy(&buf[0..n]);
+                        // Диагностика double-trigger: лог каждого UDP packet'а с
+                        // источником и содержимым. Позволяет соотнести с
+                        // tauri-shortcut логами и call_id из engine.rs trigger().
+                        tracing::info!(
+                            source = "udp",
+                            from = %src,
+                            payload = %msg.trim(),
+                            "UDP packet received"
+                        );
                         if msg.contains("pause") {
                             engine.pause();
                         } else if msg.contains("trigger") {

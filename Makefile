@@ -68,6 +68,15 @@ build:
 run:
 	@bash scripts/run-dev.sh
 
+.PHONY: frontend-build   ## Build frontend bundle (Vite → frontend/dist/)
+frontend-build:
+	@if [ ! -d frontend/node_modules ]; then \
+		echo "${YELLOW}INFO : ${RESET}frontend/node_modules отсутствует — npm ci...${RESET}"; \
+		cd frontend && npm ci; \
+	fi
+	@echo "${GREEN}INFO : ${AZURE}Сборка frontend bundle (vite)...${RESET}"
+	@cd frontend && npm run build
+
 ##############################################################################
 # Code quality
 ##############################################################################

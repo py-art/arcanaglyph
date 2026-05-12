@@ -134,6 +134,22 @@ if [[ ! -s "${APPIMAGE_RUNTIME_FILE}" ]]; then
 fi
 export LDAI_RUNTIME_FILE="${APPIMAGE_RUNTIME_FILE}"
 
+# ----- 0. Frontend bundle (Vite) ------------------------------------------------------
+# Tauri не собирает frontend сам — `beforeBuildCommand` в tauri.conf.json пустой
+# (отключён в коммите 289a8d9 после CI-проблем с relative path). Без явной сборки
+# `frontend/dist/index.html` останется stale и bundled в .deb попадёт старый UI.
+# CI собирает фронт отдельным workflow-шагом; здесь делаем то же для локального
+# `make dist`.
+
+log "Phase 0/6: frontend bundle (vite)"
+if [ -d "${REPO_ROOT}/frontend" ] && [ -f "${REPO_ROOT}/frontend/package.json" ]; then
+    if [ ! -d "${REPO_ROOT}/frontend/node_modules" ]; then
+        log "  frontend/node_modules отсутствует — npm ci..."
+        (cd "${REPO_ROOT}/frontend" && npm ci)
+    fi
+    (cd "${REPO_ROOT}/frontend" && npm run build)
+fi
+
 # ----- 1. Pre-built нативные либы -----------------------------------------------------
 
 log "Phase 1/6: prepare-bundled-libs"
