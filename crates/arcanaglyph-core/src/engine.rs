@@ -347,6 +347,13 @@ impl ArcanaEngine {
 
     /// Переключатель записи: если не записывает — начать, если записывает — остановить.
     pub fn trigger(&self) {
+        // Глобальный счётчик вызовов trigger() — для диагностики double-trigger
+        // (см. main.rs UDP listener vs Tauri global-shortcut handler). В логах
+        // call_id=N + was_busy позволяет понять: 2 быстрых вызова подряд start+stop?
+        static TRIGGER_CALL_COUNT: AtomicU32 = AtomicU32::new(0);
+        let call_id = TRIGGER_CALL_COUNT.fetch_add(1, Ordering::Relaxed);
+        info!(trigger_call_id = call_id, "ArcanaEngine::trigger ENTRY (sync)");
+
         let is_busy = Arc::clone(&self.is_busy);
         let is_paused = Arc::clone(&self.is_paused);
         let current_cmd_tx = Arc::clone(&self.current_cmd_tx);
@@ -382,14 +389,23 @@ impl ArcanaEngine {
 
         self.rt_handle.spawn(async move {
             let mut busy_guard = is_busy.lock().await;
+            let was_busy = *busy_guard;
+            info!(
+                trigger_call_id = call_id,
+                was_busy, "trigger() async entered; deciding start vs stop"
+            );
 
             if *busy_guard {
                 // Останавливаем текущую запись
                 let mut cmd_tx_guard = current_cmd_tx.lock().await;
                 if let Some(tx) = cmd_tx_guard.take() {
+                    info!(trigger_call_id = call_id, "trigger() → STOP recording");
                     let _ = tx.send(AudioCommand::Stop);
                 } else {
-                    info!("Игнорирую триггер, идет обработка...");
+                    info!(
+                        trigger_call_id = call_id,
+                        "Игнорирую триггер, идет обработка..."
+                    );
                 }
             } else {
                 info!("Получен триггер для начала записи.");

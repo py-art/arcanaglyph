@@ -38,10 +38,15 @@ export function initPageNavigation(): void {
   if (!menuBtn || !menuPage || !settingsPage || !contentEl) return;
   refs = { menuBtn, menuPage, settingsPage, historyPage, aboutPage, contentEl };
 
-  // Кнопка ↩ Назад в titlebar: из main → menu, из любой sub-страницы → menu.
+  // Кнопка ↩ Назад в titlebar: трёхуровневая навигация.
+  //   main                          → menu (открыть меню)
+  //   menu                          → main (вернуться на главный)
+  //   settings / history / about    → menu (на один уровень вверх)
   menuBtn.addEventListener('click', () => {
     if (currentPage === 'main') {
       showPage('menu');
+    } else if (currentPage === 'menu') {
+      showPage('main');
     } else {
       showPage('menu');
     }

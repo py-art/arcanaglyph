@@ -40,6 +40,20 @@ if pgrep -x arcanaglyph >/dev/null 2>&1; then
     sleep 1
 fi
 
+# 1a. Сборка frontend bundle. Tauri не собирает его сам — `beforeBuildCommand`
+# в `crates/arcanaglyph-app/tauri.conf.json` пустой (был отключён после CI-проблемы
+# с relative path, см. коммит 289a8d9). Без этого шага `frontend/dist/index.html`
+# остаётся stale, и Tauri grabs старый bundle. CI решает это в workflow yaml
+# (`npm ci && npm run build` до `tauri build`); локально — здесь.
+if [ -d frontend ] && [ -f frontend/package.json ]; then
+    if [ ! -d frontend/node_modules ]; then
+        warn "frontend/node_modules отсутствует — npm ci..."
+        (cd frontend && npm ci) || { err "npm ci провалился"; exit 1; }
+    fi
+    info "Сборка frontend bundle (vite)..."
+    (cd frontend && npm run build) >/dev/null || { err "frontend build провалился"; exit 1; }
+fi
+
 # 2. Детект AVX
 if grep -qw avx /proc/cpuinfo 2>/dev/null; then
     HAS_AVX=1

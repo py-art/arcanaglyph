@@ -57,7 +57,7 @@ export async function loadSettings(callbacks: ResetUiCallbacks): Promise<void> {
     auto_type: cfg.auto_type,
     debug: cfg.debug,
     vad_enabled: cfg.vad_enabled !== false,
-    vad_silence_secs: cfg.vad_silence_secs || 7,
+    vad_silence_secs: cfg.vad_silence_secs || 15,
     remove_fillers: cfg.remove_fillers !== false,
     mic_gain: typeof cfg.mic_gain === 'number' ? cfg.mic_gain : 1.0,
     mic_gain_per_device: cfg.mic_gain_per_device && typeof cfg.mic_gain_per_device === 'object'
@@ -91,7 +91,7 @@ export async function loadSettings(callbacks: ResetUiCallbacks): Promise<void> {
   document.getElementById('s-auto-type')!.classList.toggle('on', cfg.auto_type);
   document.getElementById('s-debug')!.classList.toggle('on', cfg.debug);
   document.getElementById('s-vad-enabled')!.classList.toggle('on', cfg.vad_enabled !== false);
-  (document.getElementById('s-vad-silence') as HTMLInputElement).value = String(cfg.vad_silence_secs || 3);
+  (document.getElementById('s-vad-silence') as HTMLInputElement).value = String(cfg.vad_silence_secs || 15);
   document.getElementById('s-remove-fillers')!.classList.toggle('on', cfg.remove_fillers !== false);
   // Заполнение mic_gain через async refresh (берёт активное устройство и его override)
   await refreshMicDevice(cfg);
