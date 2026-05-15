@@ -125,3 +125,172 @@ sudo apt install wl-clipboard
 - Whisper: `models/ggml-large-v3-turbo.bin` (скачать с HuggingFace ggerganov/whisper.cpp)
 - GigaAM v3: `models/gigaam-v3-e2e-ctc/` (содержит `v3_e2e_ctc.int8.onnx` + `v3_e2e_ctc_vocab.txt`,
   скачать с HuggingFace istupakov/gigaam-v3-onnx)
+
+<!-- arcanacodex:rules:begin v=0.1.0 -->
+## ArcanaCodex MCP — правила использования
+
+> _Auto-managed by `arcanacodex project install` (v0.1.0, 2026-05-15T00:05:26Z)._
+> _Не редактировать руками — изменения затрутся при следующем
+> `arcanacodex project update`. Чтобы убрать секцию — `arcanacodex project uninstall <path>`._
+
+В этом проекте подключён MCP-сервер `arcana-codex`. Он даёт ~25 узких
+tools для навигации по коду через persistent графовый индекс + LSP fan-out.
+Использование MCP здесь — **default**, а не fallback: средняя экономия
+input-токенов на типичных задачах −67…−85% vs `Read` + `rg`.
+
+### Первое действие в сессии
+
+`mcp__arcana-codex__ping` — проверить что daemon работает. Если ошибка —
+сказать пользователю поднять (`systemctl --user start arcanacodex` или
+`make install` если бинарь устарел). Только потом начинать работу.
+
+### Когда использовать MCP вместо Read/rg
+
+Колонки Rust / TS / Py показывают где tool поддержан полностью (✅), частично
+(⚠️) или не работает (❌). При ❌ даны fallback-альтернативы.
+
+| Задача | MCP tool | Rust | TS | Py | Что заменяет |
+|---|---|---|---|---|---|
+| Файл >300 строк, нужна структура | `function_skeleton` | ✅ | ✅ | ✅ | `Read` целиком |
+| Кто вызывает X | `who_calls` | ✅ | ✅ | ✅ | `rg "X\("` + Read |
+| Сигнатура / docstring X | `signature` | ✅ | ✅ | ✅ | grep + Read |
+| Что сломается при изменении X | `affected_by` | ✅ | ✅ | ✅ | manual reasoning |
+| Поиск похожего кода (DRY) | `find_similar` | ✅ | ✅ | ✅ | `rg` + интуиция |
+| Поиск кода по описанию | `code_for_intent` | ✅ | ✅ | ✅ | угадывание имён |
+| Все методы / поля типа | `type_members` | ✅ | ✅ | ⚠️ | Read + сборка руками |
+| Карта крейта (модули + pub-items) | `module_tree` | ✅ | ⚠️ via index.ts | ❌ → `function_skeleton` per-file | N×`function_skeleton` |
+| Кто реализует trait/protocol | `who_implements` | ✅ | ✅ | ⚠️ | `rg "impl X for"` |
+| Цепочка вызовов A → B | `paths_between` | ✅ | ✅ | ✅ | DFS руками |
+| Git-история вокруг функции | `recent_changes_around` | ✅ | ✅ | ✅ | `git log -L` (использует line-anchored) |
+| Символы тронутые diff'ом | `changed_symbols` | ✅ | ✅ | ✅ | git diff + ts-grep |
+| Точное определение символа | `definition` | ✅ | ✅ | ⚠️ | grep + Read |
+| Поиск references (LSP) | `references` | ✅ | ✅ | ✅ через pyright | `rg` + типы |
+| Грep с фильтром по AST-kind | `grep_with_kind` | ✅ | ✅ | ✅ | rg без классификации |
+| Тесты, покрывающие символ | _композиция_ | ✅ | ✅ | ✅ | `who_calls(scope='all')` + фильтр `tests/` |
+
+### Когда НЕ использовать MCP
+
+- Документы (`*.md`, `README`, `CHANGELOG`) — нет в графе, читать через `Read`.
+- `git` / `cargo` / `npm` / `make` команды — через `Bash`.
+- Literal-string lookup (точная подстрока) — `rg` дешевле; `find_similar`
+  только для **semantic** похожести.
+- Файлы вне индексированных языков (Rust / TypeScript / Python) — `Read` + `rg`.
+
+### Scope и гарантии — что инструмент видит и что **не** видит
+
+Это критически важно: **доверять можно только тому что внутри scope**.
+Использовать MCP «авось покроет» — анти-паттерн.
+
+**Текущий scope** — workspace, в котором запущен shim (значение `--workspace`
+в `~/.claude.json` → `.projects.<path>.mcpServers.arcana-codex.args`).
+Один shim = один workspace. Multi-workspace API с явным параметром
+`workspace` запланирован, но **ещё не реализован**.
+
+**Что НЕ в scope (пустой ответ tool'а ≠ «нигде нет»):**
+
+- **Subdirs из `.arcanacodexignore`** — daemon их не индексирует. Если в
+  проекте есть `.arcanacodexignore` со строкой `vendor/`, `node_modules/`,
+  `sntz_mockups/` — MCP-tools по этим директориям всегда вернут пусто.
+  Использовать `rg` / `Read` напрямую, не делать вид что MCP это покрыл.
+- **Reference-репозитории заказчика / vendor-форки** — это частный случай
+  выше. Часто в `.arcanacodexignore`. Сверка вручную через `rg`.
+- **Файлы вне Rust / TypeScript / Python** — нет парсера, нет графа.
+- **Документы (`*.md`, `README`)** — даже если в индексируемой директории.
+
+**Confidence сигналы — как читать:**
+
+| `confidence` | `source` | Доверие | Что делать |
+|---|---|---|---|
+| `high` | `graph` | полное | использовать напрямую |
+| `high` | `lsp` / `graph+lsp` | полное | использовать напрямую (LSP подтвердил) |
+| `medium` | `graph` + `stale_warning` | условное | watcher debounce 300ms — подождать или сверить `Read` |
+| `medium` | `lsp` fallback | условное | граф не нашёл, LSP подтвердил — обычно ок |
+| `low` | любой | минимальное | scope пустой / новый workspace до bootstrap'а / запрос не подошёл — использовать `rg` / `Read` |
+
+**`source` field:**
+
+- `graph` — из persistent графа, мгновенно, видит только что в индексе
+- `lsp` — от rust-analyzer / typescript-language-server / pyright-langserver,
+  медленнее, но cross-file references по семантике типов (часто точнее
+  графа на dyn-dispatch, generic'ах, re-export'ах)
+- `graph+lsp` — объединено через `OutputEnvelope::merge`; если оба
+  согласны — высокое доверие, если расхождение — обычно граф out-of-sync,
+  предпочесть LSP
+
+**Когда tool вернул пустой массив:**
+
+Это значит **«в моём scope нет»**, а не «нигде нет». Если scope узкий
+(тестовая директория в ignore, vendor исключён) — результат заведомо
+неполный. Перед выводом «функция X не используется» — проверить чем
+ограничен scope (есть ли `.arcanacodexignore`).
+
+### Language conventions в envelope output
+
+Внутренняя модель символа унифицирована, но JSON-вывод адаптируется под
+язык файла. Знать что есть что:
+
+- `kind` поле для Python `class` отдаётся как `"class"` (исторически —
+  `"struct"`, оставшееся в graph-схеме). Для Rust остаётся `"struct"`,
+  для TS-классов — тоже `"class"`.
+- `fallback_hint` с примером qualified-form подбирается по primary
+  language workspace'а: Rust → `Type::method`, Python → `ClassName.method`,
+  TypeScript → `ClassName.method`.
+- `type_members` поля «inherent_methods» / «trait_methods» — Rust
+  terminology; для Python это просто «methods» / «inherited methods»,
+  для TS — «methods» / «implemented from interfaces».
+
+### Framework patterns — что граф НЕ видит (use `references` instead)
+
+Граф `who_calls` строит CALLS-edges по прямым вызовам `func()` /
+`Type::method()`. Это **не покрывает** реверенс-передачу через
+DI-фреймворки. Если кажется что «функция не вызывается» — проверь
+`references()`:
+
+- **FastAPI `Depends(<sym>)`** — это передача reference, не call.
+  `who_calls("jwt_bearer_dependency")` пропустит. Используй
+  `references(symbolName="jwt_bearer_dependency")`.
+- **Annotated DI** (`Annotated[T, Depends(...)]`) — то же самое.
+- **pytest fixtures** — параметр-resolution через имя, не call.
+  `references` находит, `who_calls` нет.
+- **Django CBV / Flask blueprints** — регистрация через decorator/router
+  config, не direct call.
+- **Pydantic `@field_validator` / `@model_validator`** — вызывается
+  фреймворком, не пользовательским кодом.
+
+Эти ограничения — правильное поведение CALLS-графа (статически их не
+отличить от dead reference). Workaround всегда — `references()`.
+
+### Known envelope quirks (M5b в работе)
+
+Прозрачно фиксируем шероховатости, по которым в работе fixes. Пока
+читать с поправкой:
+
+- `truncated: true` без явного клиентского `max_results` — server-side
+  обрезка. Если **клиент сам** передал `max_results=N` и получил N
+  элементов — смотри `more_available: true/false` (новое поле); реальной
+  «обрезки» не было.
+- Для `code_for_intent` outer `source` пишется `"vector"` (M5b+);
+  на старых daemon до M5b там может быть `"graph"` — в этом случае
+  смотри inner `result.source: "vector"`.
+- `stale_warning` теперь сопровождается `stale_reason`:
+  `"file_modified"` (mtime > embedded_at + 2s),
+  `"recent_edit"` (file менялся в пределах 5s — reembed догоняет),
+  `"embed_aged_out"` (embed старше 300s, но содержимое не менялось),
+  `"graph_stale"` (общий graph-snapshot устарел).
+  Для `embed_aged_out` обычно можно доверять данным если код стабилен;
+  для `file_modified` — fallback `Read` критичных результатов.
+- `kind: "struct"` для Python-файла — читать как `class` (legacy).
+  В выводе автоматически конвертируется (M5b+).
+
+### Если tool вернул `confidence: "medium"` + `stale_warning`
+
+Граф мог не подхватить недавние правки (watcher debounce 300 ms). Сверять
+с `Read` критичные результаты или подождать секунду и повторить вызов.
+Смотри также `stale_reason` поле — оно подсказывает что именно произошло.
+
+### Если tool не справился
+
+`mcp__arcana-codex__report_issue` — feedback пишется в `docs/feedback/`
+репозитория ArcanaCodex, разработчик инструмента увидит. Указывать
+конкретный input + expected vs actual.
+<!-- arcanacodex:rules:end -->
