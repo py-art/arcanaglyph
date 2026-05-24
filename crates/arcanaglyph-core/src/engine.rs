@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc as std_mpsc;
+use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 use tracing::info;
@@ -59,6 +60,10 @@ pub struct ArcanaEngine {
     transcribers: Arc<std::sync::RwLock<HashMap<String, Arc<dyn Transcriber>>>>,
     /// Имя активной модели (ключ в transcribers)
     active_model: Arc<std::sync::RwLock<String>>,
+    /// Когда модель использовалась в последний раз — для LRU-выгрузки sweeper'ом.
+    /// Ключи синхронизированы с `transcribers`: запись добавляется при `preload`
+    /// или первом `trigger`, удаляется одновременно с моделью из пула.
+    last_used: Arc<std::sync::RwLock<HashMap<String, Instant>>>,
     config_changed: AtomicBool,
     is_busy: Arc<tokio::sync::Mutex<bool>>,
     is_paused: Arc<tokio::sync::Mutex<bool>>,
@@ -97,10 +102,17 @@ impl ArcanaEngine {
             ArcanaError::Internal("ArcanaEngine::new() должен вызываться из контекста Tokio runtime".into())
         })?;
 
-        Ok(Self {
+        // Стартовое значение last_used для основной (активной) модели — сейчас.
+        // Sweeper никогда не выгружает активную, но запись нужна чтобы при смене
+        // активной модели (через update_config) у предыдущей был корректный idle.
+        let mut last_used = HashMap::new();
+        last_used.insert(model_name.clone(), Instant::now());
+
+        let engine = Self {
             config: std::sync::RwLock::new(config),
             transcribers: Arc::new(std::sync::RwLock::new(transcribers)),
             active_model: Arc::new(std::sync::RwLock::new(model_name)),
+            last_used: Arc::new(std::sync::RwLock::new(last_used)),
             config_changed: AtomicBool::new(false),
             is_busy: Arc::new(tokio::sync::Mutex::new(false)),
             is_paused: Arc::new(tokio::sync::Mutex::new(false)),
@@ -110,7 +122,112 @@ impl ArcanaEngine {
             rt_handle,
             window_visible,
             history_db,
-        })
+        };
+
+        // Фоновый sweeper: раз в минуту проверяем неактивные модели и выгружаем
+        // из пула те, что простаивали дольше `config.model_unload_after_minutes`.
+        // Отключается на 0 — настройка читается каждый тик (hot-reload).
+        engine.spawn_lru_sweeper();
+
+        Ok(engine)
+    }
+
+    /// Запускает sweeper в `rt_handle`: раз в минуту читает текущий TTL из
+    /// `config.model_unload_after_minutes`, выгружает модели, простаивающие
+    /// дольше N минут. Никогда не выгружает активную модель. Защищён от гонки
+    /// с инференсом через `is_busy.try_lock` (если занят — пропускаем тик)
+    /// и через `Arc::strong_count(&transcriber) == 1` (нет внешних ссылок).
+    fn spawn_lru_sweeper(&self) {
+        let transcribers = Arc::clone(&self.transcribers);
+        let last_used = Arc::clone(&self.last_used);
+        let active_model = Arc::clone(&self.active_model);
+        let is_busy = Arc::clone(&self.is_busy);
+        // config читаем напрямую через clone каждый тик через метод? Нет, нужно
+        // прокинуть Arc — но config: RwLock<CoreConfig>, не Arc<RwLock<...>>.
+        // Чтобы избежать рефакторинга всего поля, читаем через CoreConfig::load
+        // (то же самое значение из SQLite settings, синхронизируется с UI через
+        // save_config). Цена: один SQL SELECT раз в минуту — пренебрежимо мала.
+        self.rt_handle.spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            // Первый tick срабатывает сразу — пропускаем (engine только что создан).
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+
+                let ttl_min = CoreConfig::load().map(|c| c.model_unload_after_minutes).unwrap_or(0);
+                if ttl_min == 0 {
+                    continue;
+                }
+                let ttl = Duration::from_secs(ttl_min * 60);
+
+                // Если идёт инференс — пропускаем тик. Это устраняет окно гонки
+                // «transcriber взят, но Arc передан в spawn_blocking → strong_count
+                // временно >1». Try_lock неблокирующий: если занято, просто ждём
+                // следующий тик через минуту.
+                if is_busy.try_lock().is_err() {
+                    tracing::debug!("LRU sweeper: занято инференсом, пропускаю тик");
+                    continue;
+                }
+
+                let active_name = active_model.read().map(|m| m.clone()).unwrap_or_default();
+                let now = Instant::now();
+
+                // Собираем кандидатов на выгрузку под read-lock'ом, освобождаем
+                // read-lock, потом берём write-lock. Это не атомарно с infer'ом,
+                // но он же забусен (is_busy выше).
+                let candidates: Vec<String> = {
+                    let pool = match transcribers.read() {
+                        Ok(p) => p,
+                        Err(_) => continue,
+                    };
+                    let last = match last_used.read() {
+                        Ok(l) => l,
+                        Err(_) => continue,
+                    };
+                    pool.iter()
+                        .filter_map(|(name, arc)| {
+                            if name == &active_name {
+                                return None;
+                            }
+                            let used = last.get(name).copied().unwrap_or(now);
+                            if now.duration_since(used) < ttl {
+                                return None;
+                            }
+                            // strong_count == 1 — Arc держится только пулом.
+                            // Если активный инференс держит clone — пропускаем.
+                            if Arc::strong_count(arc) > 1 {
+                                return None;
+                            }
+                            Some(name.clone())
+                        })
+                        .collect()
+                };
+
+                if candidates.is_empty() {
+                    continue;
+                }
+
+                // Write-lock: удаляем кандидатов. Перепроверяем условия внутри
+                // (между read и write мог появиться новый strong_count, или
+                // active_model могла переключиться).
+                let active_name_now = active_model.read().map(|m| m.clone()).unwrap_or_default();
+                if let (Ok(mut pool), Ok(mut last)) = (transcribers.write(), last_used.write()) {
+                    for name in candidates {
+                        if name == active_name_now {
+                            continue;
+                        }
+                        if let Some(arc) = pool.get(&name)
+                            && Arc::strong_count(arc) > 1
+                        {
+                            continue;
+                        }
+                        pool.remove(&name);
+                        last.remove(&name);
+                        info!("Модель '{}' выгружена по LRU (idle ≥ {} мин)", name, ttl_min);
+                    }
+                }
+            }
+        });
     }
 
     /// Подавляет verbose-логи ONNX Runtime до создания первой сессии.
@@ -238,6 +355,13 @@ impl ArcanaEngine {
             .write()
             .map_err(|e| ArcanaError::Internal(format!("RwLock: {}", e)))?;
         pool.insert(name.clone(), transcriber);
+        // LRU: засекаем момент попадания модели в пул. Без этого свежезагруженная
+        // модель могла бы попасть под немедленную выгрузку, если sweeper тикнет
+        // раньше первого использования (теоретически возможно, если TTL = 0
+        // только что переключили на 1 мин в Settings).
+        if let Ok(mut last) = self.last_used.write() {
+            last.insert(name.clone(), Instant::now());
+        }
         info!("Модель '{}' предзагружена в пул", name);
         // Возвращаем UI в «готов»-состояние.
         let _ = self.event_tx.send(EngineEvent::ModelLoaded);
@@ -250,6 +374,21 @@ impl ArcanaEngine {
             .read()
             .map(|pool| pool.keys().cloned().collect())
             .unwrap_or_default()
+    }
+
+    /// Сколько секунд каждая загруженная модель не использовалась — для UI
+    /// настройки LRU TTL («Загружено: GigaAM (idle 12с), Whisper (idle 3 мин)»).
+    /// `Instant` не сериализуется через serde, поэтому конвертим в `u64`
+    /// прямо здесь.
+    pub fn loaded_models_idle_seconds(&self) -> HashMap<String, u64> {
+        let now = Instant::now();
+        match self.last_used.read() {
+            Ok(last) => last
+                .iter()
+                .map(|(name, t)| (name.clone(), now.duration_since(*t).as_secs()))
+                .collect(),
+            Err(_) => HashMap::new(),
+        }
     }
 
     /// Текущий активный тип транскрайбера (по конфигу).
@@ -300,6 +439,12 @@ impl ArcanaEngine {
         if already_loaded {
             if let Ok(mut active) = self.active_model.write() {
                 *active = new_model_name.clone();
+            }
+            // LRU: при мгновенном переключении обновляем last_used новой активной
+            // модели — иначе sweeper мог бы её выгрузить, если она долго простаивала
+            // в пуле и пользователь только что переключился именно на неё.
+            if let Ok(mut last) = self.last_used.write() {
+                last.insert(new_model_name.clone(), Instant::now());
             }
             info!("Модель '{}' уже загружена — мгновенное переключение", new_model_name);
         } else {
@@ -359,6 +504,12 @@ impl ArcanaEngine {
         let current_cmd_tx = Arc::clone(&self.current_cmd_tx);
         let event_tx = self.event_tx.clone();
         let active_name = self.active_model.read().unwrap().clone();
+        // LRU: обновляем last_used для активной модели — каждое нажатие Ctrl+Ё
+        // отодвигает время выгрузки. Без этого активно используемая модель могла
+        // бы попасть под выгрузку, если пользователь делает паузы > TTL между записями.
+        if let Ok(mut last) = self.last_used.write() {
+            last.insert(active_name.clone(), Instant::now());
+        }
         let mut transcriber = self
             .transcribers
             .read()
@@ -370,6 +521,9 @@ impl ArcanaEngine {
         let config = self.config.read().unwrap().clone();
         let transcribers_rw = Arc::clone(&self.transcribers);
         let active_model_rw = Arc::clone(&self.active_model);
+        // Передаём last_used в async-блок — обновим внутри lazy-reload ветки после
+        // pool.insert. Sync-секция выше уже обновила last_used для active_name.
+        let last_used_arc = Arc::clone(&self.last_used);
         let silence_timeout_secs = config.max_record_secs;
         let sample_rate = config.sample_rate;
         let auto_type = config.auto_type;
@@ -444,6 +598,12 @@ impl ArcanaEngine {
                             }
                             if let Ok(mut active) = active_model_rw.write() {
                                 *active = name.clone();
+                            }
+                            // LRU: засекаем загрузку модели — иначе sweeper мог бы её
+                            // выгрузить уже на следующем тике, если предыдущая запись
+                            // в last_used отсутствовала или была очень старой.
+                            if let Ok(mut last) = last_used_arc.write() {
+                                last.insert(name.clone(), Instant::now());
                             }
                             info!("Модель '{}' загружена и добавлена в пул", name);
                             // Возвращаем UI в «готов»-состояние перед стартом записи.

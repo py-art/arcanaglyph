@@ -152,6 +152,12 @@ pub struct CoreConfig {
     /// Язык интерфейса: "ru" или "en" (пустая строка = авто по локали системы)
     #[serde(default)]
     pub language: String,
+    /// Через сколько минут простоя выгружать неактивную модель из пула
+    /// (0 = никогда). Активная модель никогда не выгружается. При следующем
+    /// использовании выгруженная модель будет загружена заново (~2-5с для
+    /// GigaAM, ~10с для Qwen3-ASR). Полезно для систем с малой RAM.
+    #[serde(default)]
+    pub model_unload_after_minutes: u64,
 }
 
 fn default_models_dir() -> PathBuf {
@@ -263,6 +269,7 @@ impl Default for CoreConfig {
             models_base_dir: models,
             history_filter_secs: 86400,
             language: String::new(),
+            model_unload_after_minutes: 0,
         }
     }
 }
@@ -486,6 +493,7 @@ auto_type = false
             models_base_dir: PathBuf::from("/tmp/test-models"),
             history_filter_secs: 86400,
             language: String::new(),
+            model_unload_after_minutes: 0,
         };
 
         let content = toml::to_string_pretty(&config).unwrap();

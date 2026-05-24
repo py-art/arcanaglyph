@@ -12,7 +12,8 @@
 // timerId, levelId), и любой реальный split привёл бы к экспорту mutable
 // state наружу. Лучше монолит с единым lifecycle.
 
-import { invoke, listen } from '../../shared/lib/tauri';
+import { invoke, listen, isCancelled, errorHint } from '../../shared/lib/tauri';
+import type { ApiError } from '../../shared/lib/tauri';
 import { t } from '../../shared/lib/i18n';
 import { showToast } from '../../shared/ui/toast';
 import { updateModelBadge } from '../model-badge/model-badge';
@@ -219,8 +220,16 @@ export function mountMainControls(): { onModelReady: () => void } {
     });
   });
 
-  void listen<{ message: string }>('engine://error', ev => {
-    resultEl.textContent = ev.payload.message || t('result.unknown_error');
+  void listen<ApiError>('engine://error', ev => {
+    // Cancelled — не ошибка, пользователь сам нажал «Стоп»: не подсвечиваем
+    // result-блок красным и не показываем сообщение. UI вернётся в idle через
+    // engine://finished-processing.
+    if (isCancelled(ev.payload)) return;
+    const msg = ev.payload.message || t('result.unknown_error');
+    const hint = errorHint(ev.payload);
+    // Если есть hint — показываем «<сообщение> — <подсказка>». Два строки в
+    // одном result-блоке: основное сообщение + что делать.
+    resultEl.textContent = hint ? `${msg} — ${hint}` : msg;
     resultEl.classList.add('error');
     resultWrap.classList.add('visible');
   });
