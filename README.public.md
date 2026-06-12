@@ -19,10 +19,10 @@
 
 | Движок | WER (рус.) | Размер | Скорость |
 | --- | --- | --- | --- |
-| **GigaAM v3** (по умолчанию) | **~8.4%** | 225 МБ | ~0.8 сек / 5 сек аудио |
-| Qwen3-ASR | ~6% (мульти) | 2.5 ГБ | ~5 сек / 5 сек аудио |
-| Vosk | ~11% | 42 МБ | Реальное время |
-| Whisper | ~14% | 1.5 ГБ | 30-70 сек / 10 сек аудио |
+| **GigaAM v3** (по умолчанию) | **~8.4%** | 225 МБ | ~0.8 сек / 5 сек |
+| Qwen3-ASR | ~6% (мульти) | 2.5 ГБ | ~5 сек / 5 сек |
+| Vosk | ~11% | 42 МБ | Real-time |
+| Whisper | ~14% | 1.5 ГБ | 30-70 сек / 10 сек |
 
 ## Установка
 
@@ -34,8 +34,7 @@ curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | bash
 
 Скрипт сам подберёт способ установки:
 
-- На **Debian/Ubuntu** скачивает `.deb` из последнего релиза и ставит через `apt`
-  (потребуется sudo).
+- На **Debian/Ubuntu** скачивает `.deb` из последнего релиза и ставит через `apt` (потребуется sudo).
 - На остальных Linux-дистрибутивах кладёт `.AppImage` в `~/.local/bin/arcanaglyph`
   и регистрирует ярлык в меню (без sudo).
 
@@ -88,8 +87,8 @@ curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/uninstall.sh | bash
 curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/uninstall.sh | bash -s -- --purge
 ```
 
-Вручную: `sudo apt remove arcana-glyph` (для `.deb`) или `rm ~/.local/bin/arcanaglyph
-~/.local/share/applications/arcanaglyph.desktop` (для AppImage).
+Вручную: `sudo apt remove arcana-glyph` (для `.deb`) или
+`rm ~/.local/bin/arcanaglyph ~/.local/share/applications/arcanaglyph.desktop` (для AppImage).
 
 ## Лицензия
 

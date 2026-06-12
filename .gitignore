@@ -14,3 +14,8 @@ NOTE.md
 # остальные тащит scripts/prepare-bundled-libs.sh при сборке .deb.
 /assets/libs/libonnxruntime-avx2.so
 /assets/libs/libvosk.so
+
+.gemini/
+
+# arcanacodex (auto-managed)
+.arcanacodex/
