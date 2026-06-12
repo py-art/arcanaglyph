@@ -5,9 +5,12 @@
 // авторегистрирует GNOME custom-keybindings (Wayland/X11), спавнит engine в фоне
 // после ensure_active_model, поднимает auto-cleanup истории, update checker и
 // UDP listener.
+//
+// Тело разбито на связные step-функции: `run_setup` — линейный оркестратор,
+// каждый шаг изолирован (ниже по файлу). Чистая логика probe/XKB — в
+// `commands::hotkeys` (тестируется без tauri).
 
 use crate::commands::EngineState;
-use crate::commands::hotkeys::register_gnome_hotkeys;
 use crate::models;
 use crate::setup::bootstrap::install_wayland_scripts;
 use crate::setup::events::{run_engine_event_loop, spawn_udp_listener, spawn_update_checker};
@@ -36,7 +39,43 @@ pub fn run_setup(
 
     install_wayland_scripts();
 
-    // Автоочистка старых записей при старте + периодически
+    run_startup_history_cleanup();
+    spawn_retention_cleanup();
+
+    let window_visible = init_window_visibility(app);
+
+    // Engine создаётся в фоне — окно показывается сразу (если не minimized)
+    let engine_state: EngineState = Arc::new(OnceLock::new());
+    app.manage(engine_state.clone());
+
+    let history_db = init_history_db(app)?;
+    init_update_checker(app, &history_db);
+
+    // Копию widget_position берём заранее — ниже config moves в engine.
+    let widget_position = config.widget_position.clone();
+    spawn_engine_loader(
+        app.handle().clone(),
+        engine_state.clone(),
+        config,
+        window_visible,
+        engine_fallback,
+    );
+
+    init_tray(app);
+    build_recording_widget(app, &widget_position);
+    register_app_hotkeys(app, &hotkey, &hotkey_pause);
+
+    #[cfg(target_os = "linux")]
+    ensure_gnome_hotkeys(&hotkey, &hotkey_pause);
+
+    // UDP-триггер для Wayland (внешний скрипт ag-trigger → UDP :9002)
+    spawn_udp_listener(engine_state.clone());
+
+    Ok(())
+}
+
+/// Разовая очистка старых записей при старте (если включён retention).
+fn run_startup_history_cleanup() {
     if let Ok(cfg) = CoreConfig::load()
         && cfg.retention_hours > 0
         && let (Some(db_path), Some(cache)) = (CoreConfig::history_db_path(), CoreConfig::audio_cache_dir())
@@ -44,8 +83,10 @@ pub fn run_setup(
     {
         let _ = db.cleanup_old_recordings(cfg.retention_hours);
     }
+}
 
-    // Периодическая очистка: интервал = retention_hours
+/// Периодическая очистка истории: интервал = `retention_hours` (читается каждый цикл).
+fn spawn_retention_cleanup() {
     tauri::async_runtime::spawn(async {
         loop {
             let hours = CoreConfig::load().map(|c| c.retention_hours).unwrap_or(0);
@@ -64,7 +105,11 @@ pub fn run_setup(
             }
         }
     });
+}
 
+/// Создаёт флаг видимости окна (по `start_minimized`), регистрирует его в Tauri
+/// и прячет окно если запуск свёрнутый. Возвращает Arc для передачи в engine.
+fn init_window_visibility(app: &mut tauri::App) -> Arc<AtomicBool> {
     // Проверяем start_minimized до инициализации движка
     let start_minimized = CoreConfig::load().map(|c| c.start_minimized).unwrap_or(false);
 
@@ -76,17 +121,21 @@ pub fn run_setup(
         let _ = window.hide();
     }
 
-    // Engine создаётся в фоне — окно показывается сразу (если не minimized)
-    let engine_state: EngineState = Arc::new(OnceLock::new());
-    app.manage(engine_state.clone());
+    window_visible
+}
 
-    // Временная HistoryDB до загрузки engine
+/// Создаёт временную `HistoryDB` (до загрузки engine) и регистрирует её в Tauri.
+fn init_history_db(app: &mut tauri::App) -> Result<Arc<HistoryDB>, Box<dyn std::error::Error>> {
     let db_path = CoreConfig::history_db_path().ok_or_else(|| "Не удалось определить путь БД".to_string())?;
     let audio_cache = CoreConfig::audio_cache_dir().ok_or_else(|| "Не удалось определить путь кэша".to_string())?;
     let history_db = Arc::new(HistoryDB::new(&db_path, audio_cache).map_err(|e| e.to_string())?);
     app.manage(history_db.clone());
+    Ok(history_db)
+}
 
-    // === Update checker ===
+/// Восстанавливает applying-режим после restart, эмитит cached-available и
+/// запускает фоновый update-checker.
+fn init_update_checker(app: &tauri::App, history_db: &Arc<HistoryDB>) {
     // 0. Восстановление applying-режима после реального restart.
     //    Если applying_version == APP_VERSION — установка прошла
     //    успешно, чистим метку. Иначе — эмитим applying, чтобы UI
@@ -94,10 +143,10 @@ pub fn run_setup(
     //    Делаем это ДО cached_pending_update, чтобы applying имел
     //    приоритет над available для той же версии.
     {
-        let state = updater::read_state(&history_db);
+        let state = updater::read_state(history_db);
         if let Some(v) = state.applying_version.clone() {
             if v == updater::APP_VERSION {
-                let _ = updater::clear_applying(&history_db);
+                let _ = updater::clear_applying(history_db);
             } else {
                 let _ = app.handle().emit("update://applying", v);
             }
@@ -108,30 +157,32 @@ pub fn run_setup(
     //    первой фоновой проверки (которая через 60 секунд).
     //    `cached_pending_update` сам фильтрует applying_version,
     //    так что available + applying для одной версии не конфликтуют.
-    if let Some(info) = updater::cached_pending_update(&history_db) {
+    if let Some(info) = updater::cached_pending_update(history_db) {
         let _ = app.handle().emit("update://available", info);
     }
     // 2. Фоновый чекер с exponential backoff.
-    spawn_update_checker(app.handle().clone(), Arc::clone(&history_db));
+    spawn_update_checker(app.handle().clone(), Arc::clone(history_db));
+}
 
-    // Скачивание модели и загрузка engine в фоне.
-    // Выполняем СТРОГО последовательно: сначала убеждаемся, что модель активного
-    // движка на диске (качаем при первом запуске), затем создаём engine. Это убирает
-    // ERROR-логи при первом запуске («failed to open <model>») — engine видит файл.
-    let app_handle_load = app.handle().clone();
-    let engine_state_load = engine_state.clone();
-    let engine_fallback_evt = engine_fallback.clone();
+/// Скачивает модель активного движка и создаёт engine в фоне (строго
+/// последовательно: сначала модель на диске, затем `ArcanaEngine::new`), затем
+/// подписывает event-loop и предзагружает дополнительные модели.
+fn spawn_engine_loader(
+    app_handle: tauri::AppHandle,
+    engine_state: EngineState,
+    config: CoreConfig,
+    window_visible: Arc<AtomicBool>,
+    engine_fallback: Option<(String, String)>,
+) {
     let active_transcriber = config.transcriber.as_str().to_string();
-    // Копию widget_position берём заранее — после spawn'а ниже config moves в engine
-    let widget_position = config.widget_position.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = models::download::ensure_active_model(&active_transcriber, &app_handle_load).await {
+        if let Err(e) = models::download::ensure_active_model(&active_transcriber, &app_handle).await {
             tracing::error!("Не удалось подготовить модель для '{}': {}", active_transcriber, e);
             // Парсим строку ошибки в ApiError — формат events.rs::EngineEvent::Error
             // ожидает frontend; UI получит правильный kind (DiskSpace / Network / ModelLoad)
             // и подходящий hint.
             let api_err = ApiError::from_message(&format!("Не удалось скачать модель: {}", e));
-            let _ = app_handle_load.emit("engine://error", &api_err);
+            let _ = app_handle.emit("engine://error", &api_err);
             return;
         }
 
@@ -141,28 +192,28 @@ pub fn run_setup(
             Ok(Ok(engine)) => {
                 // Подписываемся на события ПЕРЕД set, пока есть ownership
                 let rx = engine.subscribe();
-                let _ = engine_state_load.set(engine);
+                let _ = engine_state.set(engine);
                 tracing::info!("Engine готов к работе");
-                let _ = app_handle_load.emit("engine://model-loaded", serde_json::json!({}));
+                let _ = app_handle.emit("engine://model-loaded", serde_json::json!({}));
 
                 // Если при старте сработал auto-fallback на дефолтный движок — сообщаем UI,
                 // чтобы тот показал toast «движок X недоступен, используется Y».
-                if let Some((original, fallback)) = engine_fallback_evt {
-                    let _ = app_handle_load.emit(
+                if let Some((original, fallback)) = engine_fallback {
+                    let _ = app_handle.emit(
                         "engine://fallback",
                         serde_json::json!({ "original": original, "fallback": fallback }),
                     );
                 }
 
                 // Предзагрузка дополнительных моделей в фоне
-                if engine_state_load.get().is_some() {
+                if engine_state.get().is_some() {
                     let preload_list: Vec<_> = {
                         let cfg = arcanaglyph_core::CoreConfig::load().ok();
                         cfg.map(|c| c.preload_models).unwrap_or_default()
                     };
                     for t_type in preload_list {
-                        let app_h = app_handle_load.clone();
-                        let es = engine_state_load.clone();
+                        let app_h = app_handle.clone();
+                        let es = engine_state.clone();
                         tokio::task::spawn_blocking(move || {
                             if let Some(e) = es.get() {
                                 match e.preload_model(&t_type) {
@@ -179,26 +230,24 @@ pub fn run_setup(
                 }
 
                 // Event loop: пробрасываем события engine → фронтенд
-                tokio::spawn(run_engine_event_loop(
-                    app_handle_load.clone(),
-                    engine_state_load.clone(),
-                    rx,
-                ));
+                tokio::spawn(run_engine_event_loop(app_handle.clone(), engine_state.clone(), rx));
             }
             Ok(Err(e)) => {
                 tracing::error!("Ошибка создания engine: {}", e);
                 // `e` тут — `ArcanaError`, поэтому конвертим напрямую через from_arcana
                 // (точнее чем from_message — не теряем kind на парсинге строки).
                 let api_err = ApiError::from_arcana(&e);
-                let _ = app_handle_load.emit("engine://error", &api_err);
+                let _ = app_handle.emit("engine://error", &api_err);
             }
             Err(e) => {
                 tracing::error!("Ошибка загрузки: {:?}", e);
             }
         }
     });
+}
 
-    // Создаём иконку в системном трее
+/// Создаёт иконку в системном трее (и скрывает её, если выключена в настройках).
+fn init_tray(app: &tauri::App) {
     if let Err(e) = tray::create_tray(app) {
         tracing::error!("Не удалось создать иконку в трее: {}", e);
     }
@@ -207,44 +256,49 @@ pub fn run_setup(
     if !CoreConfig::load().map(|c| c.show_tray).unwrap_or(true) {
         tray::set_tray_visible(app.handle(), false);
     }
+}
 
-    // Создаём виджет записи программно (для точного контроля размера)
-    {
-        let widget_width = 220.0;
-        let widget_height = 40.0;
-        let mut builder = tauri::WebviewWindowBuilder::new(app, "widget", tauri::WebviewUrl::App("widget.html".into()))
-            // Title используется GNOME-расширением arcanaglyph-widget@arfi.tech
-            // для идентификации именно этого окна (wm_class общий с главным).
-            .title("ArcanaGlyph Recording Widget")
-            .inner_size(widget_width, widget_height)
-            .resizable(false)
-            .decorations(false)
-            .transparent(true)
-            .always_on_top(true)
-            .visible(false)
-            .skip_taskbar(true);
+/// Создаёт виджет записи программно (для точного контроля размера) и позиционирует
+/// его по `widget_position`.
+fn build_recording_widget(app: &tauri::App, widget_position: &str) {
+    let widget_width = 220.0;
+    let widget_height = 40.0;
+    let mut builder = tauri::WebviewWindowBuilder::new(app, "widget", tauri::WebviewUrl::App("widget.html".into()))
+        // Title используется GNOME-расширением arcanaglyph-widget@arfi.tech
+        // для идентификации именно этого окна (wm_class общий с главным).
+        .title("ArcanaGlyph Recording Widget")
+        .inner_size(widget_width, widget_height)
+        .resizable(false)
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .visible(false)
+        .skip_taskbar(true);
 
-        // Позиционируем виджет по выбору пользователя (config.widget_position).
-        // На Wayland mutter может проигнорировать приложенческое позиционирование
-        // (security-model `xdg_toplevel`) — это ожидаемо, в UI показывается хинт.
-        if let Some(monitor) = app.primary_monitor().ok().flatten() {
-            let screen = monitor.size();
-            let scale = monitor.scale_factor();
-            let (x, y) = arcanaglyph_core::config::widget_position_xy(
-                &widget_position,
-                screen.width as f64 / scale,
-                screen.height as f64 / scale,
-                widget_width,
-                widget_height,
-            );
-            builder = builder.position(x, y);
-        }
-
-        if let Err(e) = builder.build() {
-            tracing::error!("Не удалось создать виджет записи: {}", e);
-        }
+    // Позиционируем виджет по выбору пользователя (config.widget_position).
+    // На Wayland mutter может проигнорировать приложенческое позиционирование
+    // (security-model `xdg_toplevel`) — это ожидаемо, в UI показывается хинт.
+    if let Some(monitor) = app.primary_monitor().ok().flatten() {
+        let screen = monitor.size();
+        let scale = monitor.scale_factor();
+        let (x, y) = arcanaglyph_core::config::widget_position_xy(
+            widget_position,
+            screen.width as f64 / scale,
+            screen.height as f64 / scale,
+            widget_width,
+            widget_height,
+        );
+        builder = builder.position(x, y);
     }
 
+    if let Err(e) = builder.build() {
+        tracing::error!("Не удалось создать виджет записи: {}", e);
+    }
+}
+
+/// Регистрирует глобальные горячие клавиши через tauri-plugin-global-shortcut
+/// (trigger + опциональная пауза).
+fn register_app_hotkeys(app: &tauri::App, hotkey: &str, hotkey_pause: &str) {
     // Регистрируем глобальные горячие клавиши
     match hotkey.parse::<tauri_plugin_global_shortcut::Shortcut>() {
         Ok(shortcut) => {
@@ -274,84 +328,72 @@ pub fn run_setup(
             }
         }
     }
+}
 
-    // Авторегистрация горячих клавиш в GNOME (Wayland И X11) при первом запуске.
-    // Запускаем на любом GNOME-сеансе:
-    // - на Wayland tauri-plugin-global-shortcut вообще не работает (нет X11);
-    // - на X11+GNOME он часто не получает event'ы (mutter их перехватывает).
-    // Нативные GNOME custom-keybindings → ag-trigger → UDP — единственный
-    // надёжный путь для GNOME. Для не-GNOME DE (KDE/i3/sway) этот блок просто
-    // тихо отвалится с ошибкой gsettings — там нужно настраивать вручную.
-    #[cfg(target_os = "linux")]
-    if !hotkey.is_empty() {
-        // Проверяем, зарегистрированы ли уже наши хоткеи. Перерегистрируем если
-        // отсутствует ЛЮБОЙ из четырёх slots — особенно cyr-варианты, которые
-        // могли не быть созданы старой версией кода без mapping для grave.
-        let probe = |slot: &str| -> bool {
-            let check = std::process::Command::new("gsettings")
-                .args([
-                    "get",
-                    &format!(
-                        "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/{}/",
-                        slot
-                    ),
-                    "binding",
-                ])
-                .output();
-            match check {
-                Ok(out) => {
-                    let val = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                    val.is_empty() || val == "''" || val.contains("No such")
-                }
-                Err(_) => true,
-            }
-        };
-        let needs_register = probe("arcanaglyph-trigger")
-            || probe("arcanaglyph-trigger-cyr")
-            || probe("arcanaglyph-pause")
-            || probe("arcanaglyph-pause-cyr");
-        if needs_register {
-            tracing::info!("Регистрирую глобальные горячие клавиши в GNOME...");
-            if let Err(e) = register_gnome_hotkeys(hotkey.clone(), hotkey_pause.clone()) {
-                tracing::warn!("Не удалось зарегистрировать GNOME-хоткеи (не GNOME?): {}", e);
-            }
+// Авторегистрация горячих клавиш в GNOME (Wayland И X11) при первом запуске.
+// Запускаем на любом GNOME-сеансе:
+// - на Wayland tauri-plugin-global-shortcut вообще не работает (нет X11);
+// - на X11+GNOME он часто не получает event'ы (mutter их перехватывает).
+// Нативные GNOME custom-keybindings → ag-trigger → UDP — единственный
+// надёжный путь для GNOME. Для не-GNOME DE (KDE/i3/sway) этот блок просто
+// тихо отвалится с ошибкой gsettings — там нужно настраивать вручную.
+#[cfg(target_os = "linux")]
+fn ensure_gnome_hotkeys(hotkey: &str, hotkey_pause: &str) {
+    use crate::commands::hotkeys::{
+        binding_is_empty, build_setxkbmap_args, parse_setxkbmap_query, register_gnome_hotkeys,
+    };
+
+    if hotkey.is_empty() {
+        return;
+    }
+
+    // Проверяем, зарегистрированы ли уже наши хоткеи. Перерегистрируем если
+    // отсутствует ЛЮБОЙ из четырёх slots — особенно cyr-варианты, которые
+    // могли не быть созданы старой версией кода без mapping для grave.
+    let probe = |slot: &str| -> bool {
+        let check = std::process::Command::new("gsettings")
+            .args([
+                "get",
+                &format!(
+                    "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/{}/",
+                    slot
+                ),
+                "binding",
+            ])
+            .output();
+        match check {
+            Ok(out) => binding_is_empty(String::from_utf8_lossy(&out.stdout).trim()),
+            Err(_) => true,
         }
-
-        // Пинок XKB на X11+GNOME: заставляем mutter пере-grab'ить keysym'ы.
-        // Без этого на свежезагруженной системе кириллические keybindings
-        // (`<Control>Cyrillic_io` для Ё) НЕ срабатывают пока пользователь
-        // не переключит раскладку хотя бы раз вручную (Super+Space).
-        // setxkbmap с теми же параметрами триггерит XKB-reload и mutter
-        // пересоздаёт grabs, включая Cyrillic_io.
-        let is_x11 = std::env::var("XDG_SESSION_TYPE").map(|v| v == "x11").unwrap_or(false);
-        if is_x11 && let Ok(query) = std::process::Command::new("setxkbmap").arg("-query").output() {
-            let mut layout = String::new();
-            let mut variant = String::new();
-            for line in String::from_utf8_lossy(&query.stdout).lines() {
-                if let Some(rest) = line.strip_prefix("layout:") {
-                    layout = rest.trim().to_string();
-                } else if let Some(rest) = line.strip_prefix("variant:") {
-                    variant = rest.trim().to_string();
-                }
-            }
-            if !layout.is_empty() {
-                let mut args = vec!["-layout".to_string(), layout.clone()];
-                if !variant.is_empty() {
-                    args.push("-variant".to_string());
-                    args.push(variant.clone());
-                }
-                let _ = std::process::Command::new("setxkbmap").args(&args).output();
-                tracing::info!(
-                    "XKB пнут (layout={}, variant={}) — mutter пере-grab'ит cyr keysym'ы",
-                    layout,
-                    variant
-                );
-            }
+    };
+    let needs_register = probe("arcanaglyph-trigger")
+        || probe("arcanaglyph-trigger-cyr")
+        || probe("arcanaglyph-pause")
+        || probe("arcanaglyph-pause-cyr");
+    if needs_register {
+        tracing::info!("Регистрирую глобальные горячие клавиши в GNOME...");
+        if let Err(e) = register_gnome_hotkeys(hotkey.to_string(), hotkey_pause.to_string()) {
+            tracing::warn!("Не удалось зарегистрировать GNOME-хоткеи (не GNOME?): {}", e);
         }
     }
 
-    // UDP-триггер для Wayland (внешний скрипт ag-trigger → UDP :9002)
-    spawn_udp_listener(engine_state.clone());
-
-    Ok(())
+    // Пинок XKB на X11+GNOME: заставляем mutter пере-grab'ить keysym'ы.
+    // Без этого на свежезагруженной системе кириллические keybindings
+    // (`<Control>Cyrillic_io` для Ё) НЕ срабатывают пока пользователь
+    // не переключит раскладку хотя бы раз вручную (Super+Space).
+    // setxkbmap с теми же параметрами триггерит XKB-reload и mutter
+    // пересоздаёт grabs, включая Cyrillic_io.
+    let is_x11 = std::env::var("XDG_SESSION_TYPE").map(|v| v == "x11").unwrap_or(false);
+    if is_x11 && let Ok(query) = std::process::Command::new("setxkbmap").arg("-query").output() {
+        let (layout, variant) = parse_setxkbmap_query(&String::from_utf8_lossy(&query.stdout));
+        if !layout.is_empty() {
+            let args = build_setxkbmap_args(&layout, &variant);
+            let _ = std::process::Command::new("setxkbmap").args(&args).output();
+            tracing::info!(
+                "XKB пнут (layout={}, variant={}) — mutter пере-grab'ит cyr keysym'ы",
+                layout,
+                variant
+            );
+        }
+    }
 }

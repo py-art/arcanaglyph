@@ -3,6 +3,10 @@
 pub mod audio;
 pub mod config;
 pub mod db;
+// Общие DSP-примитивы (оконо Ханна + STFT-ядро) для mel-препроцессинга.
+// Подключается при любом mel-бэкенде (GigaAM или Qwen3-ASR).
+#[cfg(any(feature = "gigaam", feature = "gigaam-system-ort", feature = "qwen3asr"))]
+pub mod dsp;
 pub mod engine;
 pub mod error;
 // Модуль gigaam подключается при ЛЮБОМ из двух backend-features:

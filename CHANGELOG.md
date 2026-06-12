@@ -8,6 +8,17 @@
 
 ## [Unreleased]
 
+### Изменено (внутреннее, без изменения поведения)
+
+- Рефакторинг кодовой базы (behaviour-preserving): общий DSP-модуль
+  `crates/arcanaglyph-core/src/dsp/` для mel-препроцессинга (общие `hann_window`
+  и STFT-ядро GigaAM/Qwen3-ASR); устранены дубли (`is_wayland` → источник истины
+  в core, общий входной препроцессинг `transcribe`, `project_dirs` для config-путей);
+  god-функции (`ArcanaEngine::trigger`, `record_and_transcribe`, `run_setup`,
+  qwen3 `transcribe`, LRU-sweeper) разбиты на чистые тестируемые хелперы и
+  связные шаги. Добавлен архитектурный gate `.arcanacodex-arch.toml`
+  (core ⊥ app, gigaam ⊥ qwen3asr) и юнит-тесты на извлечённую логику.
+
 ## [1.7.5] - 2026-05-12
 
 ### Исправлено

@@ -30,6 +30,42 @@ pub(crate) fn tauri_hotkey_to_gsettings(hotkey: &str) -> String {
     format!("{}{}", mods, key)
 }
 
+/// Классифицирует значение gsettings binding как «пусто/нужно регистрировать».
+/// Пустая строка, `''` (пустой GVariant) или текст ошибки `No such` → true.
+/// Чистая функция (вынесена из `run_setup` ради тестируемости без tauri).
+#[cfg(target_os = "linux")]
+pub(crate) fn binding_is_empty(value: &str) -> bool {
+    value.is_empty() || value == "''" || value.contains("No such")
+}
+
+/// Парсит вывод `setxkbmap -query` → `(layout, variant)`.
+/// Отсутствующие поля → пустые строки. Чистая функция.
+#[cfg(target_os = "linux")]
+pub(crate) fn parse_setxkbmap_query(stdout: &str) -> (String, String) {
+    let mut layout = String::new();
+    let mut variant = String::new();
+    for line in stdout.lines() {
+        if let Some(rest) = line.strip_prefix("layout:") {
+            layout = rest.trim().to_string();
+        } else if let Some(rest) = line.strip_prefix("variant:") {
+            variant = rest.trim().to_string();
+        }
+    }
+    (layout, variant)
+}
+
+/// Собирает argv для повторного `setxkbmap` (триггерит XKB-reload).
+/// `variant` добавляется только если непустой. Чистая функция.
+#[cfg(target_os = "linux")]
+pub(crate) fn build_setxkbmap_args(layout: &str, variant: &str) -> Vec<String> {
+    let mut args = vec!["-layout".to_string(), layout.to_string()];
+    if !variant.is_empty() {
+        args.push("-variant".to_string());
+        args.push(variant.to_string());
+    }
+    args
+}
+
 /// Маппинг латинских клавиш → XKB keysym кириллических (для GNOME gsettings)
 #[cfg(target_os = "linux")]
 fn latin_to_cyrillic_keysym(key: &str) -> Option<&'static str> {
@@ -307,4 +343,34 @@ fn register_gnome_hotkeys_linux(hotkey_trigger: String, hotkey_pause: String) ->
         hotkey_pause
     );
     Ok(())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_binding_is_empty() {
+        assert!(binding_is_empty(""));
+        assert!(binding_is_empty("''"));
+        assert!(binding_is_empty("No such schema"));
+        assert!(!binding_is_empty("'<Control>grave'"));
+    }
+
+    #[test]
+    fn test_parse_setxkbmap_query() {
+        let out = "rules:      evdev\nmodel:      pc105\nlayout:     us,ru\nvariant:    ,\n";
+        let (layout, variant) = parse_setxkbmap_query(out);
+        assert_eq!(layout, "us,ru");
+        assert_eq!(variant, ",");
+    }
+
+    #[test]
+    fn test_build_setxkbmap_args() {
+        assert_eq!(build_setxkbmap_args("us,ru", ""), ["-layout", "us,ru"]);
+        assert_eq!(
+            build_setxkbmap_args("us,ru", "colemak"),
+            ["-layout", "us,ru", "-variant", "colemak"]
+        );
+    }
 }

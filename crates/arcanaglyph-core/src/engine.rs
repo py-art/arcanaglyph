@@ -77,6 +77,229 @@ pub struct ArcanaEngine {
     history_db: Arc<HistoryDB>,
 }
 
+/// TTL выгрузки из минут конфигурации. `0` → `None` (sweeper отключён).
+fn ttl_from_minutes(ttl_min: u64) -> Option<Duration> {
+    if ttl_min == 0 {
+        None
+    } else {
+        Some(Duration::from_secs(ttl_min * 60))
+    }
+}
+
+/// Чистый отбор моделей на LRU-выгрузку. Пропускает: активную модель, модели с
+/// idle < `ttl`, и те, на которые есть внешняя ссылка (`strong_count > 1` — Arc
+/// держится не только пулом, значит идёт инференс).
+fn lru_eviction_candidates(
+    pool: &HashMap<String, Arc<dyn Transcriber>>,
+    last_used: &HashMap<String, Instant>,
+    active_name: &str,
+    now: Instant,
+    ttl: Duration,
+) -> Vec<String> {
+    pool.iter()
+        .filter_map(|(name, arc)| {
+            if name == active_name {
+                return None;
+            }
+            let used = last_used.get(name).copied().unwrap_or(now);
+            if now.duration_since(used) < ttl {
+                return None;
+            }
+            if Arc::strong_count(arc) > 1 {
+                return None;
+            }
+            Some(name.clone())
+        })
+        .collect()
+}
+
+/// Write-фаза LRU-выгрузки: удаляет кандидатов из пула и `last_used`, перепроверяя
+/// активную модель и `strong_count` (между read- и write-локом могло измениться).
+fn evict_candidates(
+    pool: &mut HashMap<String, Arc<dyn Transcriber>>,
+    last_used: &mut HashMap<String, Instant>,
+    candidates: Vec<String>,
+    active_name_now: &str,
+    ttl_min: u64,
+) {
+    for name in candidates {
+        if name == active_name_now {
+            continue;
+        }
+        if let Some(arc) = pool.get(&name)
+            && Arc::strong_count(arc) > 1
+        {
+            continue;
+        }
+        pool.remove(&name);
+        last_used.remove(&name);
+        info!("Модель '{}' выгружена по LRU (idle ≥ {} мин)", name, ttl_min);
+    }
+}
+
+/// Решение о доставке распознанного текста (чистая логика, тестируемо).
+/// `should_type` — вставлять ли текст в активное окно (только когда наше окно
+/// скрыто в трее). `should_focus` — запросить ли фокус (когда окно видимо).
+struct Delivery {
+    should_type: bool,
+    should_focus: bool,
+}
+
+/// Чистое решение по доставке: печатать только при скрытом окне, фокус — при видимом.
+fn classify_delivery(auto_type: bool, is_visible: bool) -> Delivery {
+    Delivery {
+        should_type: auto_type && !is_visible,
+        should_focus: is_visible,
+    }
+}
+
+/// Текст для записи в историю: с удалением слов-паразитов или без. Чистая функция.
+fn build_history_entry(rec_text: &str, remove_fillers: bool) -> String {
+    if remove_fillers {
+        crate::transcriber::remove_filler_words(rec_text)
+    } else {
+        rec_text.to_string()
+    }
+}
+
+/// Маппинг результата `spawn_blocking(check_microphone)` в текст ошибки.
+/// `None` — микрофон в порядке. Чистая функция (тестируется через `Ok(Ok(()))`).
+fn mic_error_message(mic_check: Result<Result<(), ArcanaError>, tokio::task::JoinError>) -> Option<String> {
+    match mic_check {
+        Ok(Err(e)) => Some(e.to_string()),
+        Err(e) => Some(format!("Ошибка проверки микрофона: {:?}", e)),
+        Ok(Ok(())) => None,
+    }
+}
+
+/// Параметры фоновой задачи «запись → транскрибация → финализация».
+/// Всё owned — структура целиком переносится в async-move задачу из `trigger`.
+struct RecordSession {
+    transcriber: Arc<dyn Transcriber>,
+    history_db: Arc<HistoryDB>,
+    event_tx: broadcast::Sender<EngineEvent>,
+    audio_level: Arc<AtomicU32>,
+    window_visible: Arc<AtomicBool>,
+    is_busy: Arc<tokio::sync::Mutex<bool>>,
+    is_paused: Arc<tokio::sync::Mutex<bool>>,
+    cmd_tx_cleanup: Arc<tokio::sync::Mutex<Option<std_mpsc::Sender<AudioCommand>>>>,
+    config: CoreConfig,
+    sample_rate: u32,
+    debug: bool,
+    silence_timeout_secs: u64,
+    vad_enabled: bool,
+    vad_silence_secs: u64,
+    mic_gain: f32,
+    auto_type: bool,
+    remove_fillers: bool,
+}
+
+/// Фоновая запись + транскрибация + финализация: пишет в историю, вставляет текст,
+/// шлёт события, сбрасывает busy/paused. Вынесено из `trigger` — снимает самую
+/// глубокую вложенность; тело перенесено дословно (поведение не меняется).
+async fn run_record_session(session: RecordSession, cmd_rx: std_mpsc::Receiver<AudioCommand>) {
+    let RecordSession {
+        transcriber,
+        history_db,
+        event_tx,
+        audio_level,
+        window_visible,
+        is_busy,
+        is_paused,
+        cmd_tx_cleanup,
+        config,
+        sample_rate,
+        debug,
+        silence_timeout_secs,
+        vad_enabled,
+        vad_silence_secs,
+        mic_gain,
+        auto_type,
+        remove_fillers,
+    } = session;
+
+    let event_tx_audio = event_tx.clone();
+    let audio_cache = history_db.audio_cache_path().to_path_buf();
+    let result = tokio::task::spawn_blocking(move || {
+        let params = audio::RecordParams {
+            sample_rate,
+            debug,
+            silence_timeout_secs,
+            vad_enabled,
+            vad_silence_secs,
+            mic_gain,
+            audio_cache_dir: audio_cache,
+        };
+        let channels = audio::RecordChannels {
+            cmd_rx,
+            audio_level,
+            event_tx: event_tx_audio,
+        };
+        audio::record_and_transcribe(params, channels, transcriber.as_ref())
+    })
+    .await;
+
+    match result {
+        Ok(Ok(rec)) => {
+            // Пост-процессинг: удаление слов-паразитов
+            let text = build_history_entry(&rec.text, remove_fillers);
+
+            if text.is_empty() {
+                tracing::warn!("Распознавание вернуло пустой результат. Проверьте микрофон.");
+                let _ = event_tx.send(EngineEvent::Error(
+                    "Микрофон не захватил речь. Проверьте, что микрофон подключён и выбран как устройство по умолчанию.".to_string(),
+                ));
+            } else {
+                // Сохраняем в историю
+                let model_name = config.transcriber_model_name();
+                let transcriber_type_str = config.transcriber_type_str();
+                if let Err(e) = (|| -> Result<(), crate::error::ArcanaError> {
+                    let rec_id = history_db.add_recording(&rec.audio_path, rec.duration_secs)?;
+                    history_db.add_transcription(rec_id, &text, &model_name, &transcriber_type_str)?;
+                    Ok(())
+                })() {
+                    tracing::warn!("Не удалось сохранить в историю: {}", e);
+                }
+
+                let is_visible = window_visible.load(Ordering::Relaxed);
+                let delivery = classify_delivery(auto_type, is_visible);
+                // Вставляем текст только когда окно скрыто (в трее)
+                if delivery.should_type {
+                    eprintln!("[Вставка] в активное окно...");
+                    if let Err(e) = crate::input::type_text(&text).await {
+                        tracing::error!("Не удалось вставить текст: {}", e);
+                    }
+                }
+                let _ = event_tx.send(EngineEvent::TranscriptionResult(text));
+                // Если окно видимо — запрашиваем фокус для вывода на передний план
+                if delivery.should_focus {
+                    let _ = event_tx.send(EngineEvent::RequestFocus);
+                }
+            }
+        }
+        Ok(Err(crate::error::ArcanaError::Cancelled)) => {
+            // Пользователь нажал «Стоп» во время инференса —
+            // не ошибка, тихо завершаем без error-toast.
+            tracing::info!("Транскрибация отменена пользователем");
+        }
+        Ok(Err(e)) => {
+            tracing::error!("Ошибка транскрибации: {}", e);
+            let _ = event_tx.send(EngineEvent::Error(format!("Ошибка транскрибации: {}", e)));
+        }
+        Err(e) => {
+            tracing::error!("Задача записи завершилась с ошибкой: {:?}", e);
+            let _ = event_tx.send(EngineEvent::Error(format!("Ошибка записи: {:?}", e)));
+        }
+    }
+
+    info!("Обработка завершена. Система готова к новой записи.");
+    let _ = event_tx.send(EngineEvent::FinishedProcessing);
+
+    *is_busy.lock().await = false;
+    *is_paused.lock().await = false;
+    *cmd_tx_cleanup.lock().await = None;
+}
+
 impl ArcanaEngine {
     /// Создаёт новый экземпляр движка: загружает модель, инициализирует каналы.
     /// Должен вызываться из контекста Tokio runtime (сохраняет Handle для spawn).
@@ -155,10 +378,9 @@ impl ArcanaEngine {
                 interval.tick().await;
 
                 let ttl_min = CoreConfig::load().map(|c| c.model_unload_after_minutes).unwrap_or(0);
-                if ttl_min == 0 {
-                    continue;
-                }
-                let ttl = Duration::from_secs(ttl_min * 60);
+                let Some(ttl) = ttl_from_minutes(ttl_min) else {
+                    continue; // TTL = 0 → sweeper отключён
+                };
 
                 // Если идёт инференс — пропускаем тик. Это устраняет окно гонки
                 // «transcriber взят, но Arc передан в spawn_blocking → strong_count
@@ -172,9 +394,8 @@ impl ArcanaEngine {
                 let active_name = active_model.read().map(|m| m.clone()).unwrap_or_default();
                 let now = Instant::now();
 
-                // Собираем кандидатов на выгрузку под read-lock'ом, освобождаем
-                // read-lock, потом берём write-lock. Это не атомарно с infer'ом,
-                // но он же забусен (is_busy выше).
+                // Собираем кандидатов под read-lock'ом, освобождаем его, потом берём
+                // write-lock. Не атомарно с infer'ом, но он забусен (is_busy выше).
                 let candidates: Vec<String> = {
                     let pool = match transcribers.read() {
                         Ok(p) => p,
@@ -184,47 +405,18 @@ impl ArcanaEngine {
                         Ok(l) => l,
                         Err(_) => continue,
                     };
-                    pool.iter()
-                        .filter_map(|(name, arc)| {
-                            if name == &active_name {
-                                return None;
-                            }
-                            let used = last.get(name).copied().unwrap_or(now);
-                            if now.duration_since(used) < ttl {
-                                return None;
-                            }
-                            // strong_count == 1 — Arc держится только пулом.
-                            // Если активный инференс держит clone — пропускаем.
-                            if Arc::strong_count(arc) > 1 {
-                                return None;
-                            }
-                            Some(name.clone())
-                        })
-                        .collect()
+                    lru_eviction_candidates(&pool, &last, &active_name, now, ttl)
                 };
 
                 if candidates.is_empty() {
                     continue;
                 }
 
-                // Write-lock: удаляем кандидатов. Перепроверяем условия внутри
-                // (между read и write мог появиться новый strong_count, или
-                // active_model могла переключиться).
+                // Write-фаза: перепроверяем active/strong_count (между read и write
+                // могло измениться) и удаляем.
                 let active_name_now = active_model.read().map(|m| m.clone()).unwrap_or_default();
                 if let (Ok(mut pool), Ok(mut last)) = (transcribers.write(), last_used.write()) {
-                    for name in candidates {
-                        if name == active_name_now {
-                            continue;
-                        }
-                        if let Some(arc) = pool.get(&name)
-                            && Arc::strong_count(arc) > 1
-                        {
-                            continue;
-                        }
-                        pool.remove(&name);
-                        last.remove(&name);
-                        info!("Модель '{}' выгружена по LRU (idle ≥ {} мин)", name, ttl_min);
-                    }
+                    evict_candidates(&mut pool, &mut last, candidates, &active_name_now, ttl_min);
                 }
             }
         });
@@ -556,10 +748,7 @@ impl ArcanaEngine {
                     info!(trigger_call_id = call_id, "trigger() → STOP recording");
                     let _ = tx.send(AudioCommand::Stop);
                 } else {
-                    info!(
-                        trigger_call_id = call_id,
-                        "Игнорирую триггер, идет обработка..."
-                    );
+                    info!(trigger_call_id = call_id, "Игнорирую триггер, идет обработка...");
                 }
             } else {
                 info!("Получен триггер для начала записи.");
@@ -568,7 +757,8 @@ impl ArcanaEngine {
                 if need_reload {
                     // Проверяем, может модель уже в пуле (предзагружена)
                     let target_name = config.transcriber_model_name();
-                    let already_in_pool = transcribers_rw.read()
+                    let already_in_pool = transcribers_rw
+                        .read()
                         .map(|pool| pool.get(&target_name).cloned())
                         .unwrap_or(None);
 
@@ -579,46 +769,46 @@ impl ArcanaEngine {
                         }
                         info!("Модель '{}' взята из пула (была предзагружена)", target_name);
                     } else {
-                    // Lazy-fallback: модели ещё нет в пуле (eager preload в save_config
-                    // не успел или конфиг был изменён внешне). Эмитим тот же loading-event,
-                    // что и preload_model — UI отработает одинаково.
-                    let _ = event_tx.send(EngineEvent::ModelLoading(target_name.clone()));
-                    let cfg = config.clone();
-                    let transcribers_pool = Arc::clone(&transcribers_rw);
-                    let reload_result = tokio::task::spawn_blocking(move || {
-                        ArcanaEngine::create_transcriber(&cfg, &cfg.transcriber)
-                    })
-                    .await;
+                        // Lazy-fallback: модели ещё нет в пуле (eager preload в save_config
+                        // не успел или конфиг был изменён внешне). Эмитим тот же loading-event,
+                        // что и preload_model — UI отработает одинаково.
+                        let _ = event_tx.send(EngineEvent::ModelLoading(target_name.clone()));
+                        let cfg = config.clone();
+                        let transcribers_pool = Arc::clone(&transcribers_rw);
+                        let reload_result = tokio::task::spawn_blocking(move || {
+                            ArcanaEngine::create_transcriber(&cfg, &cfg.transcriber)
+                        })
+                        .await;
 
-                    match reload_result {
-                        Ok(Ok((name, t))) => {
-                            transcriber = t.clone();
-                            if let Ok(mut pool) = transcribers_pool.write() {
-                                pool.insert(name.clone(), t);
+                        match reload_result {
+                            Ok(Ok((name, t))) => {
+                                transcriber = t.clone();
+                                if let Ok(mut pool) = transcribers_pool.write() {
+                                    pool.insert(name.clone(), t);
+                                }
+                                if let Ok(mut active) = active_model_rw.write() {
+                                    *active = name.clone();
+                                }
+                                // LRU: засекаем загрузку модели — иначе sweeper мог бы её
+                                // выгрузить уже на следующем тике, если предыдущая запись
+                                // в last_used отсутствовала или была очень старой.
+                                if let Ok(mut last) = last_used_arc.write() {
+                                    last.insert(name.clone(), Instant::now());
+                                }
+                                info!("Модель '{}' загружена и добавлена в пул", name);
+                                // Возвращаем UI в «готов»-состояние перед стартом записи.
+                                let _ = event_tx.send(EngineEvent::ModelLoaded);
                             }
-                            if let Ok(mut active) = active_model_rw.write() {
-                                *active = name.clone();
+                            Ok(Err(e)) => {
+                                tracing::error!("Не удалось пересоздать транскрайбер: {}", e);
+                                let _ = event_tx.send(EngineEvent::Error(format!("Ошибка загрузки модели: {}", e)));
+                                return;
                             }
-                            // LRU: засекаем загрузку модели — иначе sweeper мог бы её
-                            // выгрузить уже на следующем тике, если предыдущая запись
-                            // в last_used отсутствовала или была очень старой.
-                            if let Ok(mut last) = last_used_arc.write() {
-                                last.insert(name.clone(), Instant::now());
+                            Err(e) => {
+                                tracing::error!("Ошибка загрузки модели: {:?}", e);
+                                return;
                             }
-                            info!("Модель '{}' загружена и добавлена в пул", name);
-                            // Возвращаем UI в «готов»-состояние перед стартом записи.
-                            let _ = event_tx.send(EngineEvent::ModelLoaded);
                         }
-                        Ok(Err(e)) => {
-                            tracing::error!("Не удалось пересоздать транскрайбер: {}", e);
-                            let _ = event_tx.send(EngineEvent::Error(format!("Ошибка загрузки модели: {}", e)));
-                            return;
-                        }
-                        Err(e) => {
-                            tracing::error!("Ошибка загрузки модели: {:?}", e);
-                            return;
-                        }
-                    }
                     } // else — модель не в пуле
                 }
 
@@ -629,11 +819,7 @@ impl ArcanaEngine {
                 })
                 .await;
 
-                let mic_err = match mic_check {
-                    Ok(Err(e)) => Some(e.to_string()),
-                    Err(e) => Some(format!("Ошибка проверки микрофона: {:?}", e)),
-                    Ok(Ok(())) => None,
-                };
+                let mic_err = mic_error_message(mic_check);
                 if let Some(msg) = mic_err {
                     tracing::error!("{}", msg);
                     eprintln!("[Ошибка] {}", msg);
@@ -655,94 +841,27 @@ impl ArcanaEngine {
 
                 let _ = event_tx.send(EngineEvent::RecordingStarted);
 
-                let event_tx_clone = event_tx.clone();
-                let cmd_tx_for_cleanup = Arc::clone(&current_cmd_tx);
-                let is_busy_clone = Arc::clone(&is_busy);
-                let is_paused_clone = Arc::clone(&is_paused);
-                handle.spawn(async move {
-                    let event_tx_audio = event_tx_clone.clone();
-                    let transcriber_clone = transcriber;
-                    let audio_cache = history_db.audio_cache_path().to_path_buf();
-                    let result = tokio::task::spawn_blocking(move || {
-                        audio::record_and_transcribe(
-                            cmd_rx,
-                            transcriber_clone.as_ref(),
-                            sample_rate,
-                            debug,
-                            silence_timeout_secs,
-                            vad_enabled,
-                            vad_silence_secs,
-                            mic_gain,
-                            audio_level,
-                            event_tx_audio,
-                            &audio_cache,
-                        )
-                    })
-                    .await;
-
-                    match result {
-                        Ok(Ok(rec)) => {
-                            // Пост-процессинг: удаление слов-паразитов
-                            let text = if remove_fillers {
-                                crate::transcriber::remove_filler_words(&rec.text)
-                            } else {
-                                rec.text.clone()
-                            };
-
-                            if text.is_empty() {
-                                tracing::warn!("Распознавание вернуло пустой результат. Проверьте микрофон.");
-                                let _ = event_tx_clone.send(EngineEvent::Error(
-                                    "Микрофон не захватил речь. Проверьте, что микрофон подключён и выбран как устройство по умолчанию.".to_string(),
-                                ));
-                            } else {
-                                // Сохраняем в историю
-                                let model_name = config.transcriber_model_name();
-                                let transcriber_type_str = config.transcriber_type_str();
-                                if let Err(e) = (|| -> Result<(), crate::error::ArcanaError> {
-                                    let rec_id = history_db.add_recording(&rec.audio_path, rec.duration_secs)?;
-                                    history_db.add_transcription(rec_id, &text, &model_name, &transcriber_type_str)?;
-                                    Ok(())
-                                })() {
-                                    tracing::warn!("Не удалось сохранить в историю: {}", e);
-                                }
-
-                                let is_visible = window_visible.load(Ordering::Relaxed);
-                                // Вставляем текст только когда окно скрыто (в трее)
-                                if auto_type && !is_visible {
-                                    eprintln!("[Вставка] в активное окно...");
-                                    if let Err(e) = crate::input::type_text(&text).await {
-                                        tracing::error!("Не удалось вставить текст: {}", e);
-                                    }
-                                }
-                                let _ = event_tx_clone.send(EngineEvent::TranscriptionResult(text));
-                                // Если окно видимо — запрашиваем фокус для вывода на передний план
-                                if is_visible {
-                                    let _ = event_tx_clone.send(EngineEvent::RequestFocus);
-                                }
-                            }
-                        }
-                        Ok(Err(crate::error::ArcanaError::Cancelled)) => {
-                            // Пользователь нажал «Стоп» во время инференса —
-                            // не ошибка, тихо завершаем без error-toast.
-                            tracing::info!("Транскрибация отменена пользователем");
-                        }
-                        Ok(Err(e)) => {
-                            tracing::error!("Ошибка транскрибации: {}", e);
-                            let _ = event_tx_clone.send(EngineEvent::Error(format!("Ошибка транскрибации: {}", e)));
-                        }
-                        Err(e) => {
-                            tracing::error!("Задача записи завершилась с ошибкой: {:?}", e);
-                            let _ = event_tx_clone.send(EngineEvent::Error(format!("Ошибка записи: {:?}", e)));
-                        }
-                    }
-
-                    info!("Обработка завершена. Система готова к новой записи.");
-                    let _ = event_tx_clone.send(EngineEvent::FinishedProcessing);
-
-                    *is_busy_clone.lock().await = false;
-                    *is_paused_clone.lock().await = false;
-                    *cmd_tx_for_cleanup.lock().await = None;
-                });
+                // Вся фоновая запись/финализация — в run_record_session (owned-снимок).
+                let session = RecordSession {
+                    transcriber,
+                    history_db,
+                    event_tx: event_tx.clone(),
+                    audio_level,
+                    window_visible,
+                    is_busy: Arc::clone(&is_busy),
+                    is_paused: Arc::clone(&is_paused),
+                    cmd_tx_cleanup: Arc::clone(&current_cmd_tx),
+                    config,
+                    sample_rate,
+                    debug,
+                    silence_timeout_secs,
+                    vad_enabled,
+                    vad_silence_secs,
+                    mic_gain,
+                    auto_type,
+                    remove_fillers,
+                };
+                handle.spawn(run_record_session(session, cmd_rx));
             }
         });
     }
@@ -799,5 +918,79 @@ impl ArcanaEngine {
             .get(&active_name)
             .map(|t| t.supports_cancel())
             .unwrap_or(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Заглушка Transcriber для тестов LRU-логики (без реальной модели).
+    struct DummyTranscriber;
+    impl Transcriber for DummyTranscriber {
+        fn transcribe(&self, _samples: &[i16], _sample_rate: u32) -> Result<String, ArcanaError> {
+            Ok(String::new())
+        }
+        fn supports_streaming(&self) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn test_ttl_from_minutes() {
+        assert!(ttl_from_minutes(0).is_none());
+        assert_eq!(ttl_from_minutes(5), Some(Duration::from_secs(300)));
+    }
+
+    #[test]
+    fn test_lru_eviction_candidates_basic() {
+        let mut pool: HashMap<String, Arc<dyn Transcriber>> = HashMap::new();
+        pool.insert("whisper".into(), Arc::new(DummyTranscriber));
+        pool.insert("gigaam".into(), Arc::new(DummyTranscriber));
+        let now = Instant::now();
+        let mut last: HashMap<String, Instant> = HashMap::new();
+        last.insert("whisper".into(), now - Duration::from_secs(600)); // idle 10 мин
+        last.insert("gigaam".into(), now - Duration::from_secs(1));
+        // active = gigaam, ttl = 5 мин → выгружается только whisper.
+        let cands = lru_eviction_candidates(&pool, &last, "gigaam", now, Duration::from_secs(300));
+        assert_eq!(cands, vec!["whisper".to_string()]);
+    }
+
+    #[test]
+    fn test_lru_eviction_skips_externally_referenced() {
+        let mut pool: HashMap<String, Arc<dyn Transcriber>> = HashMap::new();
+        let whisper: Arc<dyn Transcriber> = Arc::new(DummyTranscriber);
+        let _external = Arc::clone(&whisper); // strong_count > 1 → идёт инференс
+        pool.insert("whisper".into(), whisper);
+        let now = Instant::now();
+        let mut last: HashMap<String, Instant> = HashMap::new();
+        last.insert("whisper".into(), now - Duration::from_secs(600));
+        let cands = lru_eviction_candidates(&pool, &last, "gigaam", now, Duration::from_secs(300));
+        assert!(cands.is_empty());
+    }
+
+    #[test]
+    fn test_classify_delivery() {
+        // Окно скрыто + auto_type → печатаем, без фокуса.
+        let d = classify_delivery(true, false);
+        assert!(d.should_type && !d.should_focus);
+        // Окно видимо → не печатаем, запрашиваем фокус.
+        let d = classify_delivery(true, true);
+        assert!(!d.should_type && d.should_focus);
+        // auto_type выключен, окно скрыто → ничего.
+        let d = classify_delivery(false, false);
+        assert!(!d.should_type && !d.should_focus);
+    }
+
+    #[test]
+    fn test_build_history_entry() {
+        assert_eq!(build_history_entry("э привет", true), "привет");
+        assert_eq!(build_history_entry("э привет", false), "э привет");
+    }
+
+    #[test]
+    fn test_mic_error_message() {
+        assert!(mic_error_message(Ok(Ok(()))).is_none());
+        assert!(mic_error_message(Ok(Err(ArcanaError::AudioDevice("нет".into())))).is_some());
     }
 }

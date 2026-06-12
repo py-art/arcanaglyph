@@ -294,29 +294,36 @@ impl CoreConfig {
         }
     }
 
+    /// База `ProjectDirs` для всех путей приложения (`com.arcanaglyph.ArcanaGlyph`).
+    /// `None`, если HOME/XDG-переменные недоступны. Единая точка — чтобы тройка
+    /// идентификаторов не дублировалась и не рассинхронизировалась между путями.
+    fn project_dirs() -> Option<ProjectDirs> {
+        ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph")
+    }
+
     /// Путь к конфигурационному файлу (legacy): ~/.config/arcanaglyph/config.toml
     pub fn config_path() -> Option<PathBuf> {
-        ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph").map(|dirs| dirs.config_dir().join("config.toml"))
+        Self::project_dirs().map(|dirs| dirs.config_dir().join("config.toml"))
     }
 
     /// Путь к базе данных истории: ~/.config/arcanaglyph/history.db
     pub fn history_db_path() -> Option<PathBuf> {
-        ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph").map(|dirs| dirs.config_dir().join("history.db"))
+        Self::project_dirs().map(|dirs| dirs.config_dir().join("history.db"))
     }
 
     /// Директория кэша аудио: ~/.cache/arcanaglyph/audio/
     pub fn audio_cache_dir() -> Option<PathBuf> {
-        ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph").map(|dirs| dirs.cache_dir().join("audio"))
+        Self::project_dirs().map(|dirs| dirs.cache_dir().join("audio"))
     }
 
     /// Директория моделей: ~/.local/share/arcanaglyph/models/
     pub fn models_dir() -> Option<PathBuf> {
-        ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph").map(|dirs| dirs.data_dir().join("models"))
+        Self::project_dirs().map(|dirs| dirs.data_dir().join("models"))
     }
 
     /// Директория скриптов: ~/.config/arcanaglyph/scripts/
     pub fn scripts_dir() -> Option<PathBuf> {
-        ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph").map(|dirs| dirs.config_dir().join("scripts"))
+        Self::project_dirs().map(|dirs| dirs.config_dir().join("scripts"))
     }
 
     /// Название текущей модели (для записи в историю)

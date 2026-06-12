@@ -15,7 +15,7 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::value::TensorRef;
 
 use crate::error::ArcanaError;
-use crate::transcriber::{Transcriber, resample, trim_silence};
+use crate::transcriber::{Transcriber, preprocess_to_f32_16k};
 
 use super::mel;
 
@@ -32,6 +32,28 @@ const VOCAB_SIZE: usize = 151936;
 const HIDDEN_SIZE: usize = 1024;
 const CHUNK_SIZE: usize = 100;
 const N_MELS: usize = 128;
+
+/// Greedy argmax по slice логитов → token id. Пустой slice или NaN-only →
+/// fallback `ENDOFTEXT_ID`. Дедуплицирует argmax из prefill и шага декодера.
+/// Чистая функция (тестируется без ONNX).
+fn argmax_token(logits: &[f32]) -> i64 {
+    logits
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(idx, _)| idx as i64)
+        .unwrap_or(ENDOFTEXT_ID)
+}
+
+/// Вырезает служебный префикс (language tag) до и включая `<asr_text>` и тримит.
+/// Если тега нет — просто тримит. Чистая функция.
+fn strip_asr_prefix(decoded: &str) -> String {
+    if let Some(idx) = decoded.find("<asr_text>") {
+        decoded[idx + 10..].trim().to_string()
+    } else {
+        decoded.trim().to_string()
+    }
+}
 
 /// Транскрайбер Qwen3-ASR-0.6B (мультиязычный, ONNX Runtime)
 pub struct Qwen3AsrTranscriber {
@@ -317,11 +339,8 @@ impl Qwen3AsrTranscriber {
 
 impl Transcriber for Qwen3AsrTranscriber {
     fn transcribe(&self, samples: &[i16], sample_rate: u32) -> Result<String, ArcanaError> {
-        let trimmed = trim_silence(samples, sample_rate);
-        let mut audio_f32: Vec<f32> = trimmed.iter().map(|&s| s as f32 / 32768.0).collect();
-        if sample_rate != 16000 {
-            audio_f32 = resample(&audio_f32, sample_rate, 16000);
-        }
+        // Общий препроцессинг: обрезка тишины + i16→f32 + resample до 16 кГц.
+        let audio_f32 = preprocess_to_f32_16k(samples, sample_rate);
         if audio_f32.len() < 400 {
             return Ok(String::new());
         }
@@ -378,12 +397,7 @@ impl Transcriber for Qwen3AsrTranscriber {
         // argmax последнего кадра
         let vocab = logits_shape[2] as usize;
         let last_offset = (seq_len - 1) * vocab;
-        let first_token = logits_data[last_offset..last_offset + vocab]
-            .iter()
-            .enumerate()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(idx, _)| idx as i64)
-            .unwrap_or(ENDOFTEXT_ID);
+        let first_token = argmax_token(&logits_data[last_offset..last_offset + vocab]);
 
         let mut generated = vec![first_token];
 
@@ -458,12 +472,7 @@ impl Transcriber for Qwen3AsrTranscriber {
                 .try_extract_tensor::<f32>()
                 .map_err(|e| ArcanaError::Recognizer(format!("Step logits: {}", e)))?;
 
-            let next_token = step_logits[..vocab]
-                .iter()
-                .enumerate()
-                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-                .map(|(idx, _)| idx as i64)
-                .unwrap_or(ENDOFTEXT_ID);
+            let next_token = argmax_token(&step_logits[..vocab]);
 
             generated.push(next_token);
 
@@ -496,11 +505,7 @@ impl Transcriber for Qwen3AsrTranscriber {
             .map_err(|e| ArcanaError::Recognizer(format!("Decode: {}", e)))?;
 
         // Убираем служебные части (language tag, <asr_text>)
-        let result = if let Some(idx) = text.find("<asr_text>") {
-            text[idx + 10..].trim().to_string()
-        } else {
-            text.trim().to_string()
-        };
+        let result = strip_asr_prefix(&text);
 
         Ok(result)
     }
@@ -513,3 +518,23 @@ impl Transcriber for Qwen3AsrTranscriber {
 // ONNX Session является Send + Sync через Mutex
 unsafe impl Send for Qwen3AsrTranscriber {}
 unsafe impl Sync for Qwen3AsrTranscriber {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_argmax_token() {
+        assert_eq!(argmax_token(&[0.1, 0.9, 0.3]), 1);
+        // Пустой slice → fallback ENDOFTEXT_ID.
+        assert_eq!(argmax_token(&[]), ENDOFTEXT_ID);
+        // NaN не должен «выигрывать»: argmax → индекс реального максимума.
+        assert_eq!(argmax_token(&[f32::NAN, 0.5]), 1);
+    }
+
+    #[test]
+    fn test_strip_asr_prefix() {
+        assert_eq!(strip_asr_prefix("ru<asr_text>привет "), "привет");
+        assert_eq!(strip_asr_prefix("нет тега"), "нет тега");
+    }
+}

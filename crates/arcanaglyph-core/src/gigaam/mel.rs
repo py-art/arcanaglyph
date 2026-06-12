@@ -4,8 +4,8 @@
 // Параметры: 16kHz, 64 mel bins, n_fft=320, hop=160, HTK scale, center=false.
 
 use ndarray::{Array2, Array3};
-use rustfft::FftPlanner;
-use rustfft::num_complex::Complex;
+
+use crate::dsp::{self, StftConfig};
 
 /// Параметры препроцессинга GigaAM v3
 const SAMPLE_RATE: u32 = 16000;
@@ -22,67 +22,26 @@ pub fn compute_mel_spectrogram(samples: &[f32]) -> Array3<f32> {
         return Array3::zeros((1, N_MELS, 0));
     }
 
-    let window = hann_window(WIN_LENGTH);
-    let power_spec = stft(samples, &window);
+    // STFT-ядро вынесено в dsp (общее с Qwen3-ASR). GigaAM — без center-паддинга.
+    let window = dsp::hann_window(WIN_LENGTH);
+    let cfg = StftConfig {
+        n_fft: N_FFT,
+        hop_length: HOP_LENGTH,
+        win_length: WIN_LENGTH,
+        center: false,
+    };
+    // power_spec: канонический layout [n_bins, n_frames].
+    let power_spec = dsp::stft_power(samples, &window, &cfg);
     let filterbank = mel_filterbank();
 
-    let n_frames = power_spec.nrows();
-    let mut mel_spec = Array2::zeros((N_MELS, n_frames));
+    // mel_spec = filterbank @ power_spec → [N_MELS, n_frames].
+    // Порядок суммирования по бинам тот же, что был в ручном цикле, — результат идентичен.
+    let mut mel_spec = filterbank.dot(&power_spec);
 
-    // mel_spec = filterbank @ power_spec.T
-    for frame in 0..n_frames {
-        for mel in 0..N_MELS {
-            let mut sum = 0.0f32;
-            for bin in 0..filterbank.ncols() {
-                sum += filterbank[[mel, bin]] * power_spec[[frame, bin]];
-            }
-            // log(clamp(x, 1e-9, 1e9))
-            mel_spec[[mel, frame]] = sum.clamp(1e-9, 1e9).ln();
-        }
-    }
+    // log(clamp(x, 1e-9, 1e9)) поэлементно.
+    mel_spec.mapv_inplace(|x| x.clamp(1e-9, 1e9).ln());
 
     mel_spec.insert_axis(ndarray::Axis(0))
-}
-
-/// Окно Ханна (Hann window)
-fn hann_window(size: usize) -> Vec<f32> {
-    (0..size)
-        .map(|i| {
-            let phase = 2.0 * std::f32::consts::PI * i as f32 / size as f32;
-            0.5 * (1.0 - phase.cos())
-        })
-        .collect()
-}
-
-/// STFT без center-паддинга.
-/// Возвращает power spectrum: [n_frames, n_fft/2 + 1]
-fn stft(signal: &[f32], window: &[f32]) -> Array2<f32> {
-    let n_bins = N_FFT / 2 + 1; // 161
-    let n_frames = (signal.len() - WIN_LENGTH) / HOP_LENGTH + 1;
-
-    let mut planner = FftPlanner::<f32>::new();
-    let fft = planner.plan_fft_forward(N_FFT);
-
-    let mut result = Array2::zeros((n_frames, n_bins));
-    let mut buffer = vec![Complex::new(0.0f32, 0.0f32); N_FFT];
-
-    for frame_idx in 0..n_frames {
-        let start = frame_idx * HOP_LENGTH;
-
-        // Применяем окно и копируем в FFT-буфер
-        for (i, buf) in buffer.iter_mut().enumerate() {
-            *buf = Complex::new(signal[start + i] * window[i], 0.0);
-        }
-
-        fft.process(&mut buffer);
-
-        // Power spectrum: |X|²
-        for bin in 0..n_bins {
-            result[[frame_idx, bin]] = buffer[bin].norm_sqr();
-        }
-    }
-
-    result
 }
 
 /// HTK mel filterbank: [n_mels, n_fft/2 + 1]
@@ -142,27 +101,7 @@ fn mel_to_hz(mel: f32) -> f32 {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_hann_window_properties() {
-        let w = hann_window(320);
-        assert_eq!(w.len(), 320);
-        // Граничные значения близки к 0 (periodic window: w[0]=0, w[N] ≈ 0)
-        assert!(w[0].abs() < 1e-6);
-        // Все значения в [0, 1]
-        assert!(w.iter().all(|&v| v >= 0.0 && v <= 1.0));
-        // Максимум около середины
-        let max_idx = w
-            .iter()
-            .enumerate()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-            .unwrap()
-            .0;
-        assert!(
-            (max_idx as i32 - 160).abs() <= 1,
-            "Максимум на позиции {}, ожидалось ~160",
-            max_idx
-        );
-    }
+    // Тест окна Ханна переехал в crate::dsp (источник истины hann_window).
 
     #[test]
     fn test_mel_filterbank_shape() {

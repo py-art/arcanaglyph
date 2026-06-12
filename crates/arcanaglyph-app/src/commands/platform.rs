@@ -50,12 +50,19 @@ pub fn get_cpu_features() -> serde_json::Value {
     }
 }
 
-/// Tauri-команда: определить, работает ли Wayland
+/// Tauri-команда: определить, работает ли Wayland.
+/// Делегирует в core (`arcanaglyph_core::input::is_wayland`) — единый источник истины,
+/// чтобы детект сессии не расходился между app и core.
 #[tauri::command]
 pub fn is_wayland() -> bool {
-    std::env::var("XDG_SESSION_TYPE")
-        .map(|v| v == "wayland")
-        .unwrap_or(false)
+    #[cfg(target_os = "linux")]
+    {
+        arcanaglyph_core::input::is_wayland()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
 }
 
 /// Tauri-команда: запущены ли мы в GNOME-сессии (любой DM).
