@@ -342,4 +342,45 @@ mod tests {
         let blocked = state_applying.applying_version.as_deref() == Some(info.latest_version.as_str());
         assert!(blocked, "при applying_version=latest баннер не показываем");
     }
+
+    /// Временная HistoryDB под тест (как `temp_db` в core::history).
+    fn temp_history_db(name: &str) -> HistoryDB {
+        let base = std::env::temp_dir().join(format!("arcanaglyph_updater_test_{}_{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).expect("create temp dir");
+        HistoryDB::new(&base.join("history.db"), base.join("audio")).expect("history db")
+    }
+
+    #[test]
+    fn read_state_defaults_when_absent() {
+        let db = temp_history_db("absent");
+        let state = read_state(&db);
+        assert!(state.last_check_at.is_none());
+        assert!(state.latest_known.is_none());
+        assert!(state.etag.is_none());
+    }
+
+    #[test]
+    fn write_then_read_state_roundtrips() {
+        let db = temp_history_db("roundtrip");
+        let state = UpdateState {
+            last_check_at: Some(1_700_000_000),
+            latest_known: Some("1.8.0".into()),
+            latest_release_url: Some("https://example.com/r".into()),
+            latest_published_at: Some("2026-05-10T00:00:00Z".into()),
+            dismissed_version: Some("1.7.9".into()),
+            applying_version: None,
+            etag: Some("W/\"abc\"".into()),
+        };
+        write_state(&db, &state).expect("write");
+
+        let got = read_state(&db);
+        assert_eq!(got.last_check_at, state.last_check_at);
+        assert_eq!(got.latest_known, state.latest_known);
+        assert_eq!(got.latest_release_url, state.latest_release_url);
+        assert_eq!(got.latest_published_at, state.latest_published_at);
+        assert_eq!(got.dismissed_version, state.dismissed_version);
+        assert_eq!(got.applying_version, state.applying_version);
+        assert_eq!(got.etag, state.etag);
+    }
 }

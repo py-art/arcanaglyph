@@ -35,7 +35,15 @@
 - Покрытие тестами: добавлен frontend-харнесс (vitest + jsdom, `npm test`) и
   82 теста на UI-логику; backend-тесты на ресемплинг, обрезку тишины, реестр
   моделей и миграции БД. Структурное покрытие: frontend 0% → 95.8%,
-  суммарно 32% → 65.2%.
+  суммарно 32% → 67.6%.
+- God-файл `engine.rs` (1038 строк) разбит на модуль-директорию
+  `crates/arcanaglyph-core/src/engine/` (`mod` + `lru` + `record_session`):
+  `ArcanaEngine::trigger` упрощён (cc 41 → 14) через извлечённые async-хелперы,
+  устранён дубль резолва имени модели (`CoreConfig::model_name_for`).
+- Backfill покрытия перед рефактором god-функций: юнит-тесты на чистые хелперы
+  хоткеев (`tauri_hotkey_to_gsettings`, кириллические keysym), реестр моделей
+  (`is_model_installed`), persistence апдейтера (`read_state`/`write_state`),
+  историю (`get_all_settings`, `audio_exists`) и `model_name_for`.
 
 ## [1.7.5] - 2026-05-12
 

@@ -326,30 +326,24 @@ impl CoreConfig {
         Self::project_dirs().map(|dirs| dirs.config_dir().join("scripts"))
     }
 
+    /// Имя файла модели для произвольного типа транскрайбера. Единый источник
+    /// маппинга `TranscriberType → имя модели`: раньше этот `match` дублировался
+    /// в `engine.rs` (preload_model / update_config / create_transcriber).
+    pub fn model_name_for(&self, t_type: &TranscriberType) -> String {
+        let (path, fallback) = match t_type {
+            TranscriberType::Vosk => (&self.model_path, "vosk"),
+            TranscriberType::Whisper => (&self.whisper_model_path, "whisper"),
+            TranscriberType::GigaAm => (&self.gigaam_model_path, "gigaam"),
+            TranscriberType::Qwen3Asr => (&self.qwen3asr_model_path, "qwen3asr"),
+        };
+        path.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| fallback.to_string())
+    }
+
     /// Название текущей модели (для записи в историю)
     pub fn transcriber_model_name(&self) -> String {
-        match self.transcriber {
-            TranscriberType::Vosk => self
-                .model_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "vosk".to_string()),
-            TranscriberType::Whisper => self
-                .whisper_model_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "whisper".to_string()),
-            TranscriberType::GigaAm => self
-                .gigaam_model_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "gigaam".to_string()),
-            TranscriberType::Qwen3Asr => self
-                .qwen3asr_model_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "qwen3asr".to_string()),
-        }
+        self.model_name_for(&self.transcriber)
     }
 
     /// Тип транскрайбера как строка
@@ -441,6 +435,31 @@ mod tests {
         assert!(config.model_path.ends_with("models/vosk-model-ru-0.42"));
         assert!(config.whisper_model_path.ends_with("models/ggml-large-v3-turbo.bin"));
         assert!(config.gigaam_model_path.ends_with("models/gigaam-v3-e2e-ctc"));
+    }
+
+    #[test]
+    fn test_model_name_for_maps_each_type_to_its_path_basename() {
+        let config = CoreConfig {
+            model_path: PathBuf::from("/models/vosk-model-ru-0.42"),
+            whisper_model_path: PathBuf::from("/models/ggml-large-v3-turbo.bin"),
+            gigaam_model_path: PathBuf::from("/models/gigaam-v3-e2e-ctc"),
+            qwen3asr_model_path: PathBuf::from("/models/qwen3-asr"),
+            ..CoreConfig::default()
+        };
+        assert_eq!(config.model_name_for(&TranscriberType::Vosk), "vosk-model-ru-0.42");
+        assert_eq!(
+            config.model_name_for(&TranscriberType::Whisper),
+            "ggml-large-v3-turbo.bin"
+        );
+        assert_eq!(config.model_name_for(&TranscriberType::GigaAm), "gigaam-v3-e2e-ctc");
+        assert_eq!(config.model_name_for(&TranscriberType::Qwen3Asr), "qwen3-asr");
+        // transcriber_model_name делегирует в model_name_for по активному типу.
+        let active = CoreConfig {
+            transcriber: TranscriberType::GigaAm,
+            gigaam_model_path: PathBuf::from("/models/gigaam-v3-e2e-ctc"),
+            ..CoreConfig::default()
+        };
+        assert_eq!(active.transcriber_model_name(), "gigaam-v3-e2e-ctc");
     }
 
     #[test]

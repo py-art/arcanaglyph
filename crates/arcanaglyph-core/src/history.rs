@@ -449,6 +449,35 @@ mod tests {
     }
 
     #[test]
+    fn test_get_all_settings_returns_all_pairs() {
+        let (db, dir) = temp_db("all_settings");
+        assert!(db.get_all_settings().unwrap().is_empty());
+        db.set_setting("lang", "ru").unwrap();
+        db.set_setting("theme", "dark").unwrap();
+        let all = db.get_all_settings().unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all.get("lang").map(String::as_str), Some("ru"));
+        assert_eq!(all.get("theme").map(String::as_str), Some("dark"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_audio_exists_checks_db_and_disk() {
+        let (db, dir) = temp_db("audio_exists");
+        // Несуществующая запись → false.
+        assert!(!db.audio_exists(999));
+        // Запись с путём к реальному файлу → true.
+        let audio_path = dir.join("real.wav");
+        std::fs::write(&audio_path, b"x").unwrap();
+        let rec_real = db.add_recording(audio_path.to_str().unwrap(), 1).unwrap();
+        assert!(db.audio_exists(rec_real));
+        // Запись с путём к несуществующему файлу → false.
+        let rec_missing = db.add_recording("/tmp/nope_xyz_arcanaglyph.wav", 1).unwrap();
+        assert!(!db.audio_exists(rec_missing));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn test_delete_recording_cascades_transcriptions() {
         let (db, dir) = temp_db("delete");
         let rec_id = db.add_recording("/tmp/b.raw", 3).unwrap();

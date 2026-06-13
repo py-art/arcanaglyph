@@ -350,6 +350,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_tauri_hotkey_to_gsettings() {
+        // Пустой хоткей → пустая строка (не задан).
+        assert_eq!(tauri_hotkey_to_gsettings(""), "");
+        // Backtick → grave (главный кейс: Ctrl+Ё).
+        assert_eq!(tauri_hotkey_to_gsettings("Control+`"), "<Control>grave");
+        // Полный набор модификаторов + именованная клавиша (lowercase).
+        assert_eq!(
+            tauri_hotkey_to_gsettings("Super+Alt+Control+Space"),
+            "<Super><Alt><Control>space"
+        );
+        // Shift + буква.
+        assert_eq!(tauri_hotkey_to_gsettings("Shift+A"), "<Shift>a");
+        // Одна клавиша без модификаторов.
+        assert_eq!(tauri_hotkey_to_gsettings("F1"), "f1");
+    }
+
+    #[test]
+    fn test_latin_to_cyrillic_keysym() {
+        // Раскладочные дубли: латинская клавиша → кириллический keysym.
+        assert_eq!(latin_to_cyrillic_keysym("q"), Some("Cyrillic_shorti"));
+        assert_eq!(latin_to_cyrillic_keysym("a"), Some("Cyrillic_ef"));
+        assert_eq!(latin_to_cyrillic_keysym("m"), Some("Cyrillic_softsign"));
+        // Спец-кейс Ё: grave → Cyrillic_io (иначе Ctrl+Ё не ловится на ru-раскладке).
+        assert_eq!(latin_to_cyrillic_keysym("grave"), Some("Cyrillic_io"));
+        // Неизвестная клавиша → None (нет кириллического дубля).
+        assert_eq!(latin_to_cyrillic_keysym("1"), None);
+        assert_eq!(latin_to_cyrillic_keysym("space"), None);
+    }
+
+    #[test]
     fn test_binding_is_empty() {
         assert!(binding_is_empty(""));
         assert!(binding_is_empty("''"));

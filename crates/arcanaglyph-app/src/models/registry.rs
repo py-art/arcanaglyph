@@ -323,3 +323,69 @@ pub async fn download_model(
     tracing::info!("Модель '{}' скачана ({} файлов)", model_id, total_files);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    /// Уникальная временная директория под тест (без внешних crate'ов, как `temp_db`).
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("arcanaglyph_registry_test_{}_{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    fn write_file(path: &std::path::Path, bytes: usize) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create parent");
+        }
+        fs::write(path, vec![0u8; bytes]).expect("write file");
+    }
+
+    #[test]
+    fn test_missing_path_is_not_installed() {
+        let missing = std::env::temp_dir().join("arcanaglyph_registry_does_not_exist_xyz");
+        let _ = fs::remove_dir_all(&missing);
+        assert!(!is_model_installed(&missing, "gigaam", None));
+    }
+
+    #[test]
+    fn test_gigaam_requires_main_file_and_vocab() {
+        let dir = temp_dir("gigaam");
+        // Только onnx, без vocab → не установлена.
+        write_file(&dir.join("v3_e2e_ctc.int8.onnx"), 1024);
+        assert!(!is_model_installed(&dir, "gigaam", None));
+        // Добавили vocab → установлена.
+        write_file(&dir.join("v3_e2e_ctc_vocab.txt"), 16);
+        assert!(is_model_installed(&dir, "gigaam", None));
+        // Главный файл отсутствует → не установлена.
+        fs::remove_file(dir.join("v3_e2e_ctc.int8.onnx")).unwrap();
+        assert!(!is_model_installed(&dir, "gigaam", None));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_whisper_validates_min_size() {
+        let dir = temp_dir("whisper");
+        let model = dir.join("ggml-large-v3-turbo.bin");
+        write_file(&model, 100);
+        // Размер 100 >= min 50 → установлена.
+        assert!(is_model_installed(&model, "whisper", Some(50)));
+        // Размер 100 < min 1000 → повреждена/недокачана.
+        assert!(!is_model_installed(&model, "whisper", Some(1000)));
+        // Без min_size — достаточно существования файла.
+        assert!(is_model_installed(&model, "whisper", None));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_unknown_type_only_checks_path_exists() {
+        let dir = temp_dir("unknown");
+        // Неизвестный тип: main_file = None, доп-файлов нет → достаточно наличия пути.
+        assert!(is_model_installed(&dir, "totally-unknown", None));
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
