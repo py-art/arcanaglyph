@@ -98,19 +98,29 @@ pub async fn run_engine_event_loop(
     }
 }
 
+/// Решает, пора ли делать сетевую проверку обновлений.
+/// `force` (первый прогон после старта приложения) обходит 23-часовой throttle:
+/// иначе «закрыл-открыл» вскоре после релиза не покажет баннер до истечения
+/// суток с прошлой проверки. Периодические прогоны в loop'е остаются под гейтом
+/// (раз в ~24ч), чтобы не жечь GitHub rate-limit (ETag → 304 на неизменном релизе).
+fn update_check_due(last_check_at: Option<i64>, now: i64, force: bool) -> bool {
+    force || last_check_at.map(|t| now - t >= 23 * 3600).unwrap_or(true)
+}
+
 /// Запускает фоновый чекер обновлений: первый запрос через 60с (даём engine
-/// догрузиться, не конкурируем за сеть с download_model'ями), далее раз в
-/// 24ч в loop'е. На сетевых ошибках — exponential backoff до 7 дней. Cold-start
-/// gate: пропускаем fetch если `last_check_at < 23h` назад.
+/// догрузиться, не конкурируем за сеть с download_model'ями) и делается ВСЕГДА —
+/// в обход throttle, чтобы свежий релиз был виден сразу после перезапуска. Далее
+/// раз в 24ч в loop'е под гейтом. На сетевых ошибках — exponential backoff до 7 дней.
 pub fn spawn_update_checker(app_handle: AppHandle, history_db: Arc<HistoryDB>) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         let mut backoff = std::time::Duration::from_secs(86400);
+        // Первый прогон после старта обходит throttle (см. update_check_due).
+        let mut force_check = true;
         loop {
             let state = updater::read_state(&history_db);
             let now = updater::unix_now();
-            let should_check = state.last_check_at.map(|t| now - t >= 23 * 3600).unwrap_or(true);
-            if should_check {
+            if update_check_due(state.last_check_at, now, force_check) {
                 match updater::check_for_update(&history_db).await {
                     Ok(Some(info)) => {
                         tracing::info!("Update available: {}", info.latest_version);
@@ -129,6 +139,7 @@ pub fn spawn_update_checker(app_handle: AppHandle, history_db: Arc<HistoryDB>) {
             } else {
                 tracing::debug!("Update check skipped (< 23h since last)");
             }
+            force_check = false;
             tokio::time::sleep(backoff).await;
         }
     });
@@ -171,4 +182,39 @@ pub fn spawn_udp_listener(engine_state: EngineState) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::update_check_due;
+
+    const DAY: i64 = 24 * 3600;
+
+    #[test]
+    fn test_force_bypasses_throttle() {
+        // Первый прогон после старта: проверяем даже если только что проверяли.
+        let now = 100 * DAY;
+        assert!(update_check_due(Some(now - 60), now, true));
+    }
+
+    #[test]
+    fn test_no_state_checks_immediately() {
+        // Нет записи о прошлой проверке — проверяем (даже без force).
+        assert!(update_check_due(None, 100 * DAY, false));
+    }
+
+    #[test]
+    fn test_throttled_within_23h() {
+        // Прошло меньше 23ч и не force — пропускаем (это и есть тот самый гейт,
+        // из-за которого свежий релиз не виден до суток без этого фикса).
+        let now = 100 * DAY;
+        assert!(!update_check_due(Some(now - 22 * 3600), now, false));
+    }
+
+    #[test]
+    fn test_due_after_23h() {
+        // Прошло ≥23ч — периодическая проверка срабатывает без force.
+        let now = 100 * DAY;
+        assert!(update_check_due(Some(now - 23 * 3600), now, false));
+    }
 }
