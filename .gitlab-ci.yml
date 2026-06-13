@@ -59,7 +59,10 @@ build-windows-test:
     #    (targets=nsis, resources=libs/onnxruntime.dll). --no-default-features
     #    отключает дефолтный gigaam (download-binaries), gigaam-system-ort =
     #    load-dynamic + наша bundled DLL. Аргументы после `--` идут в cargo.
-    - tauri build --bundles nsis -- --no-default-features --features gigaam-system-ort
+    #    `--%` — PowerShell stop-parsing token: всё после него уходит в tauri
+    #    дословно, иначе PowerShell съедает первый `--` (свой «конец параметров»)
+    #    и `--no-default-features` не доходит до cargo как trailing-arg.
+    - tauri build --bundles nsis --% -- --no-default-features --features gigaam-system-ort
   artifacts:
     name: "arcanaglyph-windows-$CI_COMMIT_SHORT_SHA"
     paths:
