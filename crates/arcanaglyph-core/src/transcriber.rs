@@ -511,4 +511,92 @@ mod tests {
         let out = preprocess_to_f32_16k(&samples, 8000);
         assert!(out.len() > 14000, "ожидали ~16000, получили {}", out.len());
     }
+
+    // === resample (линейная интерполяция) ===
+
+    #[cfg(any(
+        feature = "whisper",
+        feature = "gigaam",
+        feature = "gigaam-system-ort",
+        feature = "qwen3asr"
+    ))]
+    #[test]
+    fn test_resample_noop_same_rate_and_empty() {
+        // Равные частоты и пустой вход — возврат без изменений (быстрый путь).
+        assert_eq!(resample(&[1.0, 2.0, 3.0], 16000, 16000), vec![1.0, 2.0, 3.0]);
+        assert_eq!(resample(&[], 8000, 16000), Vec::<f32>::new());
+    }
+
+    #[cfg(any(
+        feature = "whisper",
+        feature = "gigaam",
+        feature = "gigaam-system-ort",
+        feature = "qwen3asr"
+    ))]
+    #[test]
+    fn test_resample_up_and_down_length() {
+        // Апсемплинг ×2 и даунсемплинг ÷2 дают предсказуемую длину выхода.
+        assert_eq!(resample(&vec![1.0; 100], 8000, 16000).len(), 200);
+        assert_eq!(resample(&vec![1.0; 100], 16000, 8000).len(), 50);
+    }
+
+    #[cfg(any(
+        feature = "whisper",
+        feature = "gigaam",
+        feature = "gigaam-system-ort",
+        feature = "qwen3asr"
+    ))]
+    #[test]
+    fn test_resample_interpolates_midpoint() {
+        // 8→16 кГц на [0, 10]: новый сэмпл между точками — среднее (линейная интерп.).
+        let out = resample(&[0.0, 10.0], 8000, 16000);
+        assert_eq!(out, vec![0.0, 5.0, 10.0, 10.0]);
+    }
+
+    // === trim_silence (обрезка тишины по RMS) ===
+
+    #[cfg(any(
+        feature = "whisper",
+        feature = "gigaam",
+        feature = "gigaam-system-ort",
+        feature = "qwen3asr"
+    ))]
+    #[test]
+    fn test_trim_silence_short_audio_untouched() {
+        // Короче одного 100мс-блока — возвращается как есть (нечего анализировать).
+        let samples = vec![0i16; 100];
+        assert_eq!(trim_silence(&samples, 16000).len(), 100);
+    }
+
+    #[cfg(any(
+        feature = "whisper",
+        feature = "gigaam",
+        feature = "gigaam-system-ort",
+        feature = "qwen3asr"
+    ))]
+    #[test]
+    fn test_trim_silence_all_silence_returns_full() {
+        // Сплошная тишина: речь не найдена → защитный возврат всего буфера.
+        let samples = vec![0i16; 16000];
+        assert_eq!(trim_silence(&samples, 16000).len(), 16000);
+    }
+
+    #[cfg(any(
+        feature = "whisper",
+        feature = "gigaam",
+        feature = "gigaam-system-ort",
+        feature = "qwen3asr"
+    ))]
+    #[test]
+    fn test_trim_silence_trims_edges_with_padding() {
+        // 1с при 16кГц: тишина [0,4800) + речь [4800,11200) + тишина [11200,16000).
+        // block=1600, padding=3200 → start 4800-3200=1600, end 11200+3200=14400.
+        let mut samples = vec![0i16; 16000];
+        for s in samples.iter_mut().take(11200).skip(4800) {
+            *s = 1000;
+        }
+        let trimmed = trim_silence(&samples, 16000);
+        assert_eq!(trimmed.len(), 12800);
+        assert!(trimmed.len() < samples.len());
+    }
 }
