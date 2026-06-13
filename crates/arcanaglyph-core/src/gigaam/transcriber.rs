@@ -13,7 +13,7 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::value::TensorRef;
 
 use crate::error::ArcanaError;
-use crate::transcriber::{Transcriber, resample, trim_silence};
+use crate::transcriber::{Transcriber, preprocess_to_f32_16k};
 
 use super::mel;
 
@@ -101,16 +101,8 @@ impl GigaAmTranscriber {
 
 impl Transcriber for GigaAmTranscriber {
     fn transcribe(&self, samples: &[i16], sample_rate: u32) -> Result<String, ArcanaError> {
-        // Обрезаем тишину
-        let trimmed = trim_silence(samples, sample_rate);
-
-        // i16 → f32 (нормализация в [-1.0, 1.0])
-        let mut audio_f32: Vec<f32> = trimmed.iter().map(|&s| s as f32 / 32768.0).collect();
-
-        // Ресемплируем до 16 kHz если нужно
-        if sample_rate != 16000 {
-            audio_f32 = resample(&audio_f32, sample_rate, 16000);
-        }
+        // Общий препроцессинг: обрезка тишины + i16→f32 + resample до 16 кГц.
+        let audio_f32 = preprocess_to_f32_16k(samples, sample_rate);
 
         if audio_f32.len() < 320 {
             return Ok(String::new());

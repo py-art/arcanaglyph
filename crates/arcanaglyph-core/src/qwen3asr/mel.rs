@@ -4,8 +4,8 @@
 // Параметры: 16kHz, 128 mel bins, n_fft=400, hop=160, Slaney norm, center=true.
 
 use ndarray::{Array1, Array2};
-use rustfft::FftPlanner;
-use rustfft::num_complex::Complex;
+
+use crate::dsp::{self, StftConfig};
 
 const SAMPLE_RATE: u32 = 16000;
 const N_FFT: usize = 400;
@@ -19,44 +19,18 @@ pub fn compute_mel_spectrogram(samples: &[f32]) -> Array2<f32> {
         return Array2::zeros((N_MELS, 0));
     }
 
-    let window = hann_window(N_FFT);
     let filterbank = mel_filterbank_slaney();
 
-    // Center padding (reflect)
-    let pad = N_FFT / 2;
-    let mut padded = Vec::with_capacity(samples.len() + 2 * pad);
-    // Reflect padding в начале
-    for i in (1..=pad).rev() {
-        let idx = i.min(samples.len() - 1);
-        padded.push(samples[idx]);
-    }
-    padded.extend_from_slice(samples);
-    // Reflect padding в конце
-    for i in 1..=pad {
-        let idx = samples.len().saturating_sub(1 + i);
-        padded.push(samples[idx]);
-    }
-
-    // STFT
-    let n_bins = N_FFT / 2 + 1;
-    let n_frames = (padded.len() - N_FFT) / HOP_LENGTH + 1;
-
-    let mut planner = FftPlanner::<f32>::new();
-    let fft = planner.plan_fft_forward(N_FFT);
-
-    let mut power_spec = Array2::zeros((n_bins, n_frames));
-    let mut buffer = vec![Complex::new(0.0f32, 0.0f32); N_FFT];
-
-    for frame_idx in 0..n_frames {
-        let start = frame_idx * HOP_LENGTH;
-        for (i, buf) in buffer.iter_mut().enumerate() {
-            *buf = Complex::new(padded[start + i] * window[i], 0.0);
-        }
-        fft.process(&mut buffer);
-        for bin in 0..n_bins {
-            power_spec[[bin, frame_idx]] = buffer[bin].norm_sqr();
-        }
-    }
+    // STFT-ядро вынесено в dsp (общее с GigaAM). Qwen3-ASR — с center reflect-паддингом.
+    let window = dsp::hann_window(N_FFT);
+    let cfg = StftConfig {
+        n_fft: N_FFT,
+        hop_length: HOP_LENGTH,
+        win_length: N_FFT,
+        center: true,
+    };
+    // power_spec: канонический layout [n_bins, n_frames].
+    let power_spec = dsp::stft_power(samples, &window, &cfg);
 
     // Mel filterbank → log scale (Whisper-style)
     let mut mel_spec = filterbank.dot(&power_spec);
@@ -73,16 +47,6 @@ pub fn compute_mel_spectrogram(samples: &[f32]) -> Array2<f32> {
     mel_spec.mapv_inplace(|x| (x + 4.0) / 4.0);
 
     mel_spec
-}
-
-/// Hann window (periodic)
-fn hann_window(size: usize) -> Vec<f32> {
-    (0..size)
-        .map(|i| {
-            let phase = 2.0 * std::f32::consts::PI * i as f32 / size as f32;
-            0.5 * (1.0 - phase.cos())
-        })
-        .collect()
 }
 
 /// Slaney mel filterbank: [128, 201]

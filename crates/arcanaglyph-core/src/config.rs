@@ -58,6 +58,17 @@ impl TranscriberType {
             Self::Qwen3Asr => "qwen3asr",
         }
     }
+
+    /// Парсинг строкового id (обратное к `as_str`) в тип. Неизвестное → None.
+    pub fn from_id(s: &str) -> Option<Self> {
+        match s {
+            "vosk" => Some(Self::Vosk),
+            "whisper" => Some(Self::Whisper),
+            "gigaam" => Some(Self::GigaAm),
+            "qwen3asr" => Some(Self::Qwen3Asr),
+            _ => None,
+        }
+    }
 }
 
 /// Конфигурация ядра ArcanaGlyph
@@ -152,6 +163,12 @@ pub struct CoreConfig {
     /// Язык интерфейса: "ru" или "en" (пустая строка = авто по локали системы)
     #[serde(default)]
     pub language: String,
+    /// Через сколько минут простоя выгружать неактивную модель из пула
+    /// (0 = никогда). Активная модель никогда не выгружается. При следующем
+    /// использовании выгруженная модель будет загружена заново (~2-5с для
+    /// GigaAM, ~10с для Qwen3-ASR). Полезно для систем с малой RAM.
+    #[serde(default)]
+    pub model_unload_after_minutes: u64,
 }
 
 fn default_models_dir() -> PathBuf {
@@ -263,6 +280,7 @@ impl Default for CoreConfig {
             models_base_dir: models,
             history_filter_secs: 86400,
             language: String::new(),
+            model_unload_after_minutes: 0,
         }
     }
 }
@@ -287,55 +305,56 @@ impl CoreConfig {
         }
     }
 
+    /// База `ProjectDirs` для всех путей приложения (`com.arcanaglyph.ArcanaGlyph`).
+    /// `None`, если HOME/XDG-переменные недоступны. Единая точка — чтобы тройка
+    /// идентификаторов не дублировалась и не рассинхронизировалась между путями.
+    fn project_dirs() -> Option<ProjectDirs> {
+        ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph")
+    }
+
     /// Путь к конфигурационному файлу (legacy): ~/.config/arcanaglyph/config.toml
     pub fn config_path() -> Option<PathBuf> {
-        ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph").map(|dirs| dirs.config_dir().join("config.toml"))
+        Self::project_dirs().map(|dirs| dirs.config_dir().join("config.toml"))
     }
 
     /// Путь к базе данных истории: ~/.config/arcanaglyph/history.db
     pub fn history_db_path() -> Option<PathBuf> {
-        ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph").map(|dirs| dirs.config_dir().join("history.db"))
+        Self::project_dirs().map(|dirs| dirs.config_dir().join("history.db"))
     }
 
     /// Директория кэша аудио: ~/.cache/arcanaglyph/audio/
     pub fn audio_cache_dir() -> Option<PathBuf> {
-        ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph").map(|dirs| dirs.cache_dir().join("audio"))
+        Self::project_dirs().map(|dirs| dirs.cache_dir().join("audio"))
     }
 
     /// Директория моделей: ~/.local/share/arcanaglyph/models/
     pub fn models_dir() -> Option<PathBuf> {
-        ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph").map(|dirs| dirs.data_dir().join("models"))
+        Self::project_dirs().map(|dirs| dirs.data_dir().join("models"))
     }
 
     /// Директория скриптов: ~/.config/arcanaglyph/scripts/
     pub fn scripts_dir() -> Option<PathBuf> {
-        ProjectDirs::from("com", "arcanaglyph", "ArcanaGlyph").map(|dirs| dirs.config_dir().join("scripts"))
+        Self::project_dirs().map(|dirs| dirs.config_dir().join("scripts"))
+    }
+
+    /// Имя файла модели для произвольного типа транскрайбера. Единый источник
+    /// маппинга `TranscriberType → имя модели`: раньше этот `match` дублировался
+    /// в `engine.rs` (preload_model / update_config / create_transcriber).
+    pub fn model_name_for(&self, t_type: &TranscriberType) -> String {
+        let (path, fallback) = match t_type {
+            TranscriberType::Vosk => (&self.model_path, "vosk"),
+            TranscriberType::Whisper => (&self.whisper_model_path, "whisper"),
+            TranscriberType::GigaAm => (&self.gigaam_model_path, "gigaam"),
+            TranscriberType::Qwen3Asr => (&self.qwen3asr_model_path, "qwen3asr"),
+        };
+        path.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| fallback.to_string())
     }
 
     /// Название текущей модели (для записи в историю)
     pub fn transcriber_model_name(&self) -> String {
-        match self.transcriber {
-            TranscriberType::Vosk => self
-                .model_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "vosk".to_string()),
-            TranscriberType::Whisper => self
-                .whisper_model_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "whisper".to_string()),
-            TranscriberType::GigaAm => self
-                .gigaam_model_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "gigaam".to_string()),
-            TranscriberType::Qwen3Asr => self
-                .qwen3asr_model_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "qwen3asr".to_string()),
-        }
+        self.model_name_for(&self.transcriber)
     }
 
     /// Тип транскрайбера как строка
@@ -430,6 +449,50 @@ mod tests {
     }
 
     #[test]
+    fn test_transcriber_type_from_id_roundtrips_with_as_str() {
+        for t in [
+            TranscriberType::Vosk,
+            TranscriberType::Whisper,
+            TranscriberType::GigaAm,
+            TranscriberType::Qwen3Asr,
+        ] {
+            assert_eq!(
+                TranscriberType::from_id(t.as_str()),
+                Some(t.clone()),
+                "round-trip {:?}",
+                t
+            );
+        }
+        assert_eq!(TranscriberType::from_id("unknown"), None);
+        assert_eq!(TranscriberType::from_id(""), None);
+    }
+
+    #[test]
+    fn test_model_name_for_maps_each_type_to_its_path_basename() {
+        let config = CoreConfig {
+            model_path: PathBuf::from("/models/vosk-model-ru-0.42"),
+            whisper_model_path: PathBuf::from("/models/ggml-large-v3-turbo.bin"),
+            gigaam_model_path: PathBuf::from("/models/gigaam-v3-e2e-ctc"),
+            qwen3asr_model_path: PathBuf::from("/models/qwen3-asr"),
+            ..CoreConfig::default()
+        };
+        assert_eq!(config.model_name_for(&TranscriberType::Vosk), "vosk-model-ru-0.42");
+        assert_eq!(
+            config.model_name_for(&TranscriberType::Whisper),
+            "ggml-large-v3-turbo.bin"
+        );
+        assert_eq!(config.model_name_for(&TranscriberType::GigaAm), "gigaam-v3-e2e-ctc");
+        assert_eq!(config.model_name_for(&TranscriberType::Qwen3Asr), "qwen3-asr");
+        // transcriber_model_name делегирует в model_name_for по активному типу.
+        let active = CoreConfig {
+            transcriber: TranscriberType::GigaAm,
+            gigaam_model_path: PathBuf::from("/models/gigaam-v3-e2e-ctc"),
+            ..CoreConfig::default()
+        };
+        assert_eq!(active.transcriber_model_name(), "gigaam-v3-e2e-ctc");
+    }
+
+    #[test]
     fn test_serialize_deserialize_roundtrip() {
         let config = CoreConfig::default();
         let toml_str = toml::to_string_pretty(&config).expect("Сериализация не должна падать");
@@ -486,6 +549,7 @@ auto_type = false
             models_base_dir: PathBuf::from("/tmp/test-models"),
             history_filter_secs: 86400,
             language: String::new(),
+            model_unload_after_minutes: 0,
         };
 
         let content = toml::to_string_pretty(&config).unwrap();
@@ -511,5 +575,45 @@ auto_type = false
         assert!(path.is_some());
         let path = path.unwrap();
         assert!(path.ends_with("config.toml"));
+    }
+
+    #[test]
+    fn test_transcriber_as_str() {
+        assert_eq!(TranscriberType::Vosk.as_str(), "vosk");
+        assert_eq!(TranscriberType::Whisper.as_str(), "whisper");
+        assert_eq!(TranscriberType::GigaAm.as_str(), "gigaam");
+        assert_eq!(TranscriberType::Qwen3Asr.as_str(), "qwen3asr");
+    }
+
+    #[test]
+    fn test_gigaam_compiled_in_default() {
+        // GigaAm включён во всех наших сборках (default feature `gigaam`).
+        assert!(TranscriberType::GigaAm.is_compiled_in());
+        assert!(TranscriberType::compiled_engines().contains(&TranscriberType::GigaAm));
+    }
+
+    #[test]
+    fn test_effective_gain_override_and_fallback() {
+        let mut config = CoreConfig {
+            mic_gain: 1.5,
+            ..Default::default()
+        };
+        config.mic_gain_per_device.insert("Anker SoundCore".to_string(), 2.0);
+        // Для устройства с override — берётся per-device значение.
+        assert_eq!(config.effective_gain("Anker SoundCore"), 2.0);
+        // Для остальных — глобальный mic_gain.
+        assert_eq!(config.effective_gain("Встроенный микрофон"), 1.5);
+    }
+
+    #[test]
+    fn test_transcriber_model_name_and_type_str() {
+        let config = CoreConfig {
+            transcriber: TranscriberType::Vosk,
+            model_path: PathBuf::from("/opt/models/vosk-model-ru-0.42"),
+            ..Default::default()
+        };
+        // Имя модели — последний компонент пути активного движка.
+        assert_eq!(config.transcriber_model_name(), "vosk-model-ru-0.42");
+        assert_eq!(config.transcriber_type_str(), "vosk");
     }
 }

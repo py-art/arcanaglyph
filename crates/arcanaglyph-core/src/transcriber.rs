@@ -1,8 +1,40 @@
 // crates/arcanaglyph-core/src/transcriber.rs
 
+use crate::config::{CoreConfig, TranscriberType};
 use crate::error::ArcanaError;
 #[cfg(feature = "vosk")]
 use std::sync::Mutex;
+
+/// Единая cfg-gated фабрика транскрайберов: тип из конфига → `Box<dyn Transcriber>`.
+/// Используется и движком (`ArcanaEngine::create_transcriber` оборачивает в `Arc`),
+/// и `retranscribe`. Инициализация ORT-логирования для ONNX-движков остаётся на
+/// стороне вызывающего — она зависит от способа линковки ORT (статика vs load-dynamic).
+///
+/// `allow(unused_variables)` — для сборок без единого движка все плечи `match`
+/// стираются, и параметр `config` становится формально неиспользуемым.
+#[allow(unused_variables)]
+pub fn build_transcriber(config: &CoreConfig, t_type: &TranscriberType) -> Result<Box<dyn Transcriber>, ArcanaError> {
+    match t_type {
+        #[cfg(feature = "vosk")]
+        TranscriberType::Vosk => Ok(Box::new(VoskTranscriber::new(
+            &config.model_path,
+            config.sample_rate as f32,
+        )?)),
+        #[cfg(feature = "whisper")]
+        TranscriberType::Whisper => Ok(Box::new(WhisperTranscriber::new(&config.whisper_model_path)?)),
+        #[cfg(any(feature = "gigaam", feature = "gigaam-system-ort"))]
+        TranscriberType::GigaAm => Ok(Box::new(crate::gigaam::transcriber::GigaAmTranscriber::new(
+            &config.gigaam_model_path,
+        )?)),
+        #[cfg(feature = "qwen3asr")]
+        TranscriberType::Qwen3Asr => Ok(Box::new(crate::qwen3asr::transcriber::Qwen3AsrTranscriber::new(
+            &config.qwen3asr_model_path,
+        )?)),
+        // Любая ветка без своего feature: сообщаем, что движок недоступен.
+        #[allow(unreachable_patterns)]
+        other => Err(ArcanaError::EngineNotAvailable(other.as_str().to_string())),
+    }
+}
 
 /// Трейт для движков транскрибации (Vosk, Whisper и т.д.)
 pub trait Transcriber: Send + Sync {
@@ -195,17 +227,9 @@ impl Transcriber for WhisperTranscriber {
         // раз был отменён, новый прогон сразу прервётся.
         self.cancel_flag.store(false, Ordering::Relaxed);
 
-        // Обрезаем тишину с обеих сторон — Whisper галлюцинирует на тихих участках,
-        // а короткое аудио = быстрее транскрибация
-        let trimmed = trim_silence(samples, sample_rate);
-
-        // Конвертируем i16 → f32 (нормализация в [-1.0, 1.0])
-        let mut audio_f32: Vec<f32> = trimmed.iter().map(|&s| s as f32 / 32768.0).collect();
-
-        // Ресемплируем до 16 kHz если нужно (Whisper требует 16000 Hz)
-        if sample_rate != 16000 {
-            audio_f32 = resample(&audio_f32, sample_rate, 16000);
-        }
+        // Обрезаем тишину (Whisper галлюцинирует на тихих участках), нормализуем
+        // i16 → f32 и ресемплируем до 16 кГц — общий препроцессинг для всех движков.
+        let audio_f32 = preprocess_to_f32_16k(samples, sample_rate);
 
         let mut state = self
             .ctx
@@ -429,6 +453,27 @@ pub(crate) fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> 
     output
 }
 
+/// Общий входной препроцессинг для mel/whisper-движков:
+/// `trim_silence` → i16→f32 нормализация в [-1.0, 1.0] → resample до 16 кГц.
+/// Возвращает f32-сэмплы при 16 кГц, готовые к mel/FFT.
+/// Vosk это НЕ использует (работает с i16 напрямую). Порог минимальной длины
+/// (`< 320`/`< 400`) проверяет caller — он зависит от n_fft конкретного движка.
+#[cfg(any(
+    feature = "whisper",
+    feature = "gigaam",
+    feature = "gigaam-system-ort",
+    feature = "qwen3asr"
+))]
+pub(crate) fn preprocess_to_f32_16k(samples: &[i16], sample_rate: u32) -> Vec<f32> {
+    let trimmed = trim_silence(samples, sample_rate);
+    let audio_f32: Vec<f32> = trimmed.iter().map(|&s| s as f32 / 32768.0).collect();
+    if sample_rate != 16000 {
+        resample(&audio_f32, sample_rate, 16000)
+    } else {
+        audio_f32
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,5 +510,125 @@ mod tests {
         // "э-э-э" и "э-ээ" — новые слова-паразиты
         assert_eq!(remove_filler_words("э-э-э привет э-ээ мир"), "привет мир");
         assert_eq!(remove_filler_words("Э-Э-Э тест Э-ЭЭ"), "тест");
+    }
+
+    // Общий препроцессинг входа (trim + i16→f32 + resample) — гейтится тем же
+    // набором фич, что и сама функция (mel/whisper-движки).
+    #[cfg(any(
+        feature = "whisper",
+        feature = "gigaam",
+        feature = "gigaam-system-ort",
+        feature = "qwen3asr"
+    ))]
+    #[test]
+    fn test_preprocess_same_rate_normalizes() {
+        // Громкий постоянный сигнал (rms выше порога тишины) при 16 кГц:
+        // длина сохраняется, значения нормализованы i16 → f32.
+        let samples = vec![1000i16; 16000];
+        let out = preprocess_to_f32_16k(&samples, 16000);
+        assert_eq!(out.len(), 16000);
+        assert!((out[0] - 1000.0 / 32768.0).abs() < 1e-6);
+    }
+
+    #[cfg(any(
+        feature = "whisper",
+        feature = "gigaam",
+        feature = "gigaam-system-ort",
+        feature = "qwen3asr"
+    ))]
+    #[test]
+    fn test_preprocess_resamples_8k_to_16k() {
+        // 8 кГц → 16 кГц: число сэмплов примерно удваивается.
+        let samples = vec![1000i16; 8000];
+        let out = preprocess_to_f32_16k(&samples, 8000);
+        assert!(out.len() > 14000, "ожидали ~16000, получили {}", out.len());
+    }
+
+    // === resample (линейная интерполяция) ===
+
+    #[cfg(any(
+        feature = "whisper",
+        feature = "gigaam",
+        feature = "gigaam-system-ort",
+        feature = "qwen3asr"
+    ))]
+    #[test]
+    fn test_resample_noop_same_rate_and_empty() {
+        // Равные частоты и пустой вход — возврат без изменений (быстрый путь).
+        assert_eq!(resample(&[1.0, 2.0, 3.0], 16000, 16000), vec![1.0, 2.0, 3.0]);
+        assert_eq!(resample(&[], 8000, 16000), Vec::<f32>::new());
+    }
+
+    #[cfg(any(
+        feature = "whisper",
+        feature = "gigaam",
+        feature = "gigaam-system-ort",
+        feature = "qwen3asr"
+    ))]
+    #[test]
+    fn test_resample_up_and_down_length() {
+        // Апсемплинг ×2 и даунсемплинг ÷2 дают предсказуемую длину выхода.
+        assert_eq!(resample(&vec![1.0; 100], 8000, 16000).len(), 200);
+        assert_eq!(resample(&vec![1.0; 100], 16000, 8000).len(), 50);
+    }
+
+    #[cfg(any(
+        feature = "whisper",
+        feature = "gigaam",
+        feature = "gigaam-system-ort",
+        feature = "qwen3asr"
+    ))]
+    #[test]
+    fn test_resample_interpolates_midpoint() {
+        // 8→16 кГц на [0, 10]: новый сэмпл между точками — среднее (линейная интерп.).
+        let out = resample(&[0.0, 10.0], 8000, 16000);
+        assert_eq!(out, vec![0.0, 5.0, 10.0, 10.0]);
+    }
+
+    // === trim_silence (обрезка тишины по RMS) ===
+
+    #[cfg(any(
+        feature = "whisper",
+        feature = "gigaam",
+        feature = "gigaam-system-ort",
+        feature = "qwen3asr"
+    ))]
+    #[test]
+    fn test_trim_silence_short_audio_untouched() {
+        // Короче одного 100мс-блока — возвращается как есть (нечего анализировать).
+        let samples = vec![0i16; 100];
+        assert_eq!(trim_silence(&samples, 16000).len(), 100);
+    }
+
+    #[cfg(any(
+        feature = "whisper",
+        feature = "gigaam",
+        feature = "gigaam-system-ort",
+        feature = "qwen3asr"
+    ))]
+    #[test]
+    fn test_trim_silence_all_silence_returns_full() {
+        // Сплошная тишина: речь не найдена → защитный возврат всего буфера.
+        let samples = vec![0i16; 16000];
+        assert_eq!(trim_silence(&samples, 16000).len(), 16000);
+    }
+
+    #[cfg(any(
+        feature = "whisper",
+        feature = "gigaam",
+        feature = "gigaam-system-ort",
+        feature = "qwen3asr"
+    ))]
+    #[test]
+    fn test_trim_silence_trims_edges_with_padding() {
+        // 1с при 16кГц: тишина [0,4800) + речь [4800,11200) + тишина [11200,16000).
+        // block=1600, padding=3200 → start 4800-3200=1600, end 11200+3200=14400.
+        let mut samples = vec![0i16; 16000];
+        for s in samples.iter_mut().take(11200).skip(4800) {
+            *s = 1000;
+        }
+        let trimmed = trim_silence(&samples, 16000);
+        assert_eq!(trimmed.len(), 12800);
+        assert!(trimmed.len() < samples.len());
     }
 }

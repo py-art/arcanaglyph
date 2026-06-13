@@ -2,7 +2,7 @@
 
 [package]
 name = "arcanaglyph-core"
-version = "1.7.5"
+version = "1.7.6"
 edition = "2024"
 
 [lib]
