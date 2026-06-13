@@ -17,20 +17,10 @@ use tracing::info;
 use crate::audio::{self, AudioCommand};
 use crate::config::{CoreConfig, TranscriberType};
 use crate::error::ArcanaError;
-// Backend GigaAM: один transcriber.rs через ort, отличается только способ доставки
-// libonnxruntime.so (см. core/Cargo.toml):
-// - feature `gigaam` → ort + Microsoft pre-built ONNX (требует AVX)
-// - feature `gigaam-system-ort` → ort + локально собранная libonnxruntime (без AVX)
-#[cfg(any(feature = "gigaam", feature = "gigaam-system-ort"))]
-use crate::gigaam::transcriber::GigaAmTranscriber;
 use crate::history::HistoryDB;
-#[cfg(feature = "qwen3asr")]
-use crate::qwen3asr::transcriber::Qwen3AsrTranscriber;
+// Конкретные транскрайберы (Vosk/Whisper/GigaAm/Qwen3Asr) больше не импортируются
+// здесь напрямую — их конструирует единая фабрика `transcriber::build_transcriber`.
 use crate::transcriber::Transcriber;
-#[cfg(feature = "vosk")]
-use crate::transcriber::VoskTranscriber;
-#[cfg(feature = "whisper")]
-use crate::transcriber::WhisperTranscriber;
 
 /// События движка, рассылаемые подписчикам
 #[derive(Debug, Clone)]
@@ -166,45 +156,25 @@ impl ArcanaEngine {
     }
 
     /// Создаёт транскрайбер по типу, возвращает (model_name, Arc<dyn Transcriber>).
-    ///
-    /// `allow(unused_variables)` — для сборок без ни одного движка все плечи `match` стираются,
-    /// и параметр `config` становится формально неиспользуемым.
-    #[allow(unused_variables)]
+    /// Конструирование делегировано единой фабрике `transcriber::build_transcriber`;
+    /// здесь добавляется только инициализация ORT-логирования (зависит от линковки).
     fn create_transcriber(
         config: &CoreConfig,
         t_type: &TranscriberType,
     ) -> Result<(String, Arc<dyn Transcriber>), ArcanaError> {
-        match t_type {
-            #[cfg(feature = "vosk")]
-            TranscriberType::Vosk => {
-                let t = VoskTranscriber::new(&config.model_path, config.sample_rate as f32)?;
-                Ok((config.model_name_for(t_type), Arc::new(t)))
-            }
-            #[cfg(feature = "whisper")]
-            TranscriberType::Whisper => {
-                let t = WhisperTranscriber::new(&config.whisper_model_path)?;
-                Ok((config.model_name_for(t_type), Arc::new(t)))
-            }
-            #[cfg(any(feature = "gigaam", feature = "gigaam-system-ort"))]
-            TranscriberType::GigaAm => {
-                // init_ort_logging() ВРЕМЕННО только для feature `gigaam` (статически
-                // линкованный ORT). Для `gigaam-system-ort` (load-dynamic) вызов
-                // Environment::current() до dlopen сессии может зависнуть — пропускаем.
-                #[cfg(feature = "gigaam")]
-                Self::init_ort_logging();
-                let t = GigaAmTranscriber::new(&config.gigaam_model_path)?;
-                Ok((config.model_name_for(t_type), Arc::new(t)))
-            }
-            #[cfg(feature = "qwen3asr")]
-            TranscriberType::Qwen3Asr => {
-                Self::init_ort_logging();
-                let t = Qwen3AsrTranscriber::new(&config.qwen3asr_model_path)?;
-                Ok((config.model_name_for(t_type), Arc::new(t)))
-            }
-            // Любая ветка без своего feature: сообщаем, что движок недоступен.
-            #[allow(unreachable_patterns)]
-            other => Err(ArcanaError::EngineNotAvailable(other.as_str().to_string())),
+        // init_ort_logging() ВРЕМЕННО только для feature `gigaam` (статически
+        // линкованный ORT). Для `gigaam-system-ort` (load-dynamic) вызов
+        // Environment::current() до dlopen сессии может зависнуть — пропускаем.
+        #[cfg(feature = "gigaam")]
+        if matches!(t_type, TranscriberType::GigaAm) {
+            Self::init_ort_logging();
         }
+        #[cfg(feature = "qwen3asr")]
+        if matches!(t_type, TranscriberType::Qwen3Asr) {
+            Self::init_ort_logging();
+        }
+        let t = crate::transcriber::build_transcriber(config, t_type)?;
+        Ok((config.model_name_for(t_type), Arc::from(t)))
     }
 
     /// Предзагрузить модель в пул (вызывать из фонового потока).

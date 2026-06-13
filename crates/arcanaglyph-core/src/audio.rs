@@ -339,40 +339,57 @@ fn handle_command(
     state: &mut LoopState,
 ) -> Result<bool, ArcanaError> {
     match cmd_rx.try_recv() {
-        Ok(AudioCommand::Stop) => return Ok(true),
+        Ok(AudioCommand::Stop) => Ok(true),
         Ok(AudioCommand::TogglePause) => {
             if state.paused {
-                // Возобновляем
-                stream
-                    .play()
-                    .map_err(|e| ArcanaError::AudioStream(format!("Не удалось возобновить аудиопоток: {}", e)))?;
-                state.paused = false;
-                state.last_growth = Instant::now();
-                if debug {
-                    if state.has_output {
-                        eprintln!();
-                    }
-                    eprint!("[Запись] ");
-                    state.has_output = false;
-                }
+                resume_recording(stream, debug, state)?;
             } else {
-                // Приостанавливаем
-                stream
-                    .pause()
-                    .map_err(|e| ArcanaError::AudioStream(format!("Не удалось приостановить аудиопоток: {}", e)))?;
-                state.paused = true;
-                audio_level.store(0, Ordering::Relaxed);
-                if debug && state.has_output {
-                    eprintln!();
-                    state.has_output = false;
-                }
-                eprintln!("[Пауза]");
+                pause_recording(stream, audio_level, debug, state)?;
             }
+            Ok(false)
         }
-        Err(std_mpsc::TryRecvError::Empty) => {}
-        Err(std_mpsc::TryRecvError::Disconnected) => return Ok(true),
+        Err(std_mpsc::TryRecvError::Empty) => Ok(false),
+        Err(std_mpsc::TryRecvError::Disconnected) => Ok(true),
     }
-    Ok(false)
+}
+
+/// Возобновляет cpal-поток после паузы: сбрасывает таймер тишины и печатает
+/// `[Запись]` (debug). Вынесено из `handle_command`.
+fn resume_recording(stream: &cpal::Stream, debug: bool, state: &mut LoopState) -> Result<(), ArcanaError> {
+    stream
+        .play()
+        .map_err(|e| ArcanaError::AudioStream(format!("Не удалось возобновить аудиопоток: {}", e)))?;
+    state.paused = false;
+    state.last_growth = Instant::now();
+    if debug {
+        if state.has_output {
+            eprintln!();
+        }
+        eprint!("[Запись] ");
+        state.has_output = false;
+    }
+    Ok(())
+}
+
+/// Приостанавливает cpal-поток: обнуляет audio level и печатает `[Пауза]`.
+/// Вынесено из `handle_command`.
+fn pause_recording(
+    stream: &cpal::Stream,
+    audio_level: &AtomicU32,
+    debug: bool,
+    state: &mut LoopState,
+) -> Result<(), ArcanaError> {
+    stream
+        .pause()
+        .map_err(|e| ArcanaError::AudioStream(format!("Не удалось приостановить аудиопоток: {}", e)))?;
+    state.paused = true;
+    audio_level.store(0, Ordering::Relaxed);
+    if debug && state.has_output {
+        eprintln!();
+        state.has_output = false;
+    }
+    eprintln!("[Пауза]");
+    Ok(())
 }
 
 /// Останавливает поток, проверяет «мёртвый» микрофон, шлёт Transcribing-event,
@@ -466,6 +483,79 @@ fn finalize_transcription(
     })
 }
 
+/// Скармливает streaming-транскрайберу все сэмплы, накопленные в vosk-канале.
+/// Ошибка одного чанка логируется, цикл продолжается (как в оригинале).
+fn drain_streaming(rx: &std::sync::mpsc::Receiver<Vec<i16>>, transcriber: &dyn Transcriber) {
+    while let Ok(data) = rx.try_recv() {
+        if let Err(e) = transcriber.accept_waveform(&data) {
+            tracing::error!("Ошибка при обработке аудиоданных: {}", e);
+        }
+    }
+}
+
+/// Печатает приращение partial-текста (debug streaming) и обновляет `last_growth`
+/// при росте текста. Вынесено из тела цикла — был самый вложенный блок.
+fn print_streaming_partial(transcriber: &dyn Transcriber, state: &mut LoopState) {
+    let partial_text = transcriber.partial_result();
+    if partial_text.is_empty() {
+        return;
+    }
+    let char_count = partial_text.chars().count();
+    if char_count > state.segment_printed {
+        let new_chars: String = partial_text.chars().skip(state.segment_printed).collect();
+        eprint!("{}", new_chars);
+        state.has_output = true;
+        state.segment_printed = char_count;
+    }
+    if partial_text.len() > state.max_partial_len {
+        state.max_partial_len = partial_text.len();
+        state.last_growth = Instant::now();
+    }
+}
+
+/// Один шаг прогресса (не на паузе): для streaming-движка скармливает сэмплы и
+/// (в debug) печатает partial; для batch-движка обновляет таймер тишины по уровню.
+fn pump_audio_progress(
+    handles: &CaptureHandles,
+    transcriber: &dyn Transcriber,
+    audio_level: &AtomicU32,
+    debug: bool,
+    state: &mut LoopState,
+) {
+    if let Some(ref rx) = handles.vosk_rx {
+        drain_streaming(rx, transcriber);
+        if debug {
+            print_streaming_partial(transcriber, state);
+        }
+    } else if audio_level.load(Ordering::Relaxed) > 0 {
+        // batch (Whisper/GigaAM): таймаут тишины по audio level
+        state.last_growth = Instant::now();
+    }
+}
+
+/// Обновляет VAD-трекинг речи по текущему уровню (>5 = речь) и возвращает причину
+/// авто-стопа, если она наступила. Чистое решение делегируется `should_stop_on_silence`.
+fn track_speech_and_check_stop(
+    audio_level: &AtomicU32,
+    params: &RecordParams,
+    vad_timeout: Duration,
+    silence_timeout: Duration,
+    state: &mut LoopState,
+) -> Option<StopReason> {
+    if audio_level.load(Ordering::Relaxed) > 5 {
+        state.speech_detected = true;
+        state.last_speech = Instant::now();
+    }
+    should_stop_on_silence(
+        params.vad_enabled,
+        state.speech_detected,
+        state.last_speech.elapsed(),
+        vad_timeout,
+        state.last_growth.elapsed(),
+        silence_timeout,
+    )
+}
+
 /// Записывает аудио с микрофона и транскрибирует через выбранный движок.
 /// Блокирующая функция — ждёт команд через `cmd_rx`.
 /// Автоматически останавливается при тишине (VAD) или по таймауту.
@@ -524,55 +614,11 @@ pub fn record_and_transcribe(
             continue;
         }
 
-        // Для потокового режима (Vosk): передаём данные из канала в транскрайбер
-        if let Some(ref rx) = handles.vosk_rx {
-            while let Ok(data) = rx.try_recv() {
-                if let Err(e) = transcriber.accept_waveform(&data) {
-                    tracing::error!("Ошибка при обработке аудиоданных: {}", e);
-                }
-            }
-
-            // Partial results — только для потокового режима в debug
-            if params.debug {
-                let partial_text = transcriber.partial_result();
-                if !partial_text.is_empty() {
-                    let char_count = partial_text.chars().count();
-                    if char_count > state.segment_printed {
-                        let new_chars: String = partial_text.chars().skip(state.segment_printed).collect();
-                        eprint!("{}", new_chars);
-                        state.has_output = true;
-                        state.segment_printed = char_count;
-                    }
-                    if partial_text.len() > state.max_partial_len {
-                        state.max_partial_len = partial_text.len();
-                        state.last_growth = Instant::now();
-                    }
-                }
-            }
-        } else {
-            // Для пакетного режима (Whisper/GigaAM): таймаут тишины по audio level
-            let level = channels.audio_level.load(Ordering::Relaxed);
-            if level > 0 {
-                state.last_growth = Instant::now();
-            }
-        }
-
-        // Трекинг речи для VAD: audio level > 5 считается речью
-        let current_level = channels.audio_level.load(Ordering::Relaxed);
-        if current_level > 5 {
-            state.speech_detected = true;
-            state.last_speech = Instant::now();
-        }
+        // Шаг прогресса: streaming partial / batch silence-timer.
+        pump_audio_progress(&handles, transcriber, &channels.audio_level, params.debug, &mut state);
 
         // Авто-стоп: VAD (речь + тишина) или общий таймаут безопасности.
-        match should_stop_on_silence(
-            params.vad_enabled,
-            state.speech_detected,
-            state.last_speech.elapsed(),
-            vad_timeout,
-            state.last_growth.elapsed(),
-            silence_timeout,
-        ) {
+        match track_speech_and_check_stop(&channels.audio_level, &params, vad_timeout, silence_timeout, &mut state) {
             Some(StopReason::Vad) => {
                 info!("VAD: авто-стоп (речь обнаружена, тишина {}с).", params.vad_silence_secs);
                 break;

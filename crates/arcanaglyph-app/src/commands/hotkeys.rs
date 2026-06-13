@@ -203,6 +203,17 @@ pub fn check_hotkey_conflict(hotkey: String) -> Result<Option<String>, String> {
     check_hotkey_conflict_gnome(hotkey)
 }
 
+/// Встроенные схемы GNOME, сканируемые на занятость комбинации.
+#[cfg(target_os = "linux")]
+const BUILTIN_KEYBINDING_SCHEMAS: [&str; 3] = [
+    "org.gnome.desktop.wm.keybindings",
+    "org.gnome.shell.keybindings",
+    "org.gnome.mutter.keybindings",
+];
+
+/// Оркестратор: пустой хоткей или пустой binding → нет конфликта; иначе
+/// сначала встроенные схемы, затем custom-keybindings. Логика вынесена в
+/// тонкие I/O-обёртки + чистые матчеры (тестируемы).
 #[cfg(target_os = "linux")]
 fn check_hotkey_conflict_gnome(hotkey: String) -> Result<Option<String>, String> {
     if hotkey.is_empty() {
@@ -212,31 +223,50 @@ fn check_hotkey_conflict_gnome(hotkey: String) -> Result<Option<String>, String>
     if binding.is_empty() {
         return Ok(None);
     }
+    if let Some(conflict) = scan_builtin_keybinding_schemas(&binding) {
+        return Ok(Some(conflict));
+    }
+    scan_custom_keybinding_conflict(&binding)
+}
 
-    // Сканируем все схемы GNOME на совпадение
-    let schemas = [
-        "org.gnome.desktop.wm.keybindings",
-        "org.gnome.shell.keybindings",
-        "org.gnome.mutter.keybindings",
-    ];
+/// Снимает обёртку gsettings-вывода: trim + strip `'…'`. Чистая (тестируема).
+#[cfg(target_os = "linux")]
+fn unquote_gsettings_value(raw: &str) -> String {
+    raw.trim().trim_matches('\'').to_string()
+}
 
-    for schema in &schemas {
-        let output = std::process::Command::new("gsettings")
+/// Чистый матчер: первая строка `list-recursively`, содержащая `binding`,
+/// → имя настройки (второе слово, `???` если нет). Тестируема.
+#[cfg(target_os = "linux")]
+fn builtin_conflict_name(text: &str, binding: &str) -> Option<String> {
+    text.lines()
+        .find(|line| line.contains(binding))
+        .map(|line| line.split_whitespace().nth(1).unwrap_or("???").to_string())
+}
+
+/// Сканирует встроенные схемы на занятость `binding`. Сбой запуска gsettings
+/// для одной схемы → пропуск (как было в исходном inline-цикле), не ошибка.
+#[cfg(target_os = "linux")]
+fn scan_builtin_keybinding_schemas(binding: &str) -> Option<String> {
+    for schema in &BUILTIN_KEYBINDING_SCHEMAS {
+        let Ok(out) = std::process::Command::new("gsettings")
             .args(["list-recursively", schema])
-            .output();
-        if let Ok(out) = output {
-            let text = String::from_utf8_lossy(&out.stdout);
-            for line in text.lines() {
-                if line.contains(&binding) {
-                    // Извлекаем имя настройки (второе слово в строке)
-                    let name = line.split_whitespace().nth(1).unwrap_or("???");
-                    return Ok(Some(format!("{} ({})", name, schema)));
-                }
-            }
+            .output()
+        else {
+            continue;
+        };
+        let text = String::from_utf8_lossy(&out.stdout);
+        if let Some(name) = builtin_conflict_name(&text, binding) {
+            return Some(format!("{} ({})", name, schema));
         }
     }
+    None
+}
 
-    // Проверяем custom keybindings (кроме наших arcanaglyph-*)
+/// Проверяет custom-keybindings (кроме наших `arcanaglyph-*`) на занятость
+/// `binding`. Ошибка только при сбое первичного `get custom-keybindings`.
+#[cfg(target_os = "linux")]
+fn scan_custom_keybinding_conflict(binding: &str) -> Result<Option<String>, String> {
     let output = std::process::Command::new("gsettings")
         .args([
             "get",
@@ -246,38 +276,40 @@ fn check_hotkey_conflict_gnome(hotkey: String) -> Result<Option<String>, String>
         .output()
         .map_err(|e| e.to_string())?;
     let paths_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if paths_str != "@as []" && !paths_str.is_empty() {
-        let paths = parse_gsettings_paths(&paths_str);
-
-        let base = KEYBINDING_SCHEMA;
-        for path in &paths {
-            // Пропускаем наши собственные слоты
-            if path.contains("arcanaglyph-") {
-                continue;
-            }
-            let schema_path = format!("{}:{}", base, path);
-            let out = std::process::Command::new("gsettings")
-                .args(["get", &schema_path, "binding"])
-                .output();
-            if let Ok(out) = out {
-                let existing = String::from_utf8_lossy(&out.stdout)
-                    .trim()
-                    .trim_matches('\'')
-                    .to_string();
-                if existing == binding {
-                    let name_out = std::process::Command::new("gsettings")
-                        .args(["get", &schema_path, "name"])
-                        .output();
-                    let name = name_out
-                        .map(|o| String::from_utf8_lossy(&o.stdout).trim().trim_matches('\'').to_string())
-                        .unwrap_or_else(|_| "???".to_string());
-                    return Ok(Some(format!("{} (custom keybinding)", name)));
-                }
-            }
+    if paths_str == "@as []" || paths_str.is_empty() {
+        return Ok(None);
+    }
+    for path in parse_gsettings_paths(&paths_str) {
+        // Пропускаем наши собственные слоты
+        if path.contains("arcanaglyph-") {
+            continue;
+        }
+        if let Some(name) = custom_path_conflict_name(&path, binding) {
+            return Ok(Some(format!("{} (custom keybinding)", name)));
         }
     }
-
     Ok(None)
+}
+
+/// Для одного custom-path: если его `binding` совпадает с искомым — вернуть
+/// `name` слота (`???` если не прочиталось). Сбой gsettings → `None` (пропуск).
+#[cfg(target_os = "linux")]
+fn custom_path_conflict_name(path: &str, binding: &str) -> Option<String> {
+    let schema_path = format!("{}:{}", KEYBINDING_SCHEMA, path);
+    let out = std::process::Command::new("gsettings")
+        .args(["get", &schema_path, "binding"])
+        .output()
+        .ok()?;
+    let existing = unquote_gsettings_value(&String::from_utf8_lossy(&out.stdout));
+    if existing != binding {
+        return None;
+    }
+    let name = std::process::Command::new("gsettings")
+        .args(["get", &schema_path, "name"])
+        .output()
+        .map(|o| unquote_gsettings_value(&String::from_utf8_lossy(&o.stdout)))
+        .unwrap_or_else(|_| "???".to_string());
+    Some(name)
 }
 
 /// Tauri-команда: зарегистрировать глобальные хоткеи через gsettings (Wayland/GNOME).
@@ -451,6 +483,34 @@ mod tests {
         assert_eq!(
             build_setxkbmap_args("us,ru", "colemak"),
             ["-layout", "us,ru", "-variant", "colemak"]
+        );
+    }
+
+    #[test]
+    fn test_unquote_gsettings_value() {
+        // Снимает пробелы-обёртку и одинарные кавычки.
+        assert_eq!(unquote_gsettings_value("  '<Control>grave'  "), "<Control>grave");
+        // Без кавычек — только trim.
+        assert_eq!(unquote_gsettings_value(" foo "), "foo");
+        // Пустой вывод.
+        assert_eq!(unquote_gsettings_value(""), "");
+    }
+
+    #[test]
+    fn test_builtin_conflict_name() {
+        let text = "org.gnome.desktop.wm.keybindings switch-windows ['<Control>grave']\n\
+                    org.gnome.desktop.wm.keybindings close ['<Alt>F4']";
+        // Совпадение по binding → второе слово строки (имя настройки).
+        assert_eq!(
+            builtin_conflict_name(text, "<Control>grave").as_deref(),
+            Some("switch-windows")
+        );
+        // Нет совпадения → None.
+        assert_eq!(builtin_conflict_name(text, "<Super>p"), None);
+        // Строка без второго слова → "???".
+        assert_eq!(
+            builtin_conflict_name("<Control>grave", "<Control>grave").as_deref(),
+            Some("???")
         );
     }
 }

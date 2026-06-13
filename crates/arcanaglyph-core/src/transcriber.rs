@@ -1,8 +1,40 @@
 // crates/arcanaglyph-core/src/transcriber.rs
 
+use crate::config::{CoreConfig, TranscriberType};
 use crate::error::ArcanaError;
 #[cfg(feature = "vosk")]
 use std::sync::Mutex;
+
+/// Единая cfg-gated фабрика транскрайберов: тип из конфига → `Box<dyn Transcriber>`.
+/// Используется и движком (`ArcanaEngine::create_transcriber` оборачивает в `Arc`),
+/// и `retranscribe`. Инициализация ORT-логирования для ONNX-движков остаётся на
+/// стороне вызывающего — она зависит от способа линковки ORT (статика vs load-dynamic).
+///
+/// `allow(unused_variables)` — для сборок без единого движка все плечи `match`
+/// стираются, и параметр `config` становится формально неиспользуемым.
+#[allow(unused_variables)]
+pub fn build_transcriber(config: &CoreConfig, t_type: &TranscriberType) -> Result<Box<dyn Transcriber>, ArcanaError> {
+    match t_type {
+        #[cfg(feature = "vosk")]
+        TranscriberType::Vosk => Ok(Box::new(VoskTranscriber::new(
+            &config.model_path,
+            config.sample_rate as f32,
+        )?)),
+        #[cfg(feature = "whisper")]
+        TranscriberType::Whisper => Ok(Box::new(WhisperTranscriber::new(&config.whisper_model_path)?)),
+        #[cfg(any(feature = "gigaam", feature = "gigaam-system-ort"))]
+        TranscriberType::GigaAm => Ok(Box::new(crate::gigaam::transcriber::GigaAmTranscriber::new(
+            &config.gigaam_model_path,
+        )?)),
+        #[cfg(feature = "qwen3asr")]
+        TranscriberType::Qwen3Asr => Ok(Box::new(crate::qwen3asr::transcriber::Qwen3AsrTranscriber::new(
+            &config.qwen3asr_model_path,
+        )?)),
+        // Любая ветка без своего feature: сообщаем, что движок недоступен.
+        #[allow(unreachable_patterns)]
+        other => Err(ArcanaError::EngineNotAvailable(other.as_str().to_string())),
+    }
+}
 
 /// Трейт для движков транскрибации (Vosk, Whisper и т.д.)
 pub trait Transcriber: Send + Sync {

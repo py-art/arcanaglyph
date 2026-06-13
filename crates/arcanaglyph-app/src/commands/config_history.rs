@@ -174,14 +174,6 @@ pub async fn retranscribe(
     transcriber_type: String,
     db: tauri::State<'_, Arc<HistoryDB>>,
 ) -> Result<serde_json::Value, String> {
-    #[cfg(any(feature = "gigaam", feature = "gigaam-system-ort"))]
-    use arcanaglyph_core::gigaam::transcriber::GigaAmTranscriber;
-    use arcanaglyph_core::transcriber::Transcriber;
-    #[cfg(feature = "vosk")]
-    use arcanaglyph_core::transcriber::VoskTranscriber;
-    #[cfg(feature = "whisper")]
-    use arcanaglyph_core::transcriber::WhisperTranscriber;
-
     // Ранний выход, если запрошенный движок не включён в текущую сборку.
     // Это убирает unreachable-предупреждения при сборках с уменьшенным набором features
     // и даёт пользователю понятную ошибку до чтения аудиофайла.
@@ -224,39 +216,10 @@ pub async fn retranscribe(
         return Err(format!("Запись уже распознана моделью {}", model_name));
     }
 
-    // Создаём транскрайбер.
-    // Каждое плечо собирается только при включённой соответствующей feature.
-    // Любая строка, не подобранная активными плечами (включая корректные имена движков,
-    // не включённых в сборку), попадает в дефолтное плечо с понятной ошибкой.
-    let (transcriber, sr): (Box<dyn Transcriber>, u32) = match transcriber_type.as_str() {
-        #[cfg(feature = "vosk")]
-        "vosk" => {
-            let t = VoskTranscriber::new(&config.model_path, config.sample_rate as f32).map_err(|e| e.to_string())?;
-            (Box::new(t), config.sample_rate)
-        }
-        #[cfg(feature = "whisper")]
-        "whisper" => {
-            let t = WhisperTranscriber::new(&config.whisper_model_path).map_err(|e| e.to_string())?;
-            (Box::new(t), config.sample_rate)
-        }
-        #[cfg(any(feature = "gigaam", feature = "gigaam-system-ort"))]
-        "gigaam" => {
-            let t = GigaAmTranscriber::new(&config.gigaam_model_path).map_err(|e| e.to_string())?;
-            (Box::new(t), config.sample_rate)
-        }
-        #[cfg(feature = "qwen3asr")]
-        "qwen3asr" => {
-            let t = arcanaglyph_core::qwen3asr::transcriber::Qwen3AsrTranscriber::new(&config.qwen3asr_model_path)
-                .map_err(|e| e.to_string())?;
-            (Box::new(t), config.sample_rate)
-        }
-        other => {
-            return Err(format!(
-                "Движок '{}' недоступен в этой сборке — пересоберите с соответствующей cargo feature",
-                other
-            ));
-        }
-    };
+    // Создаём транскрайбер через единую фабрику в core (без дубля cfg-match).
+    // sr во всех движках = config.sample_rate.
+    let transcriber = arcanaglyph_core::transcriber::build_transcriber(&config, &t_type).map_err(|e| e.to_string())?;
+    let sr = config.sample_rate;
 
     // Транскрибируем
     let text = tokio::task::spawn_blocking(move || transcriber.transcribe(&samples, sr))
