@@ -3,7 +3,7 @@
 #
 # Usage:
 #   curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | bash
-#   curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | VERSION=1.7.6 bash
+#   curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | VERSION=1.7.7 bash
 #
 # Что делает:
 #   1. Узнаёт URL последнего (или указанного через VERSION) релиза из GitHub API.
