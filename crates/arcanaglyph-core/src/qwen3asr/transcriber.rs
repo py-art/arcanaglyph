@@ -14,8 +14,9 @@ use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::value::TensorRef;
 
+use crate::dsp::preprocess_to_f32_16k;
 use crate::error::ArcanaError;
-use crate::transcriber::{Transcriber, preprocess_to_f32_16k};
+use crate::transcriber::Transcriber;
 
 use super::mel;
 
