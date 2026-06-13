@@ -13,6 +13,12 @@ use arcanaglyph_core::history::HistoryDB;
 use std::sync::Arc;
 use tauri::Manager;
 
+/// Декодирует сырой PCM s16le (little-endian) в сэмплы i16. Неполный хвостовой
+/// байт игнорируется (`chunks_exact`). Чистая функция — вынесена для тестируемости.
+fn decode_pcm_i16le(raw: &[u8]) -> Vec<i16> {
+    raw.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect()
+}
+
 /// Tauri-команда: загрузить текущую конфигурацию
 #[tauri::command]
 pub fn load_config() -> Result<serde_json::Value, String> {
@@ -203,49 +209,14 @@ pub async fn retranscribe(
     let audio_path = &entry.recording.audio_path;
     let config = arcanaglyph_core::CoreConfig::load().map_err(|e| e.to_string())?;
 
-    // Загружаем аудио
+    // Загружаем аудио (PCM s16le mono)
     let raw_bytes = std::fs::read(audio_path).map_err(|e| format!("Не удалось прочитать аудио: {}", e))?;
-    let samples: Vec<i16> = raw_bytes
-        .chunks_exact(2)
-        .map(|c| i16::from_le_bytes([c[0], c[1]]))
-        .collect();
+    let samples = decode_pcm_i16le(&raw_bytes);
 
-    // Определяем имя модели
-    let (model_name, t_type) = match transcriber_type.as_str() {
-        "vosk" => {
-            let name = config
-                .model_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "vosk".to_string());
-            (name, "vosk".to_string())
-        }
-        "whisper" => {
-            let name = config
-                .whisper_model_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "whisper".to_string());
-            (name, "whisper".to_string())
-        }
-        "gigaam" => {
-            let name = config
-                .gigaam_model_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "gigaam".to_string());
-            (name, "gigaam".to_string())
-        }
-        "qwen3asr" => {
-            let name = config
-                .qwen3asr_model_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "qwen3asr".to_string());
-            (name, "qwen3asr".to_string())
-        }
-        _ => return Err("Неизвестный тип транскрайбера".to_string()),
-    };
+    // Имя модели — через единый резолвер в core (без дубля match по типам).
+    let t_type =
+        TranscriberType::from_id(&transcriber_type).ok_or_else(|| "Неизвестный тип транскрайбера".to_string())?;
+    let model_name = config.model_name_for(&t_type);
 
     // Проверяем, нет ли уже транскрибации этой моделью
     let existing = db.get_transcriptions(recording_id).map_err(|e| e.to_string())?;
@@ -298,7 +269,7 @@ pub async fn retranscribe(
     }
 
     // Сохраняем в БД
-    db.add_transcription(recording_id, &text, &model_name, &t_type)
+    db.add_transcription(recording_id, &text, &model_name, t_type.as_str())
         .map_err(|e| e.to_string())?;
 
     Ok(serde_json::json!({ "text": text, "model_name": model_name }))
@@ -330,4 +301,22 @@ pub fn get_audio_data(recording_id: i64, db: tauri::State<'_, Arc<HistoryDB>>) -
         "data": b64,
         "sample_rate": config.sample_rate,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_decode_pcm_i16le() {
+        // Пусто → пусто.
+        assert_eq!(decode_pcm_i16le(&[]), Vec::<i16>::new());
+        // LE-пары: 0x0001 = 1, 0xFFFF = -1, 0x8000 = i16::MIN.
+        assert_eq!(
+            decode_pcm_i16le(&[0x01, 0x00, 0xFF, 0xFF, 0x00, 0x80]),
+            vec![1, -1, i16::MIN]
+        );
+        // Неполный хвостовой байт игнорируется (chunks_exact).
+        assert_eq!(decode_pcm_i16le(&[0x01, 0x00, 0x7F]), vec![1]);
+    }
 }

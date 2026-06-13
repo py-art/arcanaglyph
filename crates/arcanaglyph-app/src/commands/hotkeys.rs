@@ -104,6 +104,92 @@ fn latin_to_cyrillic_keysym(key: &str) -> Option<&'static str> {
     }
 }
 
+/// Кириллический дубль gsettings-binding'а: берёт keysym после последнего `>`,
+/// мапит латиницу→кириллицу, склеивает обратно с модификаторами. `None` — если
+/// для клавиши нет кириллического дубля. Чистая функция (тестируема).
+#[cfg(target_os = "linux")]
+fn cyrillic_binding(binding: &str) -> Option<String> {
+    let key = binding.rsplit('>').next().unwrap_or("");
+    let cyrillic = latin_to_cyrillic_keysym(key)?;
+    let mods = &binding[..binding.len() - key.len()];
+    Some(format!("{}{}", mods, cyrillic))
+}
+
+/// Парсит gsettings-список путей `['p1', 'p2']` (или `@as []` / пусто) в `Vec`.
+/// Чистая функция — общий парсер для register и check_hotkey_conflict.
+#[cfg(target_os = "linux")]
+fn parse_gsettings_paths(raw: &str) -> Vec<String> {
+    if raw == "@as []" || raw.is_empty() {
+        return vec![];
+    }
+    raw.trim_matches(|c| c == '[' || c == ']')
+        .split(',')
+        .map(|s| s.trim().trim_matches('\'').trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Базовая schema custom-keybinding'а GNOME (per-path).
+#[cfg(target_os = "linux")]
+const KEYBINDING_SCHEMA: &str = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding";
+
+/// `gsettings set <schema>:<path> <key> <val>`. Ошибка только при сбое запуска
+/// процесса (не при non-zero exit) — как и было в исходном inline-замыкании.
+#[cfg(target_os = "linux")]
+fn gs_set(path: &str, key: &str, val: &str) -> Result<(), String> {
+    let schema_path = format!("{}:{}", KEYBINDING_SCHEMA, path);
+    std::process::Command::new("gsettings")
+        .args(["set", &schema_path, key, val])
+        .output()
+        .map_err(|e| format!("gsettings set {} {}: {}", key, val, e))?;
+    Ok(())
+}
+
+/// Регистрирует пару слотов (латинский + кириллический дубль) одного хоткея.
+/// Пустой `hotkey` → no-op. Кириллический слот создаётся только если у клавиши
+/// есть кириллический дубль. Вынесено из `register_gnome_hotkeys_linux` —
+/// убирает дублирование trigger/pause-блоков.
+#[cfg(target_os = "linux")]
+fn register_hotkey_pair(
+    hotkey: &str,
+    latin_path: &str,
+    cyr_path: &str,
+    name: &str,
+    name_ru: &str,
+    command: &str,
+) -> Result<(), String> {
+    if hotkey.is_empty() {
+        return Ok(());
+    }
+    let binding = tauri_hotkey_to_gsettings(hotkey);
+    gs_set(latin_path, "name", &format!("'{}'", name))?;
+    gs_set(latin_path, "command", &format!("'{}'", command))?;
+    gs_set(latin_path, "binding", &format!("'{}'", binding))?;
+
+    if let Some(cyr_binding) = cyrillic_binding(&binding) {
+        gs_set(cyr_path, "name", &format!("'{}'", name_ru))?;
+        gs_set(cyr_path, "command", &format!("'{}'", command))?;
+        gs_set(cyr_path, "binding", &format!("'{}'", cyr_binding))?;
+    }
+    Ok(())
+}
+
+/// Добавляет в `paths` слоты (латинский + кириллический, если применим) для
+/// хоткея, если их там ещё нет. Пустой `hotkey` → no-op.
+#[cfg(target_os = "linux")]
+fn append_keybinding_paths(paths: &mut Vec<String>, hotkey: &str, latin_path: &str, cyr_path: &str) {
+    if hotkey.is_empty() {
+        return;
+    }
+    if !paths.iter().any(|p| p == latin_path) {
+        paths.push(latin_path.to_string());
+    }
+    let binding = tauri_hotkey_to_gsettings(hotkey);
+    if cyrillic_binding(&binding).is_some() && !paths.iter().any(|p| p == cyr_path) {
+        paths.push(cyr_path.to_string());
+    }
+}
+
 /// Tauri-команда: проверить, занята ли комбинация клавиш в GNOME.
 /// На Win/macOS возвращает None — там GNOME отсутствует.
 #[tauri::command]
@@ -161,14 +247,9 @@ fn check_hotkey_conflict_gnome(hotkey: String) -> Result<Option<String>, String>
         .map_err(|e| e.to_string())?;
     let paths_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if paths_str != "@as []" && !paths_str.is_empty() {
-        let paths: Vec<String> = paths_str
-            .trim_matches(|c| c == '[' || c == ']')
-            .split(',')
-            .map(|s| s.trim().trim_matches('\'').trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let paths = parse_gsettings_paths(&paths_str);
 
-        let base = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding";
+        let base = KEYBINDING_SCHEMA;
         for path in &paths {
             // Пропускаем наши собственные слоты
             if path.contains("arcanaglyph-") {
@@ -225,23 +306,12 @@ fn register_gnome_hotkeys_linux(hotkey_trigger: String, hotkey_pause: String) ->
         .map_err(|e| format!("Не удалось вызвать gsettings: {}", e))?;
     let current = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
-    // Определяем слоты для ArcanaGlyph (ищем существующие или берём свободные)
+    // Слоты ArcanaGlyph: латинский + кириллический дубль для trigger и pause.
     let ag_trigger_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/arcanaglyph-trigger/";
     let ag_trigger_cyr_path =
         "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/arcanaglyph-trigger-cyr/";
     let ag_pause_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/arcanaglyph-pause/";
     let ag_pause_cyr_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/arcanaglyph-pause-cyr/";
-    let base = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding";
-
-    // Вспомогательная функция для выполнения gsettings set
-    let gs_set = |path: &str, key: &str, val: &str| -> Result<(), String> {
-        let schema_path = format!("{}:{}", base, path);
-        std::process::Command::new("gsettings")
-            .args(["set", &schema_path, key, val])
-            .output()
-            .map_err(|e| format!("gsettings set {} {}: {}", key, val, e))?;
-        Ok(())
-    };
 
     // Определяем путь к скриптам
     let scripts_dir =
@@ -249,79 +319,28 @@ fn register_gnome_hotkeys_linux(hotkey_trigger: String, hotkey_pause: String) ->
     let trigger_cmd = scripts_dir.join("ag-trigger").display().to_string();
     let pause_cmd = scripts_dir.join("ag-pause").display().to_string();
 
-    // Регистрируем trigger (латиница)
-    if !hotkey_trigger.is_empty() {
-        let binding = tauri_hotkey_to_gsettings(&hotkey_trigger);
-        gs_set(ag_trigger_path, "name", "'ArcanaGlyph Trigger'")?;
-        gs_set(ag_trigger_path, "command", &format!("'{}'", trigger_cmd))?;
-        gs_set(ag_trigger_path, "binding", &format!("'{}'", binding))?;
+    // Регистрируем слоты (латиница + кириллический дубль для русской раскладки).
+    register_hotkey_pair(
+        &hotkey_trigger,
+        ag_trigger_path,
+        ag_trigger_cyr_path,
+        "ArcanaGlyph Trigger",
+        "ArcanaGlyph Trigger (RU)",
+        &trigger_cmd,
+    )?;
+    register_hotkey_pair(
+        &hotkey_pause,
+        ag_pause_path,
+        ag_pause_cyr_path,
+        "ArcanaGlyph Pause",
+        "ArcanaGlyph Pause (RU)",
+        &pause_cmd,
+    )?;
 
-        // Кириллический дубль (для русской раскладки)
-        let key = binding.rsplit('>').next().unwrap_or("");
-        if let Some(cyrillic) = latin_to_cyrillic_keysym(key) {
-            let mods = &binding[..binding.len() - key.len()];
-            let cyr_binding = format!("{}{}", mods, cyrillic);
-            gs_set(ag_trigger_cyr_path, "name", "'ArcanaGlyph Trigger (RU)'")?;
-            gs_set(ag_trigger_cyr_path, "command", &format!("'{}'", trigger_cmd))?;
-            gs_set(ag_trigger_cyr_path, "binding", &format!("'{}'", cyr_binding))?;
-        }
-    }
-
-    // Регистрируем pause (латиница)
-    if !hotkey_pause.is_empty() {
-        let binding = tauri_hotkey_to_gsettings(&hotkey_pause);
-        gs_set(ag_pause_path, "name", "'ArcanaGlyph Pause'")?;
-        gs_set(ag_pause_path, "command", &format!("'{}'", pause_cmd))?;
-        gs_set(ag_pause_path, "binding", &format!("'{}'", binding))?;
-
-        // Кириллический дубль
-        let key = binding.rsplit('>').next().unwrap_or("");
-        if let Some(cyrillic) = latin_to_cyrillic_keysym(key) {
-            let mods = &binding[..binding.len() - key.len()];
-            let cyr_binding = format!("{}{}", mods, cyrillic);
-            gs_set(ag_pause_cyr_path, "name", "'ArcanaGlyph Pause (RU)'")?;
-            gs_set(ag_pause_cyr_path, "command", &format!("'{}'", pause_cmd))?;
-            gs_set(ag_pause_cyr_path, "binding", &format!("'{}'", cyr_binding))?;
-        }
-    }
-
-    // Обновляем список custom-keybindings — добавляем наши пути если их нет
-    let mut paths: Vec<String> = if current == "@as []" || current.is_empty() {
-        vec![]
-    } else {
-        // Парсим ['path1', 'path2', ...]
-        current
-            .trim_matches(|c| c == '[' || c == ']')
-            .split(',')
-            .map(|s| s.trim().trim_matches('\'').trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect()
-    };
-
-    if !hotkey_trigger.is_empty() && !paths.iter().any(|p| p == ag_trigger_path) {
-        paths.push(ag_trigger_path.to_string());
-    }
-    // Кириллический дубль trigger
-    let trigger_binding = tauri_hotkey_to_gsettings(&hotkey_trigger);
-    let trigger_key = trigger_binding.rsplit('>').next().unwrap_or("");
-    if !hotkey_trigger.is_empty()
-        && latin_to_cyrillic_keysym(trigger_key).is_some()
-        && !paths.iter().any(|p| p == ag_trigger_cyr_path)
-    {
-        paths.push(ag_trigger_cyr_path.to_string());
-    }
-    if !hotkey_pause.is_empty() && !paths.iter().any(|p| p == ag_pause_path) {
-        paths.push(ag_pause_path.to_string());
-    }
-    // Кириллический дубль pause
-    let pause_binding = tauri_hotkey_to_gsettings(&hotkey_pause);
-    let pause_key = pause_binding.rsplit('>').next().unwrap_or("");
-    if !hotkey_pause.is_empty()
-        && latin_to_cyrillic_keysym(pause_key).is_some()
-        && !paths.iter().any(|p| p == ag_pause_cyr_path)
-    {
-        paths.push(ag_pause_cyr_path.to_string());
-    }
+    // Обновляем список custom-keybindings — добавляем наши пути если их нет.
+    let mut paths = parse_gsettings_paths(&current);
+    append_keybinding_paths(&mut paths, &hotkey_trigger, ag_trigger_path, ag_trigger_cyr_path);
+    append_keybinding_paths(&mut paths, &hotkey_pause, ag_pause_path, ag_pause_cyr_path);
 
     let paths_str = format!(
         "[{}]",
@@ -377,6 +396,37 @@ mod tests {
         // Неизвестная клавиша → None (нет кириллического дубля).
         assert_eq!(latin_to_cyrillic_keysym("1"), None);
         assert_eq!(latin_to_cyrillic_keysym("space"), None);
+    }
+
+    #[test]
+    fn test_cyrillic_binding() {
+        // Ctrl+grave → кириллический дубль с теми же модификаторами.
+        assert_eq!(
+            cyrillic_binding("<Control>grave").as_deref(),
+            Some("<Control>Cyrillic_io")
+        );
+        // Несколько модификаторов сохраняются.
+        assert_eq!(
+            cyrillic_binding("<Super><Alt>q").as_deref(),
+            Some("<Super><Alt>Cyrillic_shorti")
+        );
+        // Клавиша без кириллического дубля → None.
+        assert_eq!(cyrillic_binding("<Control>space"), None);
+        assert_eq!(cyrillic_binding("f1"), None);
+    }
+
+    #[test]
+    fn test_parse_gsettings_paths() {
+        // Пустой список GVariant и пустая строка → пусто.
+        assert!(parse_gsettings_paths("@as []").is_empty());
+        assert!(parse_gsettings_paths("").is_empty());
+        // Один путь.
+        assert_eq!(parse_gsettings_paths("['/a/b/']"), vec!["/a/b/".to_string()]);
+        // Несколько путей с пробелами и кавычками.
+        assert_eq!(
+            parse_gsettings_paths("['/a/', '/b/', '/c/']"),
+            vec!["/a/".to_string(), "/b/".to_string(), "/c/".to_string()]
+        );
     }
 
     #[test]

@@ -58,6 +58,17 @@ impl TranscriberType {
             Self::Qwen3Asr => "qwen3asr",
         }
     }
+
+    /// Парсинг строкового id (обратное к `as_str`) в тип. Неизвестное → None.
+    pub fn from_id(s: &str) -> Option<Self> {
+        match s {
+            "vosk" => Some(Self::Vosk),
+            "whisper" => Some(Self::Whisper),
+            "gigaam" => Some(Self::GigaAm),
+            "qwen3asr" => Some(Self::Qwen3Asr),
+            _ => None,
+        }
+    }
 }
 
 /// Конфигурация ядра ArcanaGlyph
@@ -435,6 +446,25 @@ mod tests {
         assert!(config.model_path.ends_with("models/vosk-model-ru-0.42"));
         assert!(config.whisper_model_path.ends_with("models/ggml-large-v3-turbo.bin"));
         assert!(config.gigaam_model_path.ends_with("models/gigaam-v3-e2e-ctc"));
+    }
+
+    #[test]
+    fn test_transcriber_type_from_id_roundtrips_with_as_str() {
+        for t in [
+            TranscriberType::Vosk,
+            TranscriberType::Whisper,
+            TranscriberType::GigaAm,
+            TranscriberType::Qwen3Asr,
+        ] {
+            assert_eq!(
+                TranscriberType::from_id(t.as_str()),
+                Some(t.clone()),
+                "round-trip {:?}",
+                t
+            );
+        }
+        assert_eq!(TranscriberType::from_id("unknown"), None);
+        assert_eq!(TranscriberType::from_id(""), None);
     }
 
     #[test]

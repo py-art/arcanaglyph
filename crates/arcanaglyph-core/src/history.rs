@@ -40,6 +40,33 @@ pub struct HistoryDB {
     audio_cache_dir: PathBuf,
 }
 
+/// SQL выборки транскрибаций одной записи (используется в `query` и
+/// `get_transcriptions` — единый источник, чтобы колонки не разъезжались).
+const TRANSCRIPTIONS_BY_RECORDING_SQL: &str = "SELECT id, recording_id, text, model_name, transcriber_type, created_at
+     FROM transcriptions WHERE recording_id = ?1 ORDER BY created_at DESC";
+
+/// Маппинг строки таблицы `recordings` → `Recording`. Чистый, разделяемый.
+fn map_recording_row(row: &rusqlite::Row) -> rusqlite::Result<Recording> {
+    Ok(Recording {
+        id: row.get(0)?,
+        audio_path: row.get(1)?,
+        timestamp: row.get(2)?,
+        duration_secs: row.get(3)?,
+    })
+}
+
+/// Маппинг строки таблицы `transcriptions` → `Transcription`. Чистый, разделяемый.
+fn map_transcription_row(row: &rusqlite::Row) -> rusqlite::Result<Transcription> {
+    Ok(Transcription {
+        id: row.get(0)?,
+        recording_id: row.get(1)?,
+        text: row.get(2)?,
+        model_name: row.get(3)?,
+        transcriber_type: row.get(4)?,
+        created_at: row.get(5)?,
+    })
+}
+
 impl HistoryDB {
     /// Создаёт или открывает БД, применяет миграции
     pub fn new(db_path: &Path, audio_cache_dir: PathBuf) -> Result<Self, ArcanaError> {
@@ -174,14 +201,7 @@ impl HistoryDB {
             .map_err(|e| ArcanaError::Database(format!("Ошибка запроса: {}", e)))?;
 
         let recordings: Vec<Recording> = stmt
-            .query_map(rusqlite::params![since_timestamp, limit, offset], |row| {
-                Ok(Recording {
-                    id: row.get(0)?,
-                    audio_path: row.get(1)?,
-                    timestamp: row.get(2)?,
-                    duration_secs: row.get(3)?,
-                })
-            })
+            .query_map(rusqlite::params![since_timestamp, limit, offset], map_recording_row)
             .map_err(|e| ArcanaError::Database(format!("Ошибка маппинга: {}", e)))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| ArcanaError::Database(format!("Ошибка сбора: {}", e)))?;
@@ -189,24 +209,12 @@ impl HistoryDB {
         // Для каждой записи — загрузить транскрибации
         let mut entries = Vec::with_capacity(recordings.len());
         let mut trans_stmt = conn
-            .prepare(
-                "SELECT id, recording_id, text, model_name, transcriber_type, created_at
-                 FROM transcriptions WHERE recording_id = ?1 ORDER BY created_at DESC",
-            )
+            .prepare(TRANSCRIPTIONS_BY_RECORDING_SQL)
             .map_err(|e| ArcanaError::Database(format!("Ошибка запроса транскрибаций: {}", e)))?;
 
         for rec in recordings {
             let transcriptions: Vec<Transcription> = trans_stmt
-                .query_map(rusqlite::params![rec.id], |row| {
-                    Ok(Transcription {
-                        id: row.get(0)?,
-                        recording_id: row.get(1)?,
-                        text: row.get(2)?,
-                        model_name: row.get(3)?,
-                        transcriber_type: row.get(4)?,
-                        created_at: row.get(5)?,
-                    })
-                })
+                .query_map(rusqlite::params![rec.id], map_transcription_row)
                 .map_err(|e| ArcanaError::Database(format!("Ошибка маппинга транскрибаций: {}", e)))?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| ArcanaError::Database(format!("Ошибка сбора транскрибаций: {}", e)))?;
@@ -229,23 +237,11 @@ impl HistoryDB {
             .lock()
             .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
         let mut stmt = conn
-            .prepare(
-                "SELECT id, recording_id, text, model_name, transcriber_type, created_at
-                 FROM transcriptions WHERE recording_id = ?1 ORDER BY created_at DESC",
-            )
+            .prepare(TRANSCRIPTIONS_BY_RECORDING_SQL)
             .map_err(|e| ArcanaError::Database(format!("Ошибка запроса: {}", e)))?;
 
         let result = stmt
-            .query_map(rusqlite::params![recording_id], |row| {
-                Ok(Transcription {
-                    id: row.get(0)?,
-                    recording_id: row.get(1)?,
-                    text: row.get(2)?,
-                    model_name: row.get(3)?,
-                    transcriber_type: row.get(4)?,
-                    created_at: row.get(5)?,
-                })
-            })
+            .query_map(rusqlite::params![recording_id], map_transcription_row)
             .map_err(|e| ArcanaError::Database(format!("Ошибка маппинга: {}", e)))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| ArcanaError::Database(format!("Ошибка сбора: {}", e)))?;
