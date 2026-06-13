@@ -557,3 +557,119 @@ impl ArcanaEngine {
             .unwrap_or(false)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Заглушка Transcriber: без реальной модели, без поддержки отмены.
+    struct DummyTranscriber;
+    impl Transcriber for DummyTranscriber {
+        fn transcribe(&self, _samples: &[i16], _sample_rate: u32) -> Result<String, ArcanaError> {
+            Ok(String::new())
+        }
+        fn supports_streaming(&self) -> bool {
+            false
+        }
+    }
+
+    /// Временная БД истории под тест.
+    fn temp_history_db(test_id: &str) -> Arc<HistoryDB> {
+        let dir = std::env::temp_dir().join(format!("arcanaglyph_engine_test_{}_{}", test_id, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        Arc::new(HistoryDB::new(&dir.join("history.db"), dir.join("audio")).expect("history db"))
+    }
+
+    /// Собирает `ArcanaEngine` для тестов: инъекция dummy-транскрайберов под
+    /// заданными именами + временная БД, без загрузки реальной модели и без
+    /// sweeper'а. tests-mod — дочерний модуль, поэтому имеет доступ к приватным
+    /// полям (обходим `new()`, который требует ONNX-файлы и Tokio-runtime spawn).
+    fn make_engine(config: CoreConfig, active: &str, model_names: &[&str], test_id: &str) -> ArcanaEngine {
+        let mut transcribers: HashMap<String, Arc<dyn Transcriber>> = HashMap::new();
+        let mut last_used = HashMap::new();
+        for name in model_names {
+            transcribers.insert((*name).to_string(), Arc::new(DummyTranscriber));
+            last_used.insert((*name).to_string(), Instant::now());
+        }
+        let (event_tx, _) = broadcast::channel::<EngineEvent>(32);
+        ArcanaEngine {
+            config: std::sync::RwLock::new(config),
+            transcribers: Arc::new(std::sync::RwLock::new(transcribers)),
+            active_model: Arc::new(std::sync::RwLock::new(active.to_string())),
+            last_used: Arc::new(std::sync::RwLock::new(last_used)),
+            config_changed: AtomicBool::new(false),
+            is_busy: Arc::new(tokio::sync::Mutex::new(false)),
+            is_paused: Arc::new(tokio::sync::Mutex::new(false)),
+            current_cmd_tx: Arc::new(tokio::sync::Mutex::new(None)),
+            event_tx,
+            audio_level: Arc::new(AtomicU32::new(0)),
+            rt_handle: Handle::current(),
+            window_visible: Arc::new(AtomicBool::new(false)),
+            history_db: temp_history_db(test_id),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_getters_reflect_injected_state() {
+        // `CoreConfig::default().transcriber` = Vosk, поэтому выставляем GigaAm
+        // явно — чтобы активная модель и тип в конфиге согласовались.
+        let config = CoreConfig {
+            transcriber: TranscriberType::GigaAm,
+            ..CoreConfig::default()
+        };
+        let name = config.model_name_for(&TranscriberType::GigaAm);
+        let engine = make_engine(config.clone(), &name, &[&name], "getters");
+
+        assert_eq!(engine.active_model_name(), name);
+        assert_eq!(engine.active_transcriber_type(), TranscriberType::GigaAm);
+        assert!(engine.loaded_models().contains(&name));
+        assert!(engine.loaded_models_idle_seconds().contains_key(&name));
+        assert_eq!(engine.get_audio_level(), 0);
+        assert_eq!(engine.show_widget(), config.show_widget);
+    }
+
+    #[tokio::test]
+    async fn test_update_config_switches_to_already_loaded_model() {
+        let config = CoreConfig::default();
+        let giga = config.model_name_for(&TranscriberType::GigaAm);
+        let whisper = config.model_name_for(&TranscriberType::Whisper);
+        // Обе модели уже в пуле, активна gigaam.
+        let engine = make_engine(config.clone(), &giga, &[&giga, &whisper], "switch_loaded");
+
+        let mut new_config = config.clone();
+        new_config.transcriber = TranscriberType::Whisper;
+        engine.update_config(new_config);
+
+        // Модель уже в пуле → мгновенное переключение активной.
+        assert_eq!(engine.active_model_name(), whisper);
+        assert_eq!(engine.active_transcriber_type(), TranscriberType::Whisper);
+    }
+
+    #[tokio::test]
+    async fn test_update_config_defers_load_when_model_not_in_pool() {
+        let config = CoreConfig::default();
+        let giga = config.model_name_for(&TranscriberType::GigaAm);
+        // Только gigaam в пуле.
+        let engine = make_engine(config.clone(), &giga, &[&giga], "defer_load");
+
+        let mut new_config = config.clone();
+        new_config.transcriber = TranscriberType::Whisper;
+        engine.update_config(new_config);
+
+        // Модели нет в пуле → активная НЕ меняется (загрузится при следующей
+        // записи), но тип в конфиге обновлён.
+        assert_eq!(engine.active_model_name(), giga);
+        assert_eq!(engine.active_transcriber_type(), TranscriberType::Whisper);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_unsupported_for_dummy_engine() {
+        let config = CoreConfig::default();
+        let name = config.model_name_for(&TranscriberType::GigaAm);
+        let engine = make_engine(config, &name, &[&name], "cancel");
+
+        // DummyTranscriber не поддерживает отмену → оба метода возвращают false.
+        assert!(!engine.active_supports_cancel());
+        assert!(!engine.cancel_transcription());
+    }
+}
