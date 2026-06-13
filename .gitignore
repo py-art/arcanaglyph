@@ -15,6 +15,11 @@ NOTE.md
 /assets/libs/libonnxruntime-avx2.so
 /assets/libs/libvosk.so
 
+# Windows ORT DLL — качается CI-job'ом build-windows-test (Microsoft win-x64),
+# в git не коммитим (бинарь ~10 МБ). Лежит рядом с tauri.windows.conf.json
+# resources. Локально для dev-сборки положить руками сюда же.
+/crates/arcanaglyph-app/libs/onnxruntime.dll
+
 .gemini/
 
 # arcanacodex (auto-managed)

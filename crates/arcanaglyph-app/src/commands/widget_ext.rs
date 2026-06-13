@@ -52,6 +52,26 @@ pub struct WidgetExtensionStatus {
 
 #[tauri::command]
 pub fn widget_extension_status() -> WidgetExtensionStatus {
+    // GNOME-расширение есть только на Linux. На Windows/macOS возвращаем all-false:
+    // фронтенд скрывает ряд при available=false (settings.ts), а gsettings-пробу
+    // тут делать незачем — её в системе нет (избегаем заведомо падающего спавна).
+    #[cfg(not(target_os = "linux"))]
+    {
+        return WidgetExtensionStatus {
+            available: false,
+            installed: false,
+            enabled: false,
+        };
+    }
+    #[cfg(target_os = "linux")]
+    {
+        widget_extension_status_linux()
+    }
+}
+
+/// Linux-реализация статуса расширения (gsettings + проверка файлов).
+#[cfg(target_os = "linux")]
+fn widget_extension_status_linux() -> WidgetExtensionStatus {
     let available = widget_ext_source_dir().is_some();
     let installed = widget_ext_user_dir()
         .map(|p| p.join("metadata.json").is_file())

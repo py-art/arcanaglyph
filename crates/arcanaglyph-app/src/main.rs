@@ -16,6 +16,84 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
 use tauri_plugin_global_shortcut::ShortcutState;
 
+/// Настраивает подписчика трейсинга с двумя слоями: stdout и файл (ротация по
+/// дням, non-blocking). Возвращает `WorkerGuard` файлового аппендера — его нужно
+/// держать живым до конца процесса, иначе буфер не успеет дописаться при выходе.
+/// Если каталог логов недоступен (нет HOME/XDG, ошибка mkdir) — логируем только
+/// в stdout и возвращаем `None`.
+fn init_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    // Дефолт — `info,whisper_rs=warn` (тихий whisper.cpp); через `RUST_LOG` можно
+    // перебить (например `RUST_LOG=info,whisper_rs=trace` для отладки инференса).
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,whisper_rs=warn"));
+    let stdout_layer = tracing_subscriber::fmt::layer();
+
+    match CoreConfig::logs_dir() {
+        Some(dir) if std::fs::create_dir_all(&dir).is_ok() => {
+            let file_appender = tracing_appender::rolling::daily(&dir, "arcanaglyph.log");
+            let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+            // with_ansi(false): без escape-кодов цвета — файл читаемый в Блокноте.
+            let file_layer = tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(non_blocking);
+            tracing_subscriber::registry()
+                .with(filter)
+                .with(stdout_layer)
+                .with(file_layer)
+                .init();
+            Some(guard)
+        }
+        _ => {
+            tracing_subscriber::registry().with(filter).with(stdout_layer).init();
+            None
+        }
+    }
+}
+
+/// Ставит panic-hook, который пишет панику через `tracing::error!` (→ в файл).
+/// Без этого на Windows (нет консоли) паника убивала бы процесс молча, без следа.
+/// Дефолтный hook тоже вызываем — чтобы в dev паника по-прежнему печаталась в stderr.
+fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_else(|| "<неизвестно>".to_string());
+        let msg = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "<не-строковый payload паники>".to_string());
+        tracing::error!(target: "panic", location = %location, "PANIC: {}", msg);
+        default_hook(info);
+    }));
+}
+
+/// Пишет в лог стартовую диагностику: версия, ОС, архитектура, наличие AVX и путь
+/// к файлу логов. Эти строки — первое, что мы попросим у пользователя при разборе
+/// проблем на Windows (AVX особенно: его отсутствие = SIGILL в ORT-движках).
+fn log_startup_diagnostics() {
+    #[cfg(target_arch = "x86_64")]
+    let avx = std::is_x86_feature_detected!("avx");
+    #[cfg(not(target_arch = "x86_64"))]
+    let avx = false;
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        os = std::env::consts::OS,
+        arch = std::env::consts::ARCH,
+        avx,
+        "ArcanaGlyph запускается"
+    );
+    if let Some(dir) = CoreConfig::logs_dir() {
+        tracing::info!("Логи пишутся в {}", dir.display());
+    }
+}
+
 fn main() {
     // Раннее: --grant-portal subcommand. Должен сработать ДО Tauri-инициализации
     // (нам не нужны окна / трей / engine — только portal warmup).
@@ -23,12 +101,14 @@ fn main() {
         setup::run_grant_portal_and_exit();
     }
 
-    // Инициализируем логирование. Дефолт — `info,whisper_rs=warn` (тихий whisper.cpp);
-    // через `RUST_LOG` можно перебить (например `RUST_LOG=info,whisper_rs=trace` для
-    // отладки whisper-инференса — увидим внутренние ggml/encoder сообщения).
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,whisper_rs=warn"));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    // Инициализируем логирование: stdout (для `make run`) + файл с ротацией по дням.
+    // Файловый лог критичен для Windows-сборки (windows_subsystem = "windows" → нет
+    // консоли, stdout теряется) — это единственный канал диагностики от пользователя
+    // без dev-окружения. `_log_guard` держим живым до конца main(): при его drop'е
+    // non-blocking appender дописывает буфер на диск.
+    let _log_guard = init_logging();
+    install_panic_hook();
+    log_startup_diagnostics();
 
     // Выбираем libonnxruntime.so для GigaAM/Qwen3-ASR. Делаем сразу после init трейсинга,
     // чтобы все последующие сообщения о выборе ORT попали в лог; и сильно ДО первого
@@ -120,9 +200,18 @@ fn main() {
     let hotkey = config.hotkey.clone();
     let hotkey_pause = config.hotkey_pause.clone();
 
-    // Строки хоткеев для сравнения в handler
-    let trigger_hk = Arc::new(hotkey.clone());
-    let pause_hk = Arc::new(hotkey_pause.clone());
+    // Парсим хоткеи в Shortcut для сравнения в handler. ВАЖНО: сравнивать строки
+    // нельзя — Display плагина канонизирует регистр и имя клавиши ("Control+`" →
+    // "control+Backquote"), поэтому raw-конфиг никогда не совпал бы с Display
+    // пришедшего события. Сравнение распарсенных Shortcut'ов (mods+key) — это и
+    // рекомендованный плагином паттерн, и ЕДИНСТВЕННЫЙ рабочий путь на Windows
+    // (там нет GNOME-gsettings fallback'а, плагин — единственный источник событий).
+    let trigger_shortcut: Arc<Option<tauri_plugin_global_shortcut::Shortcut>> = Arc::new(hotkey.parse().ok());
+    let pause_shortcut: Arc<Option<tauri_plugin_global_shortcut::Shortcut>> = Arc::new(if hotkey_pause.is_empty() {
+        None
+    } else {
+        hotkey_pause.parse().ok()
+    });
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -133,19 +222,18 @@ fn main() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler({
-                    let trigger_hk = Arc::clone(&trigger_hk);
-                    let pause_hk = Arc::clone(&pause_hk);
+                    let trigger_shortcut = Arc::clone(&trigger_shortcut);
+                    let pause_shortcut = Arc::clone(&pause_shortcut);
                     move |app, shortcut, event| {
                         if event.state() == ShortcutState::Pressed
                             && let Some(engine_state) = app.try_state::<EngineState>()
                             && let Some(engine) = engine_state.get()
                         {
-                            let sc_str = format!("{shortcut}");
-                            if !pause_hk.is_empty() && sc_str == *pause_hk.as_ref() {
-                                tracing::info!(source = "tauri-shortcut", "Горячая клавиша паузы: {}", sc_str);
+                            if pause_shortcut.as_ref().as_ref() == Some(shortcut) {
+                                tracing::info!(source = "tauri-shortcut", "Горячая клавиша паузы: {shortcut}");
                                 engine.pause();
-                            } else if sc_str == *trigger_hk.as_ref() {
-                                tracing::info!(source = "tauri-shortcut", "Горячая клавиша триггера: {}", sc_str);
+                            } else if trigger_shortcut.as_ref().as_ref() == Some(shortcut) {
+                                tracing::info!(source = "tauri-shortcut", "Горячая клавиша триггера: {shortcut}");
                                 engine.trigger();
                             }
                         }

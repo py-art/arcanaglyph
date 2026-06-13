@@ -26,22 +26,38 @@ pub fn dismiss_update(version: String, history_db: tauri::State<'_, Arc<HistoryD
     updater::dismiss(history_db.inner(), &version).map_err(|e| e.to_string())
 }
 
-/// Tauri-команда: открыть URL в браузере. Используется кнопкой
-/// «Что нового» — ведёт на release page.
-#[tauri::command]
-pub fn open_release_notes(url: String) -> Result<(), String> {
-    std::process::Command::new("xdg-open")
-        .arg(&url)
+/// Открывает URL в системном браузере. Кроссплатформенно: `xdg-open` на Linux,
+/// `cmd /C start` на Windows (пустой "" — обязательный аргумент-заголовок для
+/// `start`), `open` на macOS.
+fn open_url(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let (program, args): (&str, Vec<&str>) = ("cmd", vec!["/C", "start", "", url]);
+    #[cfg(target_os = "macos")]
+    let (program, args): (&str, Vec<&str>) = ("open", vec![url]);
+    #[cfg(target_os = "linux")]
+    let (program, args): (&str, Vec<&str>) = ("xdg-open", vec![url]);
+
+    std::process::Command::new(program)
+        .args(&args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
         .map(|_| ())
-        .map_err(|e| format!("xdg-open: {e}"))
+        .map_err(|e| format!("{program}: {e}"))
+}
+
+/// Tauri-команда: открыть URL в браузере. Используется кнопкой
+/// «Что нового» — ведёт на release page.
+#[tauri::command]
+pub fn open_release_notes(url: String) -> Result<(), String> {
+    open_url(&url)
 }
 
 /// Возвращает первый найденный terminal-emulator из known list.
 /// Использует `<term> --version` спавн-проверку (без `which` crate).
+/// Linux-only: на Windows/macOS in-app установки через терминал нет.
+#[cfg(target_os = "linux")]
 fn detect_terminal() -> Option<&'static str> {
     const TERMINALS: &[&str] = &["gnome-terminal", "konsole", "kitty", "alacritty", "tilix", "xterm"];
     for &t in TERMINALS {
@@ -61,6 +77,7 @@ fn detect_terminal() -> Option<&'static str> {
 }
 
 /// Per-terminal CLI-аргументы для запуска `bash -c <cmd>`.
+#[cfg(target_os = "linux")]
 fn terminal_args(terminal: &str, bash_cmd: &str) -> Vec<String> {
     let cmd = bash_cmd.to_string();
     match terminal {
@@ -85,20 +102,36 @@ fn terminal_args(terminal: &str, bash_cmd: &str) -> Vec<String> {
 /// сохраняет его между перезапусками (пока `APP_VERSION` не догонит).
 #[tauri::command]
 pub async fn apply_update(latest_version: String, history_db: tauri::State<'_, Arc<HistoryDB>>) -> Result<(), String> {
-    // Помечаем applying ДО любых сетевых/IO операций — UI получает
-    // мгновенный переход в applying-режим и persistent state на случай
-    // повторного запуска приложения до restart.
-    updater::set_applying(history_db.inner(), &latest_version).map_err(|e| e.to_string())?;
-
-    // Если ниже что-то падает — откатываем applying, иначе баннер
-    // залипнет в applying-режиме без реально начавшейся установки.
-    let result = apply_update_inner().await;
-    if result.is_err() {
-        let _ = updater::clear_applying(history_db.inner());
+    // На Windows/macOS in-app установки пока нет (MVP): открываем страницу
+    // релиза в браузере — пользователь скачивает .exe и ставит двойным кликом.
+    // applying-режим НЕ выставляем (нет процесса установки, который его снимет —
+    // иначе баннер залипнет).
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = &history_db;
+        let url = format!("https://github.com/py-art/arcanaglyph/releases/tag/v{latest_version}");
+        return open_url(&url);
     }
-    result
+
+    // Linux: запускаем install.sh во внешнем терминале.
+    #[cfg(target_os = "linux")]
+    {
+        // Помечаем applying ДО любых сетевых/IO операций — UI получает
+        // мгновенный переход в applying-режим и persistent state на случай
+        // повторного запуска приложения до restart.
+        updater::set_applying(history_db.inner(), &latest_version).map_err(|e| e.to_string())?;
+
+        // Если ниже что-то падает — откатываем applying, иначе баннер
+        // залипнет в applying-режиме без реально начавшейся установки.
+        let result = apply_update_inner().await;
+        if result.is_err() {
+            let _ = updater::clear_applying(history_db.inner());
+        }
+        result
+    }
 }
 
+#[cfg(target_os = "linux")]
 async fn apply_update_inner() -> Result<(), String> {
     let terminal = detect_terminal().ok_or_else(|| {
         format!(

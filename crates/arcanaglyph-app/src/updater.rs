@@ -50,22 +50,30 @@ pub enum ReleaseFetch {
     Unavailable { etag: Option<String> },
 }
 
-/// Проверяет, есть ли в JSON релиза готовый к установке `.deb` asset.
-/// «Готовый» = `name` оканчивается на `.deb` И `state == "uploaded"`
-/// (GitHub помечает asset'ы в процессе заливки как `starting`/`uploading`,
-/// и только по завершении — `uploaded`). Именно это закрывает гонку
-/// «релиз опубликован, но CI ещё собирает/заливает `.deb`»: до завершения
-/// заливки in-app updater запустил бы install.sh, который упал бы на
-/// `No assets found in release` / `.deb asset not found in release`.
-pub fn release_has_installable_deb(release: &serde_json::Value) -> bool {
+/// Расширение устанавливаемого asset'а для текущей платформы: `.deb` на Linux,
+/// `.exe` (NSIS-инсталлятор) на Windows. Updater показывает обновление только
+/// когда в релизе лежит asset под ИМЕННО эту платформу.
+#[cfg(target_os = "windows")]
+const INSTALLABLE_ASSET_EXT: &str = ".exe";
+#[cfg(not(target_os = "windows"))]
+const INSTALLABLE_ASSET_EXT: &str = ".deb";
+
+/// Проверяет, есть ли в JSON релиза готовый к установке asset под текущую
+/// платформу (`INSTALLABLE_ASSET_EXT`). «Готовый» = `name` оканчивается на
+/// нужное расширение И `state == "uploaded"` (GitHub помечает asset'ы в процессе
+/// заливки как `starting`/`uploading`, и только по завершении — `uploaded`).
+/// Именно это закрывает гонку «релиз опубликован, но CI ещё собирает/заливает
+/// пакеты»: до завершения заливки in-app updater запустил бы установку, которая
+/// упала бы на `No assets found in release`.
+pub fn release_has_installable_asset(release: &serde_json::Value) -> bool {
     release.get("assets").and_then(|v| v.as_array()).is_some_and(|assets| {
         assets.iter().any(|a| {
-            let is_deb = a
+            let is_match = a
                 .get("name")
                 .and_then(|n| n.as_str())
-                .is_some_and(|n| n.ends_with(".deb"));
+                .is_some_and(|n| n.ends_with(INSTALLABLE_ASSET_EXT));
             let uploaded = a.get("state").and_then(|s| s.as_str()).is_some_and(|s| s == "uploaded");
-            is_deb && uploaded
+            is_match && uploaded
         })
     })
 }
@@ -208,9 +216,9 @@ pub async fn fetch_latest_release(etag: Option<&str>) -> Result<ReleaseFetch, Ar
     let latest_version = tag_name.strip_prefix('v').unwrap_or(tag_name).to_string();
 
     // Ключевая проверка: показываем обновление ТОЛЬКО когда в релизе уже
-    // лежит готовый `.deb`. Иначе релиз опубликован, но CI ещё собирает
-    // пакеты — install.sh упадёт без asset'а (см. `release_has_installable_deb`).
-    if !release_has_installable_deb(&body) {
+    // лежит готовый asset под текущую платформу (.deb/.exe). Иначе релиз
+    // опубликован, но CI ещё собирает пакеты (см. `release_has_installable_asset`).
+    if !release_has_installable_asset(&body) {
         return Ok(ReleaseFetch::Unavailable { etag: new_etag });
     }
 
@@ -412,14 +420,14 @@ mod tests {
                 { "name": "SHA256SUMS.txt", "state": "uploaded" }
             ]
         });
-        assert!(release_has_installable_deb(&release));
+        assert!(release_has_installable_asset(&release));
     }
 
     #[test]
     fn deb_unavailable_when_assets_empty() {
         // Воспроизводит гонку: релиз опубликован, CI ещё собирает .deb.
         let release = serde_json::json!({ "tag_name": "v1.7.8", "assets": [] });
-        assert!(!release_has_installable_deb(&release));
+        assert!(!release_has_installable_asset(&release));
     }
 
     #[test]
@@ -431,7 +439,7 @@ mod tests {
                 { "name": "ArcanaGlyph_1.7.8_amd64.deb", "state": "starting" }
             ]
         });
-        assert!(!release_has_installable_deb(&release));
+        assert!(!release_has_installable_asset(&release));
     }
 
     #[test]
@@ -443,13 +451,13 @@ mod tests {
                 { "name": "SHA256SUMS.txt", "state": "uploaded" }
             ]
         });
-        assert!(!release_has_installable_deb(&release));
+        assert!(!release_has_installable_asset(&release));
     }
 
     #[test]
     fn deb_unavailable_when_no_assets_field() {
         let release = serde_json::json!({ "tag_name": "v1.7.8" });
-        assert!(!release_has_installable_deb(&release));
+        assert!(!release_has_installable_asset(&release));
     }
 
     /// Временная HistoryDB под тест (как `temp_db` в core::history).

@@ -23,6 +23,10 @@ tracing = "0.1.41"
 chrono = "0.4"
 base64 = "0.22"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+# tracing-appender — пишет логи в файл (ротация по дням). Критично для Windows:
+# там сборка с windows_subsystem = "windows" не имеет консоли, и stdout-логи
+# теряются. Файловый лог — единственный канал диагностики от пользователя.
+tracing-appender = "0.2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
