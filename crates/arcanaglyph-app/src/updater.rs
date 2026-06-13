@@ -33,6 +33,43 @@ pub struct UpdateInfo {
     pub published_at: String,
 }
 
+/// Результат запроса к GitHub Releases API. Разделяет три состояния,
+/// чтобы `check_for_update` мог корректно вести ETag-кэш и при этом НЕ
+/// показывать баннер, пока обновление реально нельзя установить.
+#[derive(Debug, Clone)]
+pub enum ReleaseFetch {
+    /// 304 Not Modified — состояние релиза не изменилось с прошлого ETag.
+    NotModified,
+    /// Релиз получен И в нём есть готовый к установке `.deb` asset.
+    Available { info: UpdateInfo, etag: Option<String> },
+    /// Релиз получен, но устанавливать нечего: либо `.deb` ещё не залит
+    /// (CI всё ещё собирает пакеты), либо tag нестандартный/pre-release.
+    /// ETag всё равно возвращаем — caller его сохранит, чтобы следующая
+    /// проверка получила 304/200 корректно (заливка asset'а меняет
+    /// представление релиза → ETag сменится → 200 с готовым `.deb`).
+    Unavailable { etag: Option<String> },
+}
+
+/// Проверяет, есть ли в JSON релиза готовый к установке `.deb` asset.
+/// «Готовый» = `name` оканчивается на `.deb` И `state == "uploaded"`
+/// (GitHub помечает asset'ы в процессе заливки как `starting`/`uploading`,
+/// и только по завершении — `uploaded`). Именно это закрывает гонку
+/// «релиз опубликован, но CI ещё собирает/заливает `.deb`»: до завершения
+/// заливки in-app updater запустил бы install.sh, который упал бы на
+/// `No assets found in release` / `.deb asset not found in release`.
+pub fn release_has_installable_deb(release: &serde_json::Value) -> bool {
+    release.get("assets").and_then(|v| v.as_array()).is_some_and(|assets| {
+        assets.iter().any(|a| {
+            let is_deb = a
+                .get("name")
+                .and_then(|n| n.as_str())
+                .is_some_and(|n| n.ends_with(".deb"));
+            let uploaded = a.get("state").and_then(|s| s.as_str()).is_some_and(|s| s == "uploaded");
+            is_deb && uploaded
+        })
+    })
+}
+
 /// Состояние update-checker'а. Хранится в SQLite через `set_setting`.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct UpdateState {
@@ -97,10 +134,13 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
 }
 
 /// Запрашивает GitHub Releases API. Возвращает:
-/// - `Ok(Some((info, etag)))` — новый релиз есть, JSON распарсен.
-/// - `Ok(None)` — 304 Not Modified ИЛИ tag = pre-release / нестандартный.
+/// - `Ok(ReleaseFetch::Available { info, etag })` — релиз есть И в нём
+///   лежит готовый к установке `.deb`.
+/// - `Ok(ReleaseFetch::Unavailable { etag })` — релиз есть, но `.deb` ещё
+///   не залит (CI собирает) ЛИБО tag pre-release / нестандартный.
+/// - `Ok(ReleaseFetch::NotModified)` — 304 Not Modified.
 /// - `Err(_)` — сетевая/HTTP ошибка. Caller применяет exponential backoff.
-pub async fn fetch_latest_release(etag: Option<&str>) -> Result<Option<(UpdateInfo, Option<String>)>, ArcanaError> {
+pub async fn fetch_latest_release(etag: Option<&str>) -> Result<ReleaseFetch, ArcanaError> {
     // User-Agent обязателен: без него GitHub возвращает 403 + сообщение
     // "Request forbidden by administrative rules".
     let client = reqwest::Client::builder()
@@ -125,7 +165,7 @@ pub async fn fetch_latest_release(etag: Option<&str>) -> Result<Option<(UpdateIn
 
     let status = resp.status();
     if status.as_u16() == 304 {
-        return Ok(None);
+        return Ok(ReleaseFetch::NotModified);
     }
     if !status.is_success() {
         return Err(ArcanaError::Internal(format!("GitHub API status {}", status.as_u16())));
@@ -150,7 +190,9 @@ pub async fn fetch_latest_release(etag: Option<&str>) -> Result<Option<(UpdateIn
     let tag_name = body.get("tag_name").and_then(|v| v.as_str()).unwrap_or_default();
 
     if parse_release_tag(tag_name).is_none() {
-        return Ok(None);
+        // Нестандартный / pre-release tag — обновлением не считаем, но
+        // ETag сохраняем (Unavailable), чтобы следующий запрос был 304.
+        return Ok(ReleaseFetch::Unavailable { etag: new_etag });
     }
 
     let release_url = body
@@ -165,14 +207,21 @@ pub async fn fetch_latest_release(etag: Option<&str>) -> Result<Option<(UpdateIn
         .to_string();
     let latest_version = tag_name.strip_prefix('v').unwrap_or(tag_name).to_string();
 
-    Ok(Some((
-        UpdateInfo {
+    // Ключевая проверка: показываем обновление ТОЛЬКО когда в релизе уже
+    // лежит готовый `.deb`. Иначе релиз опубликован, но CI ещё собирает
+    // пакеты — install.sh упадёт без asset'а (см. `release_has_installable_deb`).
+    if !release_has_installable_deb(&body) {
+        return Ok(ReleaseFetch::Unavailable { etag: new_etag });
+    }
+
+    Ok(ReleaseFetch::Available {
+        info: UpdateInfo {
             latest_version,
             release_url,
             published_at,
         },
-        new_etag,
-    )))
+        etag: new_etag,
+    })
 }
 
 /// Полный цикл проверки: GitHub fetch → state update → возврат
@@ -185,16 +234,26 @@ pub async fn check_for_update(db: &HistoryDB) -> Result<Option<UpdateInfo>, Arca
     state.last_check_at = Some(unix_now());
 
     let info = match fetch {
-        Some((info, new_etag)) => {
+        ReleaseFetch::Available { info, etag } => {
             state.latest_known = Some(info.latest_version.clone());
             state.latest_release_url = Some(info.release_url.clone());
             state.latest_published_at = Some(info.published_at.clone());
-            if let Some(etag) = new_etag {
+            if let Some(etag) = etag {
                 state.etag = Some(etag);
             }
             Some(info)
         }
-        None => None,
+        ReleaseFetch::Unavailable { etag } => {
+            // Релиз есть, но устанавливать пока нечего (.deb не залит /
+            // pre-release tag). ETag сохраняем — politeness к rate-limit,
+            // но `latest_known` НЕ трогаем, чтобы баннер не появился, пока
+            // обновление реально не станет устанавливаемым.
+            if let Some(etag) = etag {
+                state.etag = Some(etag);
+            }
+            None
+        }
+        ReleaseFetch::NotModified => None,
     };
 
     write_state(db, &state)?;
@@ -341,6 +400,56 @@ mod tests {
         };
         let blocked = state_applying.applying_version.as_deref() == Some(info.latest_version.as_str());
         assert!(blocked, "при applying_version=latest баннер не показываем");
+    }
+
+    #[test]
+    fn deb_available_when_uploaded() {
+        let release = serde_json::json!({
+            "tag_name": "v1.7.8",
+            "assets": [
+                { "name": "ArcanaGlyph_1.7.8_amd64.deb", "state": "uploaded" },
+                { "name": "ArcanaGlyph_1.7.8_amd64.AppImage", "state": "uploaded" },
+                { "name": "SHA256SUMS.txt", "state": "uploaded" }
+            ]
+        });
+        assert!(release_has_installable_deb(&release));
+    }
+
+    #[test]
+    fn deb_unavailable_when_assets_empty() {
+        // Воспроизводит гонку: релиз опубликован, CI ещё собирает .deb.
+        let release = serde_json::json!({ "tag_name": "v1.7.8", "assets": [] });
+        assert!(!release_has_installable_deb(&release));
+    }
+
+    #[test]
+    fn deb_unavailable_when_still_uploading() {
+        // .deb уже в списке, но заливка не завершена (state != uploaded).
+        let release = serde_json::json!({
+            "tag_name": "v1.7.8",
+            "assets": [
+                { "name": "ArcanaGlyph_1.7.8_amd64.deb", "state": "starting" }
+            ]
+        });
+        assert!(!release_has_installable_deb(&release));
+    }
+
+    #[test]
+    fn deb_unavailable_when_only_appimage() {
+        let release = serde_json::json!({
+            "tag_name": "v1.7.8",
+            "assets": [
+                { "name": "ArcanaGlyph_1.7.8_amd64.AppImage", "state": "uploaded" },
+                { "name": "SHA256SUMS.txt", "state": "uploaded" }
+            ]
+        });
+        assert!(!release_has_installable_deb(&release));
+    }
+
+    #[test]
+    fn deb_unavailable_when_no_assets_field() {
+        let release = serde_json::json!({ "tag_name": "v1.7.8" });
+        assert!(!release_has_installable_deb(&release));
     }
 
     /// Временная HistoryDB под тест (как `temp_db` в core::history).

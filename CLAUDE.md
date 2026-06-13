@@ -70,7 +70,10 @@ Cargo workspace из двух крейтов:
 - **arcanaglyph-core** (`crates/arcanaglyph-core/`) — библиотека + legacy бинарник:
   - `lib.rs` — публичный API: `ArcanaEngine`, `CoreConfig`, `EngineEvent`, `ArcanaError`
   - `engine.rs` — основной движок: управление записью (start/stop), broadcast событий
-  - `transcriber.rs` — трейт `Transcriber` + реализации `VoskTranscriber`, `WhisperTranscriber`
+  - `transcriber/` — модуль: `mod.rs` (трейт `Transcriber` + фабрика `build_transcriber`
+    + `remove_filler_words`), `vosk.rs` (`VoskTranscriber`), `whisper.rs` (`WhisperTranscriber`)
+  - `dsp/` — общие DSP-примитивы: `spectral.rs` (оконо Ханна + STFT, для mel-движков),
+    `preprocess.rs` (trim_silence + i16→f32 + resample, общий вход whisper/gigaam/qwen)
   - `gigaam/` — модуль GigaAM v3 (SberDevices, ONNX Runtime):
     - `mel.rs` — mel-спектрограмма (STFT, HTK mel filterbank, log)
     - `transcriber.rs` — `GigaAmTranscriber` (ONNX inference + CTC decode)
