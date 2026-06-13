@@ -95,3 +95,63 @@ pub fn find_by_type_and_filename(t_type: &str, filename: &str) -> Option<&'stati
         .copied()
         .or_else(|| models.into_iter().find(|m| m.transcriber_type == t_type))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_all_with_availability_lists_every_known_model() {
+        // Реестр известных моделей фиксирован (5 шт.) и компилируется всегда,
+        // независимо от включённых backend-фич — UI показывает все карточки.
+        let all = all_with_availability();
+        assert_eq!(all.len(), 5);
+        let ids: Vec<&str> = all.iter().map(|(m, _)| m.id).collect();
+        for expected in [
+            vosk_russian_speech_model::MODEL.id,
+            whisper_tiny_speech_model::MODEL.id,
+            whisper_large_v3_turbo_speech_model::MODEL.id,
+            gigaam_v3_speech_model::MODEL.id,
+            qwen3_asr_speech_model::MODEL.id,
+        ] {
+            assert!(ids.contains(&expected), "нет модели {expected} в реестре");
+        }
+    }
+
+    #[test]
+    fn test_model_ids_are_unique() {
+        let all = all_with_availability();
+        let mut ids: Vec<&str> = all.iter().map(|(m, _)| m.id).collect();
+        ids.sort_unstable();
+        let count = ids.len();
+        ids.dedup();
+        assert_eq!(ids.len(), count, "id моделей не уникальны");
+    }
+
+    #[test]
+    fn test_available_subset_of_known() {
+        // all() = только доступные в этой сборке → их не больше, чем всего известно.
+        assert!(all().len() <= all_with_availability().len());
+    }
+
+    #[test]
+    fn test_find_unknown_returns_none() {
+        assert!(find("no-such-model-id").is_none());
+    }
+
+    #[test]
+    fn test_find_roundtrips_for_available_models() {
+        // Любая доступная модель находится по своему id и по типу; поиск по
+        // несуществующему имени файла откатывается на первую модель того же типа.
+        for m in all() {
+            assert!(find(m.id).is_some(), "find({}) пусто", m.id);
+            assert!(find_by_transcriber_type(m.transcriber_type).is_some());
+            assert!(find_by_type_and_filename(m.transcriber_type, "bogus-filename").is_some());
+        }
+    }
+
+    #[test]
+    fn test_find_by_transcriber_type_unknown_none() {
+        assert!(find_by_transcriber_type("no-such-type").is_none());
+    }
+}

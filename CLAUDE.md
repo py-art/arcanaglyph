@@ -19,7 +19,7 @@ make fmt           # cargo fmt
 make lint          # cargo clippy -- -D warnings
 make test          # cargo test (требует LIBRARY_PATH=/usr/local/lib)
 make build         # Release-сборка
-make dist          # self-contained .deb (двойной бинарь avx/noavx + bundled libs, см. ниже)
+make dist          # self-contained .deb (avx/noavx + bundled libs)
 make clean         # Полная очистка
 ```
 
@@ -75,7 +75,7 @@ Cargo workspace из двух крейтов:
     - `mel.rs` — mel-спектрограмма (STFT, HTK mel filterbank, log)
     - `transcriber.rs` — `GigaAmTranscriber` (ONNX inference + CTC decode)
   - `audio.rs` — захват аудио через `cpal`, передача в transcriber
-  - `input.rs` — вставка текста: `wl-copy` + XDG RemoteDesktop (Shift+Insert) на Wayland, `enigo` на X11
+  - `input.rs` — вставка текста: `wl-copy` + XDG RemoteDesktop на Wayland, `enigo` на X11
   - `config.rs` — конфигурация с load/save из SQLite (`TranscriberType`: Vosk, Whisper, GigaAm)
   - `error.rs` — типизированные ошибки через `thiserror`
   - `main.rs` — legacy standalone-сервер (UDP + WebSocket, для отладки)
@@ -107,10 +107,53 @@ Cargo workspace из двух крейтов:
 - Rust edition: 2024
 - Обработка ошибок: `thiserror` + `Result<T, ArcanaError>`
 
+## 🔁 Dogfood-ритуал — ОБЯЗАТЕЛЕН после каждой содержательной правки
+
+После любого содержательного Write/Edit в `.rs`/`.ts`/`.py` (новая
+функция / хендлер / walker / модуль) — **полный** цикл, не урезанный
+до «fmt+test». Это project-level mandatory rule (user явно: «не хочу
+потом тратить сутки на рефакторинг»). Source of truth — memory
+`feedback_format_lint_then_dogfood_refactor.md`. (PreToolUse-напоминание
+ритуала на `git commit` — опционально через локальный хук в
+`.claude/settings.local.json`; сам каталог `.claude/` в gitignore,
+поэтому в репо не коммитится.)
+
+1. **fmt + lint:** `cargo fmt --all` → `cargo clippy --workspace
+--all-targets -- -D warnings` (clippy НЕ ловит fmt-нарушения — fmt
+   первым). Фронтенд (`frontend/`, пакет-менеджер npm — есть
+   `package-lock.json`, НЕ pnpm): отдельного форматтера/линтера
+   (eslint/prettier/biome) пока нет — гейт это
+   `npm --prefix frontend run type-check` (= `tsc --noEmit`).
+   Python в репозитории нет.
+2. **MCP coverage-check:** `untested_publics(path_prefix=<изменённый
+модуль>)` или `test_coverage_overview`. Новый pub-символ без теста →
+   **дописать тест сейчас**, пока контекст свежий. (v0.216.1 закрыл прежнюю
+   слепоту: inline `#[cfg(test)] mod tests` callers теперь корректно
+   считаются test, а не prod — coverage-сигнал на такие символы достоверен.
+   Корень был не в эвристике, а в том что task-local `WORKSPACE_ROOT` не
+   пробрасывался в `spawn_blocking`.)
+3. **MCP refactor-check:** `file_health(<изменённый файл>)` +
+   `refactor_candidates(scope="staged")`. Полярность `recommendation_score`
+   = HIGHER IS BETTER (<60 critical, 60–85 warning, ≥85 ok).
+4. **Если flagged warning/critical с actionable recommendations** → рефакторить
+   сейчас (typ. дёшево: вынос inline-тестов в `#[path]`-sibling срезает
+   loc/godobject; cc-reduction handler-split). НЕ откладывать.
+5. **После рефактора — fmt + lint снова**, затем `cargo test --workspace`
+   (+ `npm --prefix frontend test` — vitest, если затронут фронт)
+   - `cargo fmt --all -- --check` (финальный локальный gate; CI нет, см.
+     [docs/rule_enforcement.md](docs/rule_enforcement.md)).
+
+Шаги 2–4 — через НАШ MCP (dogfood: не имеем права проповедовать MCP-first
+и не использовать его на свежем коде). Бонус — live-валидация наших же
+coverage/refactor тулов на реальном diff'е. После — bump+commit+deploy
+(`make install && restart && clean-local`) + live-verify (guard/detached/
+collision-пути — обязателен).
+
 ## Системные зависимости
 
 ```bash
-sudo apt-get install build-essential libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev
+sudo apt-get install build-essential libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
+  libxdo-dev libayatana-appindicator3-dev
 ```
 
 Для вставки текста на Wayland (clipboard + XDG RemoteDesktop portal):
@@ -122,6 +165,44 @@ sudo apt install wl-clipboard
 Также нужны: `libvosk.so` (в `/usr/local/lib/`) и модели в `models/`:
 
 - Vosk: `models/vosk-model-ru-0.42/`
-- Whisper: `models/ggml-large-v3-turbo.bin` (скачать с HuggingFace ggerganov/whisper.cpp)
-- GigaAM v3: `models/gigaam-v3-e2e-ctc/` (содержит `v3_e2e_ctc.int8.onnx` + `v3_e2e_ctc_vocab.txt`,
-  скачать с HuggingFace istupakov/gigaam-v3-onnx)
+- Whisper: `models/ggml-large-v3-turbo.bin` (HuggingFace ggerganov/whisper.cpp)
+- GigaAM v3: `models/gigaam-v3-e2e-ctc/` (istupakov/gigaam-v3-onnx)
+
+<!-- arcanacodex:rules:begin v=0.213.1 -->
+
+## ArcanaCodex MCP — highest-priority rule in this file
+
+> _Auto-managed by `arcanacodex project install` (v0.213.1, 2026-06-12T01:22:15Z)._
+> _Не редактировать руками — изменения затрутся при следующем
+> `arcanacodex project update`. Чтобы удалить — `arcanacodex project uninstall <path>`._
+
+**HARD RULE:** первый инструмент по любому вопросу про код в этом
+репозитории — MCP-tool `mcp__arcana-codex__*`. `Read` / `rg` / `grep` /
+`fd` — fallback'и, не default. Полный ruleset (anti-pattern checklist,
+cheatsheet, escape hatches, hook behavior, scope guarantees) — в
+`.arcanacodex/AGENT_RULES.md`.
+
+**FIRST ACTION:** `mcp__arcana-codex__ping` без исключений в начале
+любой сессии в этом workspace.
+
+**Quick cheatsheet** — что вызывать вместо `rg`/`Read`:
+
+| Tool                                  | Вопрос                                   |
+| ------------------------------------- | ---------------------------------------- |
+| `who_calls("X")`                      | Кто вызывает функцию X?                  |
+| `function_skeleton(file)`             | Структура файла >300 строк?              |
+| `signature` / `hover`                 | Сигнатура / docstring qualified-name?    |
+| `affected_by(symbol)`                 | Что сломается если изменить этот символ? |
+| `code_for_intent("...")`              | Не помню имя — найти по NL описанию?     |
+| `file_health(file_path)`              | Один файл — стоит ли рефакторить?        |
+| `refactor_candidates(scope="staged")` | Что рефакторить перед коммитом?          |
+
+**Escape:** добавить `# arcana: allow` (с пробелом перед `#` в реальной
+команде) в конец `rg`/`grep` команды для one-off bypass.
+`export ARCANACODEX_BYPASS=1` отключает hooks на сессию.
+
+**MUST READ:** прочитать `.arcanacodex/AGENT_RULES.md` ПЕРЕД первым
+ответом про код в этом репо — там полный anti-pattern checklist, scope
+гарантии, поведение hooks, объяснение envelope confidence-сигналов.
+
+<!-- arcanacodex:rules:end -->

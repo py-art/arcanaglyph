@@ -106,3 +106,51 @@ pub fn run_migrations(conn: &Connection) -> Result<(), ArcanaError> {
     tracing::info!("Миграция БД завершена: v{}", SCHEMA_VERSION);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn table_exists(conn: &Connection, name: &str) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name=?1",
+            [name],
+            |row| row.get(0),
+        )
+        .unwrap_or(false)
+    }
+
+    #[test]
+    fn test_get_version_fresh_db_is_zero() {
+        // Пустая БД без таблицы schema_version → версия 0.
+        let conn = Connection::open_in_memory().unwrap();
+        assert_eq!(get_version(&conn), 0);
+    }
+
+    #[test]
+    fn test_run_migrations_brings_db_to_current_version() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(get_version(&conn), SCHEMA_VERSION);
+        // Ключевые таблицы из миграций созданы.
+        assert!(table_exists(&conn, "recordings"));
+        assert!(table_exists(&conn, "settings"));
+    }
+
+    #[test]
+    fn test_run_migrations_is_idempotent() {
+        // Повторный прогон на уже мигрированной БД — no-op без ошибок.
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(get_version(&conn), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn test_run_migrations_rejects_newer_db() {
+        // БД версии новее приложения → ошибка (нельзя откатывать схему).
+        let conn = Connection::open_in_memory().unwrap();
+        set_version(&conn, SCHEMA_VERSION + 1).unwrap();
+        assert!(run_migrations(&conn).is_err());
+    }
+}

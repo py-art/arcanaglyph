@@ -75,10 +75,10 @@
 
 | Движок | Модель | WER (рус.) | Размер | Streaming | Скорость |
 | --- | --- | --- | --- | --- | --- |
-| **GigaAM v3** (по умолч.) | v3_e2e_ctc.int8.onnx | **~8.4%** | 225 MB | Нет | **~0.8 сек / 5 сек аудио** |
-| Whisper | ggml-large-v3-turbo | ~14% | 1.5 GB | Нет | 30-70 сек / 10 сек аудио |
+| **GigaAM v3** (по умолч.) | v3_e2e_ctc.int8.onnx | **~8.4%** | 225 MB | Нет | **~0.8 сек / 5 сек** |
+| Whisper | ggml-large-v3-turbo | ~14% | 1.5 GB | Нет | 30-70 сек / 10 сек |
 | Vosk | vosk-model-ru-0.42 | ~11% | 42 MB | Да | Быстро |
-| Qwen3-ASR | 0.6B ONNX | ~6% (мульти) | 2.5 GB | Нет | ~5 сек / 5 сек аудио |
+| Qwen3-ASR | 0.6B ONNX | ~6% (мульти) | 2.5 GB | Нет | ~5 сек / 5 сек |
 
 ---
 
@@ -132,16 +132,17 @@
 
 ## Phase 9: Продвинутые возможности
 
-- [ ] Пунктуация и капитализация для Vosk, Whisper, Qwen3-ASR (GigaAM уже проставляет сам)
+- [ ] Пунктуация и капитализация для Vosk, Whisper, Qwen3-ASR (GigaAM проставляет сам)
 - [ ] Замена слов / автокоррекция (пользовательский словарь)
-- [x] Экспорт истории транскрипций (.txt / .csv) — кнопки на странице истории, сохранение в ~/Downloads/
+- [x] Экспорт истории транскрипций (.txt / .csv) — кнопки на странице истории
 - [ ] Статистика использования (время записей, распределение по движкам)
 
 ---
 
 ## Исследование: Streaming ASR (2026-04-08)
 
-**GigaAM RNNT** существует (ai-sage/GigaAM-v3, ONNX-экспорт в istupakov/gigaam-v3-onnx), но encoder использует bidirectional attention → streaming **не поддерживается**. В sherpa-onnx GigaAM RNNT работает только как offline recognizer. SberDevices пока не выпустили causal-версию ([issue #18](https://github.com/salute-developers/GigaAM/issues/18)).
+**GigaAM RNNT** существует, но encoder использует bidirectional attention → streaming **не поддерживается**.
+В sherpa-onnx GigaAM RNNT работает только как offline recognizer. SberDevices пока не выпустили causal-версию.
 
 **Лучший вариант — pseudo-streaming с GigaAM CTC:**
 
@@ -204,17 +205,17 @@
 
 | Модель | Разработчик | WER (рус.) | Размер | Лицензия | Rust-интеграция |
 | --- | --- | --- | --- | --- | --- |
-| **GigaAM v3 e2e_ctc** | Sber | **8.4%** | 225 MB (INT8) | MIT | ort (ONNX) / sherpa-onnx |
-| Qwen3-ASR-0.6B | Alibaba | ~6% (multi) | 1.3 GB (Q8) | Apache 2.0 | qwen3-asr.cpp / sherpa-onnx |
-| NVIDIA Canary 2.5B | NVIDIA | ~6% (multi) | 2.5B | CC BY 4.0 | NeMo (Python only) |
-| Whisper Large V3 Turbo | OpenAI | ~14% | 1.5 GB | MIT | whisper-rs |
-| Vosk 0.54 | alphacep | ~11% | 42-250 MB | Apache 2.0 | vosk-rs |
+| **GigaAM v3** | Sber | **8.4%** | 225 MB | MIT | ort (ONNX) |
+| Qwen3-ASR-0.6B | Alibaba | ~6% | 1.3 GB | Apache 2.0 | qwen3-asr.cpp |
+| NVIDIA Canary | NVIDIA | ~6% | 2.5B | CC BY 4.0 | NeMo (Python) |
+| Whisper Large | OpenAI | ~14% | 1.5 GB | MIT | whisper-rs |
+| Vosk 0.54 | alphacep | ~11% | 42 MB | Apache 2.0 | vosk-rs |
 
 ### Исследованные и отклонённые модели
 
 | Модель | Причина отказа | Дата |
 | --- | --- | --- |
-| **Google Gemma 4 E2B/E4B** | Мультимодальная LLM, не ASR. Autoregressive генерация (медленно), ~3 ГБ Q4 (vs 225 МБ GigaAM), 4 ONNX-файла, лимит 30 сек, нет бенчмарков по русскому | 2026-04-08 |
+| **Google Gemma 4** | Мультимодальная LLM, не ASR. Медленно, ~3 ГБ Q4, нет бенчмарков по русскому. | 2026-04-08 |
 
 ---
 
@@ -228,4 +229,4 @@
 - [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) — мультиязычная ASR от Alibaba
 - [qwen3-asr.cpp](https://github.com/predict-woo/qwen3-asr.cpp) — C++ реализация на GGML
 - [Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard) — бенчмарки
-- [Русские ASR модели 2025](https://alphacephei.com/nsh/2025/04/18/russian-models.html) — обзор alphacephei
+- [Русские ASR модели 2025](https://alphacephei.com/nsh/2025/04/18/russian-models.html) — обзор

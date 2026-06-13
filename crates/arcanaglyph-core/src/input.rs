@@ -68,9 +68,10 @@ use std::sync::OnceLock;
 #[cfg(target_os = "linux")]
 use tokio::sync::Mutex;
 
-/// Определяет, работаем ли мы на Wayland
+/// Определяет, работаем ли мы на Wayland.
+/// Единственный источник истины — app-команда `is_wayland` делегирует сюда.
 #[cfg(target_os = "linux")]
-fn is_wayland() -> bool {
+pub fn is_wayland() -> bool {
     std::env::var("XDG_SESSION_TYPE")
         .map(|v| v == "wayland")
         .unwrap_or(false)

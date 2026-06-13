@@ -9,10 +9,10 @@
 
 | Движок | Модель | WER (рус.) | Размер | Скорость |
 | --- | --- | --- | --- | --- |
-| **GigaAM v3** (по умолчанию) | v3_e2e_ctc.int8.onnx | **~8.4%** | 225 МБ | ~0.8 сек / 5 сек аудио |
-| Whisper | ggml-large-v3-turbo.bin | ~14% | 1.5 ГБ | 30-70 сек / 10 сек аудио |
-| Vosk | vosk-model-ru-0.42 | ~11% | 42 МБ | Реальное время (streaming) |
-| Qwen3-ASR | 0.6B ONNX | ~6% (мульти) | 2.5 ГБ | ~5 сек / 5 сек аудио |
+| **GigaAM v3** (по умолчанию) | v3_e2e_ctc.int8.onnx | **~8.4%** | 225 МБ | ~0.8 сек / 5 сек |
+| Whisper | ggml-large-v3-turbo.bin | ~14% | 1.5 ГБ | 30-70 сек / 10 сек |
+| Vosk | vosk-model-ru-0.42 | ~11% | 42 МБ | Real-time (streaming) |
+| Qwen3-ASR | 0.6B ONNX | ~6% (мульти) | 2.5 ГБ | ~5 сек / 5 сек |
 
 При первом запуске автоматически скачивается GigaAM v3 (~225 МБ).
 Остальные модели можно скачать из настроек приложения (вкладка «Модели»).
@@ -83,7 +83,7 @@ cargo build --features qwen3asr
 | GigaAM v3 | `gigaam` (default) | Нет |
 | Qwen3-ASR | `qwen3asr` | Нет |
 | Whisper | `whisper` | CMake, C++ toolchain |
-| Vosk | `vosk` | `libvosk.so` в `/usr/local/lib/` (см. ниже) |
+| Vosk | `vosk` | `libvosk.so` в `/usr/local/lib/` |
 
 Если в SQLite-конфиге сохранён движок, не включённый в текущую сборку (например, после
 переключения с `all-engines` на default), приложение **не падает**: оно автоматически

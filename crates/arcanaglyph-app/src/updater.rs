@@ -19,12 +19,10 @@ use arcanaglyph_core::history::HistoryDB;
 use serde::{Deserialize, Serialize};
 
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const INSTALL_URL: &str =
-    "https://github.com/py-art/arcanaglyph/raw/main/install.sh";
+pub const INSTALL_URL: &str = "https://github.com/py-art/arcanaglyph/raw/main/install.sh";
 
 const STATE_KEY: &str = "update_state";
-const RELEASES_API: &str =
-    "https://api.github.com/repos/py-art/arcanaglyph/releases/latest";
+const RELEASES_API: &str = "https://api.github.com/repos/py-art/arcanaglyph/releases/latest";
 const CHECK_TIMEOUT_SECS: u64 = 10;
 
 /// Информация о доступном обновлении, отдаётся фронту через `app.emit`.
@@ -71,8 +69,8 @@ pub fn read_state(db: &HistoryDB) -> UpdateState {
 }
 
 pub fn write_state(db: &HistoryDB, state: &UpdateState) -> Result<(), ArcanaError> {
-    let json = serde_json::to_string(state)
-        .map_err(|e| ArcanaError::Internal(format!("update_state serialize: {}", e)))?;
+    let json =
+        serde_json::to_string(state).map_err(|e| ArcanaError::Internal(format!("update_state serialize: {}", e)))?;
     db.set_setting(STATE_KEY, &json)
 }
 
@@ -88,11 +86,7 @@ pub fn parse_release_tag(tag: &str) -> Option<(u32, u32, u32)> {
     if parts.len() != 3 {
         return None;
     }
-    Some((
-        parts[0].parse().ok()?,
-        parts[1].parse().ok()?,
-        parts[2].parse().ok()?,
-    ))
+    Some((parts[0].parse().ok()?, parts[1].parse().ok()?, parts[2].parse().ok()?))
 }
 
 pub fn is_newer(latest: &str, current: &str) -> bool {
@@ -106,9 +100,7 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
 /// - `Ok(Some((info, etag)))` — новый релиз есть, JSON распарсен.
 /// - `Ok(None)` — 304 Not Modified ИЛИ tag = pre-release / нестандартный.
 /// - `Err(_)` — сетевая/HTTP ошибка. Caller применяет exponential backoff.
-pub async fn fetch_latest_release(
-    etag: Option<&str>,
-) -> Result<Option<(UpdateInfo, Option<String>)>, ArcanaError> {
+pub async fn fetch_latest_release(etag: Option<&str>) -> Result<Option<(UpdateInfo, Option<String>)>, ArcanaError> {
     // User-Agent обязателен: без него GitHub возвращает 403 + сообщение
     // "Request forbidden by administrative rules".
     let client = reqwest::Client::builder()
@@ -136,10 +128,7 @@ pub async fn fetch_latest_release(
         return Ok(None);
     }
     if !status.is_success() {
-        return Err(ArcanaError::Internal(format!(
-            "GitHub API status {}",
-            status.as_u16()
-        )));
+        return Err(ArcanaError::Internal(format!("GitHub API status {}", status.as_u16())));
     }
 
     let new_etag = resp
@@ -155,13 +144,10 @@ pub async fn fetch_latest_release(
         .text()
         .await
         .map_err(|e| ArcanaError::Internal(format!("GitHub API read: {}", e)))?;
-    let body: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|e| ArcanaError::Internal(format!("GitHub API parse: {}", e)))?;
+    let body: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| ArcanaError::Internal(format!("GitHub API parse: {}", e)))?;
 
-    let tag_name = body
-        .get("tag_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
+    let tag_name = body.get("tag_name").and_then(|v| v.as_str()).unwrap_or_default();
 
     if parse_release_tag(tag_name).is_none() {
         return Ok(None);
@@ -177,10 +163,7 @@ pub async fn fetch_latest_release(
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .to_string();
-    let latest_version = tag_name
-        .strip_prefix('v')
-        .unwrap_or(tag_name)
-        .to_string();
+    let latest_version = tag_name.strip_prefix('v').unwrap_or(tag_name).to_string();
 
     Ok(Some((
         UpdateInfo {
@@ -350,10 +333,7 @@ mod tests {
             latest_published_at: Some(info.published_at.clone()),
             ..Default::default()
         };
-        assert!(
-            state_idle.applying_version.is_none(),
-            "baseline: applying_version пуст"
-        );
+        assert!(state_idle.applying_version.is_none(), "baseline: applying_version пуст");
 
         let state_applying = UpdateState {
             applying_version: Some(info.latest_version.clone()),
@@ -361,5 +341,46 @@ mod tests {
         };
         let blocked = state_applying.applying_version.as_deref() == Some(info.latest_version.as_str());
         assert!(blocked, "при applying_version=latest баннер не показываем");
+    }
+
+    /// Временная HistoryDB под тест (как `temp_db` в core::history).
+    fn temp_history_db(name: &str) -> HistoryDB {
+        let base = std::env::temp_dir().join(format!("arcanaglyph_updater_test_{}_{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).expect("create temp dir");
+        HistoryDB::new(&base.join("history.db"), base.join("audio")).expect("history db")
+    }
+
+    #[test]
+    fn read_state_defaults_when_absent() {
+        let db = temp_history_db("absent");
+        let state = read_state(&db);
+        assert!(state.last_check_at.is_none());
+        assert!(state.latest_known.is_none());
+        assert!(state.etag.is_none());
+    }
+
+    #[test]
+    fn write_then_read_state_roundtrips() {
+        let db = temp_history_db("roundtrip");
+        let state = UpdateState {
+            last_check_at: Some(1_700_000_000),
+            latest_known: Some("1.8.0".into()),
+            latest_release_url: Some("https://example.com/r".into()),
+            latest_published_at: Some("2026-05-10T00:00:00Z".into()),
+            dismissed_version: Some("1.7.9".into()),
+            applying_version: None,
+            etag: Some("W/\"abc\"".into()),
+        };
+        write_state(&db, &state).expect("write");
+
+        let got = read_state(&db);
+        assert_eq!(got.last_check_at, state.last_check_at);
+        assert_eq!(got.latest_known, state.latest_known);
+        assert_eq!(got.latest_release_url, state.latest_release_url);
+        assert_eq!(got.latest_published_at, state.latest_published_at);
+        assert_eq!(got.dismissed_version, state.dismissed_version);
+        assert_eq!(got.applying_version, state.applying_version);
+        assert_eq!(got.etag, state.etag);
     }
 }

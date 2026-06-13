@@ -20,11 +20,14 @@ import { showPage } from '../page-navigation/page-navigation';
 import { initHotkeyComposer, setHotkeyValue } from '../hotkey-config/hotkey-config';
 import { initModelCardsHandlers, renderModelCards } from '../model-management/model-cards';
 import { updateModelBadge } from '../../widgets/model-badge/model-badge';
-import { applyEngineAvailability, updatePreloadLocks } from './engine-availability';
+import { applyEngineAvailability, preloadChangedEngines, updatePreloadLocks } from './engine-availability';
 import { refreshMicDevice } from './mic-device';
 import { loadSettings, setWidgetPositionPicker } from './load-config';
 import { getFormConfig, saveConfig } from './save-config';
 import { settingsState } from './state';
+
+// Движки с отдельными preload-тумблерами (порядок = порядок строк в UI).
+const PRELOAD_ENGINES = ['vosk', 'whisper', 'gigaam', 'qwen3asr'] as const;
 
 // Маппинг полей конфига → DOM элементов для подсветки
 const fieldMap: Record<string, { el: string; type: 'group' | 'row' }> = {
@@ -48,7 +51,9 @@ const fieldMap: Record<string, { el: string; type: 'group' | 'row' }> = {
   show_widget:       { el: 's-show-widget',     type: 'row' },
   widget_position:   { el: 's-widget-position', type: 'group' },
   show_tray:         { el: 's-show-tray',       type: 'row' },
-  preload_models:    { el: 's-preload-vosk',   type: 'row' },
+  // preload_models НЕ здесь: это один логический ключ, но 4 отдельных
+  // тумблера-строки — подсветка изменений делается по-тумблерно в checkChanges
+  // (модель «один ключ → один элемент» этого fieldMap для него не подходит).
 };
 
 export function mountSettings(): void {
@@ -79,6 +84,18 @@ export function mountSettings(): void {
       if (container) container.classList.toggle('changed', changed);
       if (changed) anyChanged = true;
     }
+
+    // preload_models — один логический ключ, но 4 отдельных тумблера-строки.
+    // Подсвечиваем КАЖДУЮ строку независимо (изменилось ли членство именно этого
+    // движка), иначе .changed всегда вешалась бы на первую строку (s-preload-vosk).
+    const curPreload: string[] = (current as any).preload_models || [];
+    const origPreload: string[] = (orig as any).preload_models || [];
+    const changedEngines = preloadChangedEngines(curPreload, origPreload, PRELOAD_ENGINES);
+    for (const eng of PRELOAD_ENGINES) {
+      const row = document.getElementById(`s-preload-${eng}`)?.closest('.setting-row');
+      if (row) row.classList.toggle('changed', changedEngines.includes(eng));
+    }
+    if (changedEngines.length) anyChanged = true;
 
     saveBtn!.disabled = !anyChanged;
     cancelBtn!.disabled = !anyChanged;

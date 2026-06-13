@@ -155,9 +155,6 @@ export function renderHistoryEntries(opts: RenderOptions): void {
     }
     div.appendChild(contentDiv);
 
-    // Инициализация кастомного select
-    initCustomSelects();
-
     async function doRetranscribe(e: Event): Promise<void> {
       const btn = e.target as HTMLButtonElement;
       const rid = parseInt(btn.dataset.rid || '0');
@@ -220,6 +217,12 @@ export function renderHistoryEntries(opts: RenderOptions): void {
 
     historyList.appendChild(div);
   }
+
+  // Инициализация всех кастомных select'ов — один проход после добавления всех
+  // записей. Раньше initCustomSelects() звался внутри цикла на каждую запись:
+  // функция сканирует ВСЕ .custom-select на странице → O(N²) при N записях.
+  // Идемпотентность делала это безопасным, но не быстрым. Один вызов → O(N).
+  initCustomSelects();
 
   // Пагинация
   const totalPages = Math.ceil(total / perPage);
