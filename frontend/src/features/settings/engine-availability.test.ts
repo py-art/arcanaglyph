@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   normalizeTranscriber,
   normalizePreload,
+  preloadChangedEngines,
   updatePreloadLocks,
   applyEngineAvailability,
 } from './engine-availability';
@@ -24,6 +25,29 @@ describe('normalizePreload', () => {
     expect(normalizePreload(['gigaam'], 'vosk')).toEqual(['gigaam', 'vosk']);
     expect(normalizePreload(['vosk'], 'vosk')).toEqual(['vosk']);
     expect(normalizePreload(['whisper', 'gigaam'], 'gigaam')).toEqual(['gigaam', 'whisper']);
+  });
+});
+
+describe('preloadChangedEngines', () => {
+  const engines = ['vosk', 'whisper', 'gigaam', 'qwen3asr'];
+
+  it('возвращает только движки с изменившимся членством', () => {
+    // Включили qwen3asr → меняется ТОЛЬКО qwen3asr, не vosk (регресс на оранжевую рамку).
+    expect(preloadChangedEngines(['gigaam', 'qwen3asr'], ['gigaam'], engines)).toEqual(['qwen3asr']);
+    // Выключили whisper.
+    expect(preloadChangedEngines(['gigaam'], ['gigaam', 'whisper'], engines)).toEqual(['whisper']);
+  });
+
+  it('нет изменений → пустой массив (порядок списков не важен)', () => {
+    expect(preloadChangedEngines(['gigaam', 'vosk'], ['vosk', 'gigaam'], engines)).toEqual([]);
+  });
+
+  it('несколько изменений сразу', () => {
+    expect(preloadChangedEngines(['vosk', 'whisper'], ['gigaam'], engines)).toEqual([
+      'vosk',
+      'whisper',
+      'gigaam',
+    ]);
   });
 });
 

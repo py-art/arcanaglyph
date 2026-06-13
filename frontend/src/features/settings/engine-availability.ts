@@ -26,6 +26,13 @@ export function normalizePreload(preload: string[], transcriber: string): string
   return [...set].sort();
 }
 
+// Движки, у которых членство в preload-списке изменилось (cur vs orig).
+// Чистая функция для по-тумблерной подсветки изменений: каждый preload-тумблер
+// — отдельная строка, и .changed надо вешать только на реально изменившиеся.
+export function preloadChangedEngines(cur: string[], orig: string[], engines: readonly string[]): string[] {
+  return engines.filter(e => cur.includes(e) !== orig.includes(e));
+}
+
 export async function applyEngineAvailability(): Promise<void> {
   let compiled: string[] = [];
   let models: ModelDescriptor[] = [];
