@@ -113,12 +113,18 @@ Cargo workspace из двух крейтов:
 функция / хендлер / walker / модуль) — **полный** цикл, не урезанный
 до «fmt+test». Это project-level mandatory rule (user явно: «не хочу
 потом тратить сутки на рефакторинг»). Source of truth — memory
-`feedback_format_lint_then_dogfood_refactor.md`. PreToolUse-хук
-`scripts/dogfood_ritual_reminder.sh` впрыскивает чеклист на `git commit`.
+`feedback_format_lint_then_dogfood_refactor.md`. (PreToolUse-напоминание
+ритуала на `git commit` — опционально через локальный хук в
+`.claude/settings.local.json`; сам каталог `.claude/` в gitignore,
+поэтому в репо не коммитится.)
 
 1. **fmt + lint:** `cargo fmt --all` → `cargo clippy --workspace
 --all-targets -- -D warnings` (clippy НЕ ловит fmt-нарушения — fmt
-   первым). Python — `ruff format`+`ruff check`; TS — `pnpm -C ui lint`.
+   первым). Фронтенд (`frontend/`, пакет-менеджер npm — есть
+   `package-lock.json`, НЕ pnpm): отдельного форматтера/линтера
+   (eslint/prettier/biome) пока нет — гейт это
+   `npm --prefix frontend run type-check` (= `tsc --noEmit`).
+   Python в репозитории нет.
 2. **MCP coverage-check:** `untested_publics(path_prefix=<изменённый
 модуль>)` или `test_coverage_overview`. Новый pub-символ без теста →
    **дописать тест сейчас**, пока контекст свежий. (v0.216.1 закрыл прежнюю
@@ -133,6 +139,7 @@ Cargo workspace из двух крейтов:
    сейчас (typ. дёшево: вынос inline-тестов в `#[path]`-sibling срезает
    loc/godobject; cc-reduction handler-split). НЕ откладывать.
 5. **После рефактора — fmt + lint снова**, затем `cargo test --workspace`
+   (+ `npm --prefix frontend test` — vitest, если затронут фронт)
    - `cargo fmt --all -- --check` (финальный локальный gate; CI нет, см.
      [docs/rule_enforcement.md](docs/rule_enforcement.md)).
 
