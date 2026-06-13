@@ -28,7 +28,10 @@ build-windows-test:
   cache:
     # Кэш cargo между прогонами — без него каждая сборка тянет и компилирует
     # весь dep-tree заново (на 2 vCPU это дорого по CI-минутам).
+    # when: always — сохраняем кэш даже при провале job'а (иначе на итерациях,
+    # пока сборка падает, кэш никогда не записывается и компиляция каждый раз с нуля).
     key: "windows-cargo"
+    when: always
     paths:
       - .cargo-cache/
       - target/
@@ -59,10 +62,11 @@ build-windows-test:
     #    (targets=nsis, resources=libs/onnxruntime.dll). --no-default-features
     #    отключает дефолтный gigaam (download-binaries), gigaam-system-ort =
     #    load-dynamic + наша bundled DLL. Аргументы после `--` идут в cargo.
-    #    `--%` — PowerShell stop-parsing token: всё после него уходит в tauri
-    #    дословно, иначе PowerShell съедает первый `--` (свой «конец параметров»)
-    #    и `--no-default-features` не доходит до cargo как trailing-arg.
-    - tauri build --bundles nsis --% -- --no-default-features --features gigaam-system-ort
+    #    Запуск через `cmd /c`: PowerShell мешает передаче `--` (съедает голый
+    #    `--`, а `--%` в GitLab-скрипте улетает в tauri как литерал). В cmd `--`
+    #    спецсмысла не имеет и доходит до tauri дословно. tauri/cargo берутся из
+    #    PATH (унаследован дочерним cmd), CARGO_HOME выставлен выше.
+    - cmd /c "tauri build --bundles nsis -- --no-default-features --features gigaam-system-ort"
   artifacts:
     name: "arcanaglyph-windows-$CI_COMMIT_SHORT_SHA"
     paths:
