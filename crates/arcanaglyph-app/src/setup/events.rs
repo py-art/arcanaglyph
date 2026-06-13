@@ -138,9 +138,15 @@ pub fn spawn_update_checker(app_handle: AppHandle, history_db: Arc<HistoryDB>) {
 /// 127.0.0.1:9002. Передаём команду в engine. Слушает до завершения процесса.
 pub fn spawn_udp_listener(engine_state: EngineState) {
     tauri::async_runtime::spawn(async move {
-        let udp_socket = tokio::net::UdpSocket::bind("127.0.0.1:9002")
-            .await
-            .expect("Не удалось привязать UDP :9002");
+        // Если порт занят (запущена вторая копия приложения) — НЕ паникуем в
+        // spawned-task (это уронило бы приложение), а тихо выходим из listener'а.
+        let udp_socket = match tokio::net::UdpSocket::bind("127.0.0.1:9002").await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("Не удалось привязать UDP :9002 (порт занят? вторая копия?): {e}");
+                return;
+            }
+        };
         let mut buf = [0u8; 1024];
         tracing::info!("Слушаю UDP-триггеры на порту 9002");
         loop {

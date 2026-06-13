@@ -162,6 +162,23 @@ fn build_history_entry(rec_text: &str, remove_fillers: bool) -> String {
     }
 }
 
+/// Дебаунс double-trigger: `true` → этот вызов нужно проглотить (повтор в пределах
+/// 250мс от предыдущего). На GNOME одна клавиша приходит и через Tauri global-
+/// shortcut, и через GNOME→ag-trigger→UDP — два `trigger()` за миллисекунды дают
+/// start+stop («визуал пляшет»). Человек физически не успевает нажать старт+стоп
+/// за это время, так что окно безопасно. Состояние — в process-global `static`.
+fn trigger_debounced(now: Instant) -> bool {
+    static LAST_TRIGGER: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+    let mut last = LAST_TRIGGER.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(prev) = *last
+        && now.duration_since(prev) < Duration::from_millis(250)
+    {
+        return true;
+    }
+    *last = Some(now);
+    false
+}
+
 /// Маппинг результата `spawn_blocking(check_microphone)` в текст ошибки.
 /// `None` — микрофон в порядке. Чистая функция (тестируется через `Ok(Ok(()))`).
 fn mic_error_message(mic_check: Result<Result<(), ArcanaError>, tokio::task::JoinError>) -> Option<String> {
@@ -691,26 +708,46 @@ impl ArcanaEngine {
         let call_id = TRIGGER_CALL_COUNT.fetch_add(1, Ordering::Relaxed);
         info!(trigger_call_id = call_id, "ArcanaEngine::trigger ENTRY (sync)");
 
+        // Дебаунс double-trigger (см. trigger_debounced): глушим повтор в пределах
+        // 250мс, иначе одна клавиша на GNOME даёт start+stop и «визуал пляшет».
+        if trigger_debounced(Instant::now()) {
+            info!(trigger_call_id = call_id, "trigger() debounced (double-trigger guard)");
+            return;
+        }
+
         let is_busy = Arc::clone(&self.is_busy);
         let is_paused = Arc::clone(&self.is_paused);
         let current_cmd_tx = Arc::clone(&self.current_cmd_tx);
         let event_tx = self.event_tx.clone();
-        let active_name = self.active_model.read().unwrap().clone();
+        let active_name = self.active_model.read().unwrap_or_else(|e| e.into_inner()).clone();
         // LRU: обновляем last_used для активной модели — каждое нажатие Ctrl+Ё
         // отодвигает время выгрузки. Без этого активно используемая модель могла
         // бы попасть под выгрузку, если пользователь делает паузы > TTL между записями.
         if let Ok(mut last) = self.last_used.write() {
             last.insert(active_name.clone(), Instant::now());
         }
-        let mut transcriber = self
-            .transcribers
-            .read()
-            .unwrap()
-            .get(&active_name)
-            .cloned()
-            .unwrap_or_else(|| self.transcribers.read().unwrap().values().next().unwrap().clone());
+        // Берём активный транскрайбер; если его нет в пуле — fallback на первый
+        // доступный. Пустой пул (модель ещё не загружена) больше НЕ паникует —
+        // эмитим Error и выходим, UI покажет сообщение вместо краша приложения.
+        let mut transcriber = {
+            let pool = self.transcribers.read().unwrap_or_else(|e| e.into_inner());
+            match pool
+                .get(&active_name)
+                .cloned()
+                .or_else(|| pool.values().next().cloned())
+            {
+                Some(t) => t,
+                None => {
+                    tracing::error!("Пул транскрайберов пуст — модель ещё не загружена");
+                    let _ = event_tx.send(EngineEvent::Error(
+                        "Модель ещё не загружена, подождите завершения загрузки".to_string(),
+                    ));
+                    return;
+                }
+            }
+        };
         let need_reload = self.config_changed.swap(false, Ordering::Relaxed);
-        let config = self.config.read().unwrap().clone();
+        let config = self.config.read().unwrap_or_else(|e| e.into_inner()).clone();
         let transcribers_rw = Arc::clone(&self.transcribers);
         let active_model_rw = Arc::clone(&self.active_model);
         // Передаём last_used в async-блок — обновим внутри lazy-reload ветки после
@@ -898,8 +935,13 @@ impl ArcanaEngine {
     /// движков no-op. Вызывается с UI thread'а в любой момент; если не транскрибация
     /// сейчас идёт — флаг просто будет проигнорирован при следующем transcribe().
     pub fn cancel_transcription(&self) -> bool {
-        let active_name = self.active_model.read().unwrap().clone();
-        let transcriber = self.transcribers.read().unwrap().get(&active_name).cloned();
+        let active_name = self.active_model.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let transcriber = self
+            .transcribers
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&active_name)
+            .cloned();
         if let Some(t) = transcriber
             && t.supports_cancel()
         {
@@ -911,10 +953,10 @@ impl ArcanaEngine {
 
     /// Поддерживает ли активный движок отмену транскрибации.
     pub fn active_supports_cancel(&self) -> bool {
-        let active_name = self.active_model.read().unwrap().clone();
+        let active_name = self.active_model.read().unwrap_or_else(|e| e.into_inner()).clone();
         self.transcribers
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get(&active_name)
             .map(|t| t.supports_cancel())
             .unwrap_or(false)

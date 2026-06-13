@@ -400,3 +400,109 @@ impl HistoryDB {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Создаёт временную БД истории в уникальной поддиректории temp.
+    /// Имя должно быть уникальным per-test (тесты идут параллельно).
+    fn temp_db(name: &str) -> (HistoryDB, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("arcanaglyph_test_history_{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        let db = HistoryDB::new(&dir.join("history.db"), dir.join("audio")).expect("создание БД истории");
+        (db, dir)
+    }
+
+    #[test]
+    fn test_recording_and_transcription_roundtrip() {
+        let (db, dir) = temp_db("roundtrip");
+        let rec_id = db.add_recording("/tmp/a.raw", 5).unwrap();
+        db.add_transcription(rec_id, "привет мир", "gigaam-v3", "gigaam")
+            .unwrap();
+
+        let (entries, total) = db.query(0, 10, 0).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].recording.id, rec_id);
+        assert_eq!(entries[0].recording.duration_secs, 5);
+        assert_eq!(entries[0].transcriptions.len(), 1);
+        assert_eq!(entries[0].transcriptions[0].text, "привет мир");
+
+        let trans = db.get_transcriptions(rec_id).unwrap();
+        assert_eq!(trans.len(), 1);
+        assert_eq!(trans[0].model_name, "gigaam-v3");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_settings_get_set_replace() {
+        let (db, dir) = temp_db("settings");
+        assert_eq!(db.get_setting("missing"), None);
+        db.set_setting("lang", "ru").unwrap();
+        assert_eq!(db.get_setting("lang"), Some("ru".to_string()));
+        // INSERT OR REPLACE — повторная запись по тому же ключу перезаписывает.
+        db.set_setting("lang", "en").unwrap();
+        assert_eq!(db.get_setting("lang"), Some("en".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_delete_recording_cascades_transcriptions() {
+        let (db, dir) = temp_db("delete");
+        let rec_id = db.add_recording("/tmp/b.raw", 3).unwrap();
+        db.add_transcription(rec_id, "текст", "m", "t").unwrap();
+        db.delete_recording(rec_id).unwrap();
+
+        let (entries, total) = db.query(0, 10, 0).unwrap();
+        assert_eq!(total, 0);
+        assert!(entries.is_empty());
+        // Каскад (ON DELETE CASCADE): транскрибации удалены вместе с записью.
+        assert!(db.get_transcriptions(rec_id).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_clear_empties_history() {
+        let (db, dir) = temp_db("clear");
+        let r1 = db.add_recording("/tmp/c1.raw", 1).unwrap();
+        db.add_transcription(r1, "t1", "m", "t").unwrap();
+        db.add_recording("/tmp/c2.raw", 2).unwrap();
+        db.clear().unwrap();
+        let (_, total) = db.query(0, 10, 0).unwrap();
+        assert_eq!(total, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_cleanup_old_recordings_guard_and_recent() {
+        let (db, dir) = temp_db("cleanup");
+        db.add_recording("/tmp/recent.raw", 1).unwrap();
+        // hours == 0 → выключено, ничего не удаляет.
+        assert_eq!(db.cleanup_old_recordings(0).unwrap(), 0);
+        // Свежая запись не старше 24ч → не удаляется.
+        assert_eq!(db.cleanup_old_recordings(24).unwrap(), 0);
+        let (_, total) = db.query(0, 10, 0).unwrap();
+        assert_eq!(total, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_export_txt_and_csv() {
+        let (db, dir) = temp_db("export");
+        let rec_id = db.add_recording("/tmp/e.raw", 7).unwrap();
+        db.add_transcription(rec_id, "образец текста", "gigaam-v3", "gigaam")
+            .unwrap();
+
+        let txt = db.export("txt").unwrap();
+        assert!(txt.contains("образец текста"));
+        assert!(txt.contains("gigaam-v3"));
+
+        let csv = db.export("csv").unwrap();
+        assert!(csv.starts_with('\u{FEFF}')); // BOM для Excel
+        assert!(csv.contains("Дата;Длительность"));
+        assert!(csv.contains("образец текста"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

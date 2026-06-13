@@ -527,4 +527,44 @@ auto_type = false
         let path = path.unwrap();
         assert!(path.ends_with("config.toml"));
     }
+
+    #[test]
+    fn test_transcriber_as_str() {
+        assert_eq!(TranscriberType::Vosk.as_str(), "vosk");
+        assert_eq!(TranscriberType::Whisper.as_str(), "whisper");
+        assert_eq!(TranscriberType::GigaAm.as_str(), "gigaam");
+        assert_eq!(TranscriberType::Qwen3Asr.as_str(), "qwen3asr");
+    }
+
+    #[test]
+    fn test_gigaam_compiled_in_default() {
+        // GigaAm включён во всех наших сборках (default feature `gigaam`).
+        assert!(TranscriberType::GigaAm.is_compiled_in());
+        assert!(TranscriberType::compiled_engines().contains(&TranscriberType::GigaAm));
+    }
+
+    #[test]
+    fn test_effective_gain_override_and_fallback() {
+        let mut config = CoreConfig {
+            mic_gain: 1.5,
+            ..Default::default()
+        };
+        config.mic_gain_per_device.insert("Anker SoundCore".to_string(), 2.0);
+        // Для устройства с override — берётся per-device значение.
+        assert_eq!(config.effective_gain("Anker SoundCore"), 2.0);
+        // Для остальных — глобальный mic_gain.
+        assert_eq!(config.effective_gain("Встроенный микрофон"), 1.5);
+    }
+
+    #[test]
+    fn test_transcriber_model_name_and_type_str() {
+        let config = CoreConfig {
+            transcriber: TranscriberType::Vosk,
+            model_path: PathBuf::from("/opt/models/vosk-model-ru-0.42"),
+            ..Default::default()
+        };
+        // Имя модели — последний компонент пути активного движка.
+        assert_eq!(config.transcriber_model_name(), "vosk-model-ru-0.42");
+        assert_eq!(config.transcriber_type_str(), "vosk");
+    }
 }

@@ -78,6 +78,47 @@ export function mountMainControls(): { onModelReady: () => void } {
     setTimeout(() => copyBtn.classList.remove('copied'), 1500);
   });
 
+  // Запуск таймера записи + level-meter с предварительной очисткой. И
+  // recording-started, и recording-resumed раньше создавали setInterval БЕЗ
+  // clearInterval — при потерянном/сдвоенном событии интервалы накладывались
+  // и таймер «дёргался». Очищаем перед запуском → ровно один активный интервал
+  // каждого вида. timerMs здесь НЕ сбрасываем (resume продолжает счёт).
+  const startLevelTimers = (): void => {
+    if (s.timerId) clearInterval(s.timerId);
+    if (s.levelId) clearInterval(s.levelId);
+    s.timerId = setInterval(() => {
+      s.timerMs += 70;
+      timerEl.textContent = fmt(s.timerMs);
+    }, 70);
+    s.levelId = setInterval(async () => {
+      const level = await invoke<number>('get_audio_level');
+      levelFill.style.width = level + '%';
+    }, 100);
+  };
+
+  // Возврат UI в idle. Вынесено из engine://finished-processing, чтобы тот же
+  // сброс мог вызвать watchdog при потере broadcast-события (см. ниже).
+  const resetToIdle = (): void => {
+    s.recording = false;
+    s.transcribing = false;
+    void updateModelBadge();
+
+    micBtn.classList.remove('recording');
+    micGlow.classList.remove('recording');
+    statusEl.textContent = t('status.ready');
+    statusEl.dataset.i18n = 'status.ready';
+    statusEl.className = '';
+
+    controlsEl.classList.remove('active');
+    controlsEl.classList.remove('transcribing');
+    levelBar.classList.remove('active');
+    timerEl.classList.remove('active');
+
+    if (s.timerId) clearInterval(s.timerId);
+    if (s.levelId) clearInterval(s.levelId);
+    levelFill.style.width = '0%';
+  };
+
   const onModelReady = (): void => {
     if (s.modelReady) return;
     s.modelReady = true;
@@ -153,14 +194,7 @@ export function mountMainControls(): { onModelReady: () => void } {
 
     s.timerMs = 0;
     timerEl.textContent = '00:00.00';
-    s.timerId = setInterval(() => {
-      s.timerMs += 70;
-      timerEl.textContent = fmt(s.timerMs);
-    }, 70);
-    s.levelId = setInterval(async () => {
-      const level = await invoke<number>('get_audio_level');
-      levelFill.style.width = level + '%';
-    }, 100);
+    startLevelTimers();
   });
 
   void listen('engine://recording-paused', () => {
@@ -180,14 +214,7 @@ export function mountMainControls(): { onModelReady: () => void } {
     statusEl.textContent = t('status.recording');
     statusEl.dataset.i18n = 'status.recording';
     statusEl.className = 'recording';
-    s.timerId = setInterval(() => {
-      s.timerMs += 70;
-      timerEl.textContent = fmt(s.timerMs);
-    }, 70);
-    s.levelId = setInterval(async () => {
-      const level = await invoke<number>('get_audio_level');
-      levelFill.style.width = level + '%';
-    }, 100);
+    startLevelTimers();
     levelBar.classList.add('active');
     pauseBtn.innerHTML = '<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
     pauseBtn.classList.remove('resume');
@@ -234,26 +261,19 @@ export function mountMainControls(): { onModelReady: () => void } {
     resultWrap.classList.add('visible');
   });
 
-  void listen('engine://finished-processing', () => {
-    s.recording = false;
-    s.transcribing = false;
-    void updateModelBadge();
+  void listen('engine://finished-processing', resetToIdle);
 
-    micBtn.classList.remove('recording');
-    micGlow.classList.remove('recording');
-    statusEl.textContent = t('status.ready');
-    statusEl.dataset.i18n = 'status.ready';
-    statusEl.className = '';
-
-    controlsEl.classList.remove('active');
-    controlsEl.classList.remove('transcribing');
-    levelBar.classList.remove('active');
-    timerEl.classList.remove('active');
-
-    if (s.timerId) clearInterval(s.timerId);
-    if (s.levelId) clearInterval(s.levelId);
-    levelFill.style.width = '0%';
-  });
+  // Watchdog рассинхрона: если broadcast-событие engine://finished-processing
+  // потерялось (лаг/переполнение канала), UI мог залипнуть в «recording». Раз в
+  // ~1.5с сверяемся с реальным состоянием движка: если он уже не пишет и мы не
+  // в фазе транскрибации, а UI всё ещё думает что recording — возвращаем idle.
+  setInterval(async () => {
+    if (!s.recording || s.transcribing) return;
+    try {
+      const stillRecording = await invoke<boolean>('is_recording');
+      if (!stillRecording) resetToIdle();
+    } catch (_) {}
+  }, 1500);
 
   return { onModelReady };
 }
