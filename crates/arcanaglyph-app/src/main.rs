@@ -33,18 +33,35 @@ fn init_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
 
     match CoreConfig::logs_dir() {
         Some(dir) if std::fs::create_dir_all(&dir).is_ok() => {
-            let file_appender = tracing_appender::rolling::daily(&dir, "arcanaglyph.log");
-            let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
-            // with_ansi(false): без escape-кодов цвета — файл читаемый в Блокноте.
-            let file_layer = tracing_subscriber::fmt::layer()
-                .with_ansi(false)
-                .with_writer(non_blocking);
-            tracing_subscriber::registry()
-                .with(filter)
-                .with(stdout_layer)
-                .with(file_layer)
-                .init();
-            Some(guard)
+            // Ротация по дням + ретенция последних 7 файлов
+            // (`arcanaglyph.log.YYYY-MM-DD`): старые удаляются автоматически.
+            // Без лимита (`rolling::daily`) логи копились бесконечно, в т.ч. со
+            // старых версий — особенно заметно на Windows, где файл живёт долго.
+            let appender = tracing_appender::rolling::Builder::new()
+                .rotation(tracing_appender::rolling::Rotation::DAILY)
+                .filename_prefix("arcanaglyph.log")
+                .max_log_files(7)
+                .build(&dir);
+            match appender {
+                Ok(file_appender) => {
+                    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+                    // with_ansi(false): без escape-кодов цвета — файл читаемый в Блокноте.
+                    let file_layer = tracing_subscriber::fmt::layer()
+                        .with_ansi(false)
+                        .with_writer(non_blocking);
+                    tracing_subscriber::registry()
+                        .with(filter)
+                        .with(stdout_layer)
+                        .with(file_layer)
+                        .init();
+                    Some(guard)
+                }
+                // Не смогли построить файловый appender — остаёмся на stdout-only.
+                Err(_) => {
+                    tracing_subscriber::registry().with(filter).with(stdout_layer).init();
+                    None
+                }
+            }
         }
         _ => {
             tracing_subscriber::registry().with(filter).with(stdout_layer).init();

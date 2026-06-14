@@ -70,8 +70,13 @@ fn type_text_windows(text: &str) -> Result<(), ArcanaError> {
     enigo
         .key(Key::Control, Direction::Press)
         .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка нажатия Ctrl: {}", e)))?;
+    // VK_V (0x56) — раскладко-НЕзависимый virtual-key код физической клавиши V.
+    // `Key::Unicode('v')` был раскладко-зависим: при русской (и любой не-латинской)
+    // активной раскладке enigo не находил VK для символа 'v', фолбэчился в Unicode-
+    // ввод буквы (лог: "Unable to enter the key as a virtual key / Falling back to
+    // text") — Ctrl+V не срабатывал, в Блокнот печаталась голая «v», в Word — ничего.
     enigo
-        .key(Key::Unicode('v'), Direction::Click)
+        .key(Key::Other(0x56), Direction::Click)
         .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка V: {}", e)))?;
     enigo
         .key(Key::Control, Direction::Release)
