@@ -337,6 +337,15 @@ impl CoreConfig {
         Self::project_dirs().map(|dirs| dirs.config_dir().join("scripts"))
     }
 
+    /// Директория логов: на Linux `~/.cache/arcanaglyph/logs/`, на Windows
+    /// `%LOCALAPPDATA%\arcanaglyph\ArcanaGlyph\cache\logs\`. Критично для Windows:
+    /// там приложение собрано с `windows_subsystem = "windows"` (нет консоли),
+    /// поэтому stdout-логи теряются — единственный способ получить диагностику
+    /// от пользователя без dev-окружения — писать их в файл.
+    pub fn logs_dir() -> Option<PathBuf> {
+        Self::project_dirs().map(|dirs| dirs.cache_dir().join("logs"))
+    }
+
     /// Имя файла модели для произвольного типа транскрайбера. Единый источник
     /// маппинга `TranscriberType → имя модели`: раньше этот `match` дублировался
     /// в `engine.rs` (preload_model / update_config / create_transcriber).
@@ -575,6 +584,15 @@ auto_type = false
         assert!(path.is_some());
         let path = path.unwrap();
         assert!(path.ends_with("config.toml"));
+    }
+
+    #[test]
+    fn test_logs_dir_ends_with_logs() {
+        // logs_dir должен вернуть Some на системах с доступным HOME/XDG и
+        // оканчиваться на `logs` (под ним лежит arcanaglyph.log с ротацией).
+        let dir = CoreConfig::logs_dir();
+        assert!(dir.is_some());
+        assert!(dir.unwrap().ends_with("logs"));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -71,66 +71,30 @@ pub enum AudioCommand {
 /// Проверяет доступность микрофона перед началом записи (fail fast).
 /// Открывает аудиопоток на 200 мс и проверяет, приходят ли данные.
 pub fn check_microphone(sample_rate: u32) -> Result<(), ArcanaError> {
-    let host = cpal::default_host();
-    let device = host.default_input_device().ok_or_else(|| {
-        ArcanaError::AudioDevice("Микрофон не найден. Подключите микрофон и проверьте настройки звука.".into())
-    })?;
-
-    let device_name = device.name().unwrap_or_else(|_| "неизвестно".into());
+    let device_name = cpal::default_host()
+        .default_input_device()
+        .and_then(|d| d.name().ok())
+        .unwrap_or_else(|| "неизвестно".into());
     info!("Микрофон: {}", device_name);
 
-    let config = cpal::StreamConfig {
-        channels: 1,
-        sample_rate: cpal::SampleRate(sample_rate),
-        buffer_size: cpal::BufferSize::Default,
-    };
+    // Открываем поток тем же адаптивным путём, что и реальная запись:
+    // моно/sample_rate/i16, а при отказе устройства — его родной mix-формат
+    // (Windows WASAPI shared mode) со сведением в моно i16.
+    let level = Arc::new(AtomicU32::new(0));
+    let handles = build_capture_stream(sample_rate, 1.0, false, level)?;
 
-    let got_audio = Arc::new(AtomicBool::new(false));
-    let got_audio_clone = Arc::clone(&got_audio);
-
-    let stream = device
-        .build_input_stream(
-            &config,
-            move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                if data.iter().any(|&s| s != 0) {
-                    got_audio_clone.store(true, Ordering::Relaxed);
-                }
-            },
-            |err| tracing::error!("Ошибка проверки микрофона: {}", err),
-            None,
-        )
-        .map_err(|e| {
-            ArcanaError::AudioDevice(format!(
-                "Не удалось открыть микрофон '{}': {}. Проверьте настройки звука.",
-                device_name, e
-            ))
-        })?;
-
-    stream
-        .play()
-        .map_err(|e| ArcanaError::AudioDevice(format!("Не удалось запустить микрофон '{}': {}", device_name, e)))?;
-
-    // Ждём до 1 сек — PipeWire/ALSA может долго инициализировать поток
+    // Ждём до 1 сек — PipeWire/ALSA/WASAPI инициализируют поток не мгновенно.
     for _ in 0..10 {
         thread::sleep(Duration::from_millis(100));
-        if got_audio.load(Ordering::Relaxed) {
+        if handles.audio_frames_received.load(Ordering::Relaxed) > 0 {
             break;
         }
     }
+    let got_audio = handles.audio_frames_received.load(Ordering::Relaxed) > 0;
+    drop(handles);
 
-    drop(stream);
-
-    if !got_audio.load(Ordering::Relaxed) {
-        // Самая частая причина на голом ALSA (без PulseAudio/PipeWire) — Capture switch
-        // в микшере замьючен. Подсказываем команду размьюта прямо в сообщении.
-        return Err(ArcanaError::AudioDevice(format!(
-            "Микрофон '{}' не передаёт звук (только тишина за 1с). \
-             Возможные причины: микрофон замьючен в ALSA-микшере, выбрано неверное устройство, \
-             или микрофон физически отключён. Проверьте: `amixer -c 0 sget Capture` — если стоит \
-             [off], размьютьте: `amixer -c 0 sset Capture cap` и поднимите усиление: \
-             `amixer -c 0 sset 'Internal Mic Boost' 100%`.",
-            device_name
-        )));
+    if !got_audio {
+        return Err(ArcanaError::AudioDevice(mic_silent_message(&device_name)));
     }
 
     info!("Микрофон '{}' работает", device_name);
@@ -174,6 +138,10 @@ struct CaptureHandles {
     all_samples: Arc<Mutex<Vec<i16>>>,
     audio_frames_received: Arc<AtomicU32>,
     vosk_rx: Option<std::sync::mpsc::Receiver<Vec<i16>>>,
+    /// Реальная частота захвата. Обычно == запрошенной (sample_rate), но при
+    /// fallback на родной конфиг устройства (Windows WASAPI shared mode) может
+    /// отличаться — её и передаём транскрайберу, чтобы ресэмплинг был корректным.
+    capture_sample_rate: u32,
 }
 
 /// Применяет программное усиление микрофона с saturation на ±32767.
@@ -200,6 +168,97 @@ fn compute_rms_level(data: &[i16]) -> (u32, bool) {
     let rms = (sum_sq / data.len() as f64).sqrt();
     let level = ((rms / 3000.0).min(1.0) * 100.0) as u32;
     (level, rms > 10.0)
+}
+
+/// Колбэк ошибок cpal-потока. Вынесен в fn (fn-item Copy) — чтобы переиспользовать
+/// в нескольких `build_input_stream` без проблем с move замыкания.
+fn stream_err_cb(err: cpal::StreamError) {
+    tracing::error!("Ошибка в аудиопотоке: {}", err);
+}
+
+/// Сводит интерливленные N-канальные i16-сэмплы в моно (среднее по каналам).
+/// `channels <= 1` → копия без изменений. Чистая функция (тестируема).
+fn downmix_i16(raw: &[i16], channels: u16) -> Vec<i16> {
+    let ch = channels.max(1) as usize;
+    if ch == 1 {
+        return raw.to_vec();
+    }
+    raw.chunks_exact(ch)
+        .map(|frame| (frame.iter().map(|&s| s as i32).sum::<i32>() / ch as i32) as i16)
+        .collect()
+}
+
+/// Сводит интерливленные N-канальные f32-сэмплы [-1.0, 1.0] в моно i16
+/// (среднее по каналам + масштаб до i16, с saturation). Чистая функция.
+fn downmix_f32(raw: &[f32], channels: u16) -> Vec<i16> {
+    let ch = channels.max(1) as usize;
+    raw.chunks_exact(ch)
+        .map(|frame| {
+            let avg = frame.iter().sum::<f32>() / ch as f32;
+            (avg.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
+        })
+        .collect()
+}
+
+/// Сводит интерливленные N-канальные u16-сэмплы (центр 32768) в моно i16.
+/// Чистая функция (тестируема).
+fn downmix_u16(raw: &[u16], channels: u16) -> Vec<i16> {
+    let ch = channels.max(1) as usize;
+    raw.chunks_exact(ch)
+        .map(|frame| (frame.iter().map(|&s| s as i32 - 32768).sum::<i32>() / ch as i32) as i16)
+        .collect()
+}
+
+/// Обрабатывает один моно-i16 буфер из аудио-callback: применяет mic_gain, считает
+/// RMS-уровень, накапливает сэмплы в буфер и (для streaming-движков) шлёт в vosk-канал.
+/// Вынесено из тела callback'а, чтобы переиспользоваться из колбэков под разные
+/// форматы сэмплов устройства (i16/f32/u16) без дублирования.
+fn process_captured(
+    raw: &[i16],
+    gain: f32,
+    level: &AtomicU32,
+    frames: &AtomicU32,
+    samples: &Mutex<Vec<i16>>,
+    vosk_tx: Option<&std_mpsc::Sender<Vec<i16>>>,
+) {
+    let data = apply_mic_gain(raw, gain);
+    if !data.is_empty() {
+        let (lvl, voiced) = compute_rms_level(&data);
+        level.store(lvl, Ordering::Relaxed);
+        if voiced {
+            frames.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    if let Ok(mut buf) = samples.lock() {
+        buf.extend_from_slice(&data);
+    }
+    if let Some(tx) = vosk_tx {
+        let _ = tx.send(data.to_vec());
+    }
+}
+
+/// Сообщение «микрофон молчит» — платформо-зависимое. На Linux подсказываем ALSA
+/// (amixer), на Windows/macOS — проверку устройства записи в системных настройках.
+fn mic_silent_message(device_name: &str) -> String {
+    #[cfg(target_os = "linux")]
+    {
+        format!(
+            "Микрофон '{}' не передаёт звук (только тишина за 1с). \
+             Возможные причины: микрофон замьючен в ALSA-микшере, выбрано неверное устройство, \
+             или микрофон физически отключён. Проверьте: `amixer -c 0 sget Capture` — если стоит \
+             [off], размьютьте: `amixer -c 0 sset Capture cap` и поднимите усиление: \
+             `amixer -c 0 sset 'Internal Mic Boost' 100%`.",
+            device_name
+        )
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        format!(
+            "Микрофон '{}' не передаёт звук (только тишина за 1с). Проверьте, что выбрано верное \
+             устройство записи и приложению разрешён доступ к микрофону в системных настройках звука.",
+            device_name
+        )
+    }
 }
 
 /// Причина авто-остановки записи по тишине.
@@ -242,23 +301,10 @@ fn build_capture_stream(
         .default_input_device()
         .ok_or_else(|| ArcanaError::AudioDevice("Нет доступного устройства ввода".into()))?;
 
-    let config = cpal::StreamConfig {
-        channels: 1,
-        sample_rate: cpal::SampleRate(sample_rate),
-        buffer_size: cpal::BufferSize::Default,
-    };
-
-    let level_clone = Arc::clone(&audio_level);
-
-    // Счётчик ненулевых аудио-фреймов для детекции «мёртвого» микрофона
+    // Счётчик «живых» аудио-фреймов (детекция мёртвого микрофона) + буфер всех
+    // сэмплов (Whisper / fallback Vosk) + канал для streaming (Vosk).
     let audio_frames_received = Arc::new(AtomicU32::new(0));
-    let frames_clone = Arc::clone(&audio_frames_received);
-
-    // Буфер для сбора всех сэмплов (нужен для Whisper и как fallback для Vosk)
     let all_samples: Arc<Mutex<Vec<i16>>> = Arc::new(Mutex::new(Vec::new()));
-    let samples_clone = Arc::clone(&all_samples);
-
-    // Для потокового режима (Vosk): используем канал для передачи данных из callback
     let (vosk_tx, vosk_rx) = if streaming {
         let (tx, rx) = std::sync::mpsc::channel::<Vec<i16>>();
         (Some(tx), Some(rx))
@@ -266,42 +312,117 @@ fn build_capture_stream(
         (None, None)
     };
 
-    // Применяем mic_gain если задано (>0 и не ровно 1.0). Saturation на ±32767.
-    // Делаем ОДНИМ buffer-clone в callback, всё последующее (RMS, all_samples,
-    // vosk_tx) использует уже усиленные данные.
     if mic_gain > 0.0 && (mic_gain - 1.0).abs() > f32::EPSILON {
         info!("Программное усиление микрофона: x{:.2}", mic_gain);
     }
-    let stream = device
-        .build_input_stream(
-            &config,
+
+    // 1) Предпочтительный конфиг: моно / sample_rate / i16. На Linux (ALSA/PipeWire)
+    //    открывается и сохраняет прежнее поведение (включая Vosk-streaming с фикс. rate).
+    let preferred = cpal::StreamConfig {
+        channels: 1,
+        sample_rate: cpal::SampleRate(sample_rate),
+        buffer_size: cpal::BufferSize::Default,
+    };
+    {
+        let (level, frames, samples, vtx) = (
+            Arc::clone(&audio_level),
+            Arc::clone(&audio_frames_received),
+            Arc::clone(&all_samples),
+            vosk_tx.clone(),
+        );
+        match device.build_input_stream(
+            &preferred,
             move |raw: &[i16], _: &cpal::InputCallbackInfo| {
-                // Локальный буфер с применённым gain (или borrow от raw на gain=1.0)
-                let data = apply_mic_gain(raw, mic_gain);
-
-                // Считаем RMS (уровень громкости) и сохраняем в atomic (0-100)
-                if !data.is_empty() {
-                    let (level, voiced) = compute_rms_level(&data);
-                    level_clone.store(level, Ordering::Relaxed);
-                    if voiced {
-                        frames_clone.fetch_add(1, Ordering::Relaxed);
-                    }
-                }
-
-                // Собираем все сэмплы в буфер
-                if let Ok(mut buf) = samples_clone.lock() {
-                    buf.extend_from_slice(&data);
-                }
-
-                // Для потокового режима (Vosk) — отправляем данные через канал
-                if let Some(ref tx) = vosk_tx {
-                    let _ = tx.send(data.to_vec());
-                }
+                process_captured(raw, mic_gain, &level, &frames, &samples, vtx.as_ref());
             },
-            |err| tracing::error!("Ошибка в аудиопотоке: {}", err),
+            stream_err_cb,
             None,
-        )
-        .map_err(|e| ArcanaError::AudioStream(format!("Не удалось создать аудиопоток: {}", e)))?;
+        ) {
+            Ok(stream) => {
+                stream
+                    .play()
+                    .map_err(|e| ArcanaError::AudioStream(format!("Не удалось запустить аудиопоток: {}", e)))?;
+                return Ok(CaptureHandles {
+                    stream,
+                    all_samples,
+                    audio_frames_received,
+                    vosk_rx,
+                    capture_sample_rate: sample_rate,
+                });
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Микрофон не принял конфиг моно/{}Гц/i16 ({}). Пробую родной конфиг устройства \
+                     (типично для Windows WASAPI shared mode).",
+                    sample_rate,
+                    e
+                );
+            }
+        }
+    }
+
+    // 2) Fallback: родной конфиг устройства (его mix-формат — единственный, что
+    //    гарантированно открывается в shared-режиме). Сводим в моно i16 в callback,
+    //    реальную частоту захвата прокидываем через capture_sample_rate.
+    let supported = device
+        .default_input_config()
+        .map_err(|e| ArcanaError::AudioDevice(format!("Не удалось получить конфиг устройства: {}", e)))?;
+    let sample_format = supported.sample_format();
+    let device_channels = supported.channels();
+    let actual_rate = supported.sample_rate().0;
+    let cfg: cpal::StreamConfig = supported.config();
+    info!(
+        "Аудио-конфиг устройства: {} кан., {} Гц, формат {:?} → сведение в моно i16",
+        device_channels, actual_rate, sample_format
+    );
+
+    let (level, frames, samples, vtx) = (
+        Arc::clone(&audio_level),
+        Arc::clone(&audio_frames_received),
+        Arc::clone(&all_samples),
+        vosk_tx.clone(),
+    );
+    let stream = match sample_format {
+        cpal::SampleFormat::I16 => device.build_input_stream(
+            &cfg,
+            move |raw: &[i16], _: &cpal::InputCallbackInfo| {
+                let mono = downmix_i16(raw, device_channels);
+                process_captured(&mono, mic_gain, &level, &frames, &samples, vtx.as_ref());
+            },
+            stream_err_cb,
+            None,
+        ),
+        cpal::SampleFormat::F32 => device.build_input_stream(
+            &cfg,
+            move |raw: &[f32], _: &cpal::InputCallbackInfo| {
+                let mono = downmix_f32(raw, device_channels);
+                process_captured(&mono, mic_gain, &level, &frames, &samples, vtx.as_ref());
+            },
+            stream_err_cb,
+            None,
+        ),
+        cpal::SampleFormat::U16 => device.build_input_stream(
+            &cfg,
+            move |raw: &[u16], _: &cpal::InputCallbackInfo| {
+                let mono = downmix_u16(raw, device_channels);
+                process_captured(&mono, mic_gain, &level, &frames, &samples, vtx.as_ref());
+            },
+            stream_err_cb,
+            None,
+        ),
+        other => {
+            return Err(ArcanaError::AudioStream(format!(
+                "Формат сэмплов устройства {:?} не поддерживается",
+                other
+            )));
+        }
+    }
+    .map_err(|e| {
+        ArcanaError::AudioStream(format!(
+            "Не удалось создать аудиопоток (устройство: {} кан./{} Гц/{:?}): {}",
+            device_channels, actual_rate, sample_format, e
+        ))
+    })?;
 
     stream
         .play()
@@ -312,6 +433,7 @@ fn build_capture_stream(
         all_samples,
         audio_frames_received,
         vosk_rx,
+        capture_sample_rate: actual_rate,
     })
 }
 
@@ -446,7 +568,10 @@ fn finalize_transcription(
     // Для streaming (Vosk) — данные уже обработаны через accept_waveform, передаём пустой slice
     // Для batch (Whisper) — передаём все сэмплы
     let transcribe_samples = if streaming { &[][..] } else { &samples[..] };
-    let result_text = transcriber.transcribe(transcribe_samples, params.sample_rate)?;
+    // Передаём РЕАЛЬНУЮ частоту захвата (обычно == params.sample_rate, но при
+    // fallback на родной конфиг устройства может отличаться) — иначе ресэмплинг
+    // до 16 кГц в препроцессинге исказил бы аудио.
+    let result_text = transcriber.transcribe(transcribe_samples, handles.capture_sample_rate)?;
     let transcription_duration = transcription_start.elapsed();
     transcriber.reset();
 
@@ -683,6 +808,31 @@ mod tests {
         let out = apply_mic_gain(&[5, -5], 1.0);
         assert!(matches!(out, Cow::Borrowed(_)));
         assert_eq!(out.as_ref(), &[5, -5]);
+    }
+
+    #[test]
+    fn test_downmix_i16_mono_passthrough() {
+        // channels=1 → копия без изменений.
+        assert_eq!(downmix_i16(&[1, -2, 3], 1), vec![1, -2, 3]);
+    }
+
+    #[test]
+    fn test_downmix_i16_stereo_averages() {
+        // Стерео [L,R,L,R] → среднее по парам.
+        assert_eq!(downmix_i16(&[100, 200, -100, -300], 2), vec![150, -200]);
+    }
+
+    #[test]
+    fn test_downmix_f32_stereo_to_i16() {
+        // f32 [-1,1] стерео → среднее + scale до i16. (1.0+0.0)/2=0.5 → 16383.
+        let out = downmix_f32(&[1.0, 0.0, -1.0, -1.0], 2);
+        assert_eq!(out, vec![(0.5 * i16::MAX as f32) as i16, -i16::MAX]);
+    }
+
+    #[test]
+    fn test_downmix_u16_centers_to_i16() {
+        // u16 центр 32768 → i16 центр 0. Моно [32768, 65535] → [0, 32767].
+        assert_eq!(downmix_u16(&[32768, 65535], 1), vec![0, 32767]);
     }
 
     #[test]

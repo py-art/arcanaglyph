@@ -99,7 +99,7 @@ Cargo workspace из двух крейтов:
 
 Текущий список исключений: `CLAUDE.md`, `.gitlab-ci.yml`, `.markdownlint.yaml`,
 `.taplo.toml`, `rustfmt.toml`, `Makefile`, `NOTE.md`, `Roadmap.md`, `README.public.md`,
-`.env.example`, `scripts/`.
+`.env.example`, `scripts/`, `dev-notes/`.
 
 ## Конвенции
 

@@ -46,6 +46,19 @@ describe('mountUpdateBanner', () => {
     expect(invokeMock.mock.calls.some(c => c[0] === 'apply_update')).toBe(true);
   });
 
+  it('«Перезапустить» заблокирован в applying пока установка не подтверждена', () => {
+    buildDom();
+    // update_install_ready (и apply_update) → null = установка ещё не завершена
+    invokeMock.mockResolvedValue(null);
+    mountUpdateBanner();
+    (window as Window & { __showUpdateBanner?: (i: unknown) => void }).__showUpdateBanner!(
+      { latest_version: '2.0.0', release_url: '', published_at: '' },
+    );
+    document.getElementById('update-banner-apply')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const restart = document.getElementById('update-banner-restart') as HTMLButtonElement;
+    expect(restart.disabled).toBe(true);
+  });
+
   it('no-op без элементов баннера', () => {
     expect(() => mountUpdateBanner()).not.toThrow();
   });

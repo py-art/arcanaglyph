@@ -51,13 +51,45 @@ export function mountUpdateBanner(): void {
 
   let state: BannerState = { kind: 'idle' };
 
+  // Баг #3: «Перезапустить» нельзя давать, пока install.sh ещё идёт (иначе
+  // перезапуск стартует СТАРУЮ версию). В applying-режиме кнопка disabled, а
+  // мы опрашиваем `update_install_ready` (флаг от терминала об exit 0) и
+  // разблокируем её только по факту завершения установки.
+  let installPollTimer: ReturnType<typeof setInterval> | null = null;
+  const stopInstallPoll = (): void => {
+    if (installPollTimer !== null) {
+      clearInterval(installPollTimer);
+      installPollTimer = null;
+    }
+  };
+  const startInstallPoll = (): void => {
+    stopInstallPoll();
+    const check = async (): Promise<void> => {
+      let ready = false;
+      try {
+        ready = await invoke<boolean>('update_install_ready');
+      } catch (_) {
+        return;
+      }
+      if (ready && state.kind === 'applying') {
+        restartBtn.disabled = false;
+        progress.hidden = true; // установка завершилась — прогресс больше не нужен
+        stopInstallPoll();
+      }
+    };
+    void check();
+    installPollTimer = setInterval(() => void check(), 1500);
+  };
+
   const render = (next: BannerState): void => {
     state = next;
     switch (next.kind) {
       case 'idle':
+        stopInstallPoll();
         banner.classList.remove('visible');
         return;
       case 'available':
+        stopInstallPoll();
         versionEl.textContent = next.info.latest_version;
         textAvailable.hidden = false;
         textApplying.hidden = true;
@@ -74,8 +106,10 @@ export function mountUpdateBanner(): void {
         progress.hidden = false;
         actionsAvailable.hidden = true;
         actionsApplying.hidden = false;
-        restartBtn.disabled = false;
+        // disabled до подтверждения установки; разблокирует startInstallPoll.
+        restartBtn.disabled = true;
         banner.classList.add('visible');
+        startInstallPoll();
         return;
     }
   };

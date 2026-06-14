@@ -157,9 +157,65 @@ pub fn setup_ort_dylib_path() {
     );
 }
 
-#[cfg(not(target_os = "linux"))]
+/// Windows-аналог: выбирает `onnxruntime.dll` для load-dynamic backend ORT.
+/// Зеркалит Linux-логику, но под раскладку NSIS-инсталлятора.
+///
+/// Приоритет:
+/// 1. `ORT_DYLIB_PATH` в env — оставляем как есть (dev override / `cargo run`).
+/// 2. `onnxruntime.dll` рядом с exe — стандартное место для DLL на Windows
+///    (загрузчик и так нашёл бы её сам, но выставляем явно для предсказуемости).
+/// 3. `libs/onnxruntime.dll` рядом с exe — раскладка Tauri-ресурса
+///    (`bundle.resources = ["libs/onnxruntime.dll"]` в `tauri.windows.conf.json`).
+/// 4. `resources/libs/onnxruntime.dll` — запасной вариант, если Tauri положит
+///    ресурсы в поддиректорию `resources/`.
+///
+/// Если ничего не нашли — оставляем env пустой, ORT попробует загрузить DLL
+/// из системного PATH (то же поведение, что dlopen на Linux).
+#[cfg(target_os = "windows")]
 pub fn setup_ort_dylib_path() {
-    // На Windows/macOS ORT крейт ищет либу через системные механизмы — ничего не делаем.
+    use std::path::PathBuf;
+
+    if std::env::var_os("ORT_DYLIB_PATH").is_some() {
+        tracing::info!(
+            "ORT_DYLIB_PATH = {} (взят из env)",
+            std::env::var("ORT_DYLIB_PATH").unwrap_or_default()
+        );
+        return;
+    }
+
+    let exe_dir = match std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from)) {
+        Some(dir) => dir,
+        None => {
+            tracing::warn!("Не удалось определить каталог exe — ORT_DYLIB_PATH не выставлена");
+            return;
+        }
+    };
+
+    let candidates = [
+        exe_dir.join("onnxruntime.dll"),
+        exe_dir.join("libs").join("onnxruntime.dll"),
+        exe_dir.join("resources").join("libs").join("onnxruntime.dll"),
+    ];
+
+    for path in &candidates {
+        if path.exists() {
+            // SAFETY: вызывается в main() до спавна тредов, до загрузки ort.
+            unsafe { std::env::set_var("ORT_DYLIB_PATH", path) };
+            tracing::info!("ORT_DYLIB_PATH = {} (bundled рядом с exe)", path.display());
+            return;
+        }
+    }
+
+    tracing::warn!(
+        "onnxruntime.dll не найдена рядом с exe (искал: onnxruntime.dll, libs/, \
+         resources/libs/). ORT попробует загрузить через системный PATH — если \
+         там её нет, GigaAM/Qwen3-ASR упадут при инициализации."
+    );
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+pub fn setup_ort_dylib_path() {
+    // На macOS ORT крейт ищет либу через системные механизмы — ничего не делаем.
 }
 
 /// Проставляет glib `g_prgname` в "arcanaglyph", чтобы GTK/GDK выставили `WM_CLASS`

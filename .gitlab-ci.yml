@@ -1,7 +1,80 @@
 stages:
+  - build
   - tag
   - mirror
   - release
+
+# ──────────────────────────────────────────────────────────────────────────
+# ПОЛИГОН Windows-сборки (.exe). Запускается ВРУЧНУЮ на feature-ветке
+# (не main), отдаёт NSIS-инсталлятор как artifact пайплайна — GitHub в это
+# не вовлечён. Прод-доставка .exe (рядом с .deb) — отдельным GitHub Actions
+# job'ом после стабилизации сборки. Раннер: gitlab.com SaaS Windows Beta
+# (tag saas-windows-medium-amd64, 2 vCPU / 7.5 GB, ~5 мин на provision,
+# 400 free-min/мес). Образ: VS Build Tools + Node + cmake/curl/zip есть,
+# Rust ставим сами, NSIS Tauri-bundler качает сам.
+build-windows-test:
+  stage: build
+  tags:
+    - saas-windows-medium-amd64
+  rules:
+    # Только вручную и только на feature-ветках (main собирает GitHub Actions).
+    - if: '$CI_COMMIT_BRANCH != "main"'
+      when: manual
+      allow_failure: true
+  variables:
+    # Версия Microsoft ONNX Runtime — должна совпадать с api-20 в ort-крейте
+    # (ORT 1.20.x), как и для Linux-сборки. См. crates/arcanaglyph-core/Cargo.toml.
+    ORT_VERSION: "1.20.1"
+  cache:
+    # Кэшируем ТОЛЬКО реестр cargo (.cargo-cache/) — он избавляет от пере-скачивания
+    # всех крейтов (сотни МБ: ort-sys, tauri, webview2, …). `target/` НЕ кэшируем
+    # намеренно: на 2-vCPU Windows-раннере архивация/распаковка гигабайтного target/
+    # занимала ~15-20 мин на каждый прогон (и едва не упиралась в таймаут 60 мин),
+    # съедая весь выигрыш от инкрементальной компиляции. Без него сборка с нуля,
+    # но предсказуемо и без риска таймаута на archive_cache.
+    # when: always — сохраняем кэш даже при провале (иначе на падающих итерациях
+    # реестр никогда не пишется и крейты качаются заново).
+    key: "windows-cargo"
+    when: always
+    paths:
+      - .cargo-cache/
+  script:
+    # PowerShell (дефолтный шелл Windows-раннера). $ErrorActionPreference=Stop —
+    # чтобы любой сбой команды валил job, а не проглатывался.
+    - $ErrorActionPreference = "Stop"
+    - $env:CARGO_HOME = "$CI_PROJECT_DIR\.cargo-cache"
+    # 1. Rust (MSVC host; на образе его нет).
+    - Invoke-WebRequest -Uri "https://win.rustup.rs/x86_64" -OutFile rustup-init.exe
+    - .\rustup-init.exe -y --default-toolchain stable --profile minimal
+    - $env:Path = "$env:CARGO_HOME\bin;$env:Path"
+    - rustc --version; cargo --version
+    # 2. Tauri CLI — ставим prebuilt через npm (Node предустановлен), а не
+    #    `cargo install` (компиляция cli ~5-8 мин на 2 ядрах = лишние CI-минуты).
+    - npm install -g "@tauri-apps/cli@^2"
+    - $env:Path = "$env:APPDATA\npm;$env:Path"
+    - tauri --version
+    # 3. Frontend (Vite). Tauri дальше просто читает готовый frontend/dist.
+    - npm --prefix frontend ci
+    - npm --prefix frontend run build
+    # 4. onnxruntime.dll (win-x64) → в resources рядом с tauri.windows.conf.json.
+    - Invoke-WebRequest -Uri "https://github.com/microsoft/onnxruntime/releases/download/v$($env:ORT_VERSION)/onnxruntime-win-x64-$($env:ORT_VERSION).zip" -OutFile ort.zip
+    - Expand-Archive -Path ort.zip -DestinationPath ort-extract -Force
+    - New-Item -ItemType Directory -Force -Path "crates\arcanaglyph-app\libs" | Out-Null
+    - Copy-Item "ort-extract\onnxruntime-win-x64-$($env:ORT_VERSION)\lib\onnxruntime.dll" "crates\arcanaglyph-app\libs\onnxruntime.dll" -Force
+    # 5. Сборка NSIS-инсталлятора. tauri.windows.conf.json мержится автоматически
+    #    (targets=nsis, resources=libs/onnxruntime.dll). --no-default-features
+    #    отключает дефолтный gigaam (download-binaries), gigaam-system-ort =
+    #    load-dynamic + наша bundled DLL. Аргументы после `--` идут в cargo.
+    #    Запуск через `cmd /c`: PowerShell мешает передаче `--` (съедает голый
+    #    `--`, а `--%` в GitLab-скрипте улетает в tauri как литерал). В cmd `--`
+    #    спецсмысла не имеет и доходит до tauri дословно. tauri/cargo берутся из
+    #    PATH (унаследован дочерним cmd), CARGO_HOME выставлен выше.
+    - cmd /c "tauri build --bundles nsis -- --no-default-features --features gigaam-system-ort"
+  artifacts:
+    name: "arcanaglyph-windows-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - target/release/bundle/nsis/*-setup.exe
+    expire_in: 1 week
 
 # Автоматическое создание тега при merge в main, если версия изменилась
 create-tag:
@@ -48,6 +121,7 @@ mirror-to-github:
         [ -f "$f" ] && git rm -f "$f"
       done
       [ -d scripts ] && git rm -rf scripts/
+      [ -d dev-notes ] && git rm -rf dev-notes/
       git add -A
       git status
       git commit -m "ci: prepare public release" --allow-empty

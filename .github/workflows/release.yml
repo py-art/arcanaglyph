@@ -12,7 +12,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -22,7 +22,7 @@ jobs:
         # `npm run build` через `beforeBuildCommand` в tauri.conf.json.
         # Node 22 LTS — Node 20 deprecated на runner'ах GitHub Actions
         # (cutoff сентябрь 2026, заменяем заранее).
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'npm'
@@ -43,7 +43,7 @@ jobs:
         run: npm --prefix frontend run build
 
       - name: Cache Cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/bin/
@@ -144,3 +144,89 @@ jobs:
             target/release/bundle/appimage/*.AppImage \
             target/release/bundle/SHA256SUMS.txt \
             --clobber
+
+  # Windows .exe (NSIS) — «витрина»: официальный релиз должен нести установщик
+  # под Windows. Зеркалит проверенную логику GitLab-job `build-windows-test`
+  # (см. .gitlab-ci.yml): тот же ORT 1.20.1 (api-20 в ort-крейте), та же связка
+  # gigaam-system-ort (load-dynamic) + bundled onnxruntime.dll. Linux-сборка выше
+  # (.deb/.AppImage) идёт параллельно отдельным job'ом — оба грузят в один релиз.
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        # Node 22 LTS (Node 20 deprecated на runner'ах GitHub Actions).
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Cache Cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install frontend deps
+        run: npm --prefix frontend ci
+
+      - name: Build frontend
+        # Явная сборка frontend до tauri build — Tauri дальше читает готовый
+        # frontend/dist через frontendDist (как и в Linux-job выше).
+        run: npm --prefix frontend run build
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --locked
+
+      - name: Download onnxruntime.dll (win-x64)
+        # Кладём DLL в resources рядом с tauri.windows.conf.json (resources=
+        # libs/onnxruntime.dll). Версия = api-20 в ort-крейте (ORT 1.20.x).
+        shell: pwsh
+        env:
+          ORT_VERSION: "1.20.1"
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/microsoft/onnxruntime/releases/download/v$($env:ORT_VERSION)/onnxruntime-win-x64-$($env:ORT_VERSION).zip" -OutFile ort.zip
+          Expand-Archive -Path ort.zip -DestinationPath ort-extract -Force
+          New-Item -ItemType Directory -Force -Path "crates\arcanaglyph-app\libs" | Out-Null
+          Copy-Item "ort-extract\onnxruntime-win-x64-$($env:ORT_VERSION)\lib\onnxruntime.dll" "crates\arcanaglyph-app\libs\onnxruntime.dll" -Force
+
+      - name: Build NSIS installer
+        # shell: cmd — PowerShell съедает голый `--` перед cargo-аргументами;
+        # в cmd `--` спецсмысла не имеет и доходит до cargo дословно (тот же
+        # обход, что `cmd /c` в GitLab-job). --no-default-features отключает
+        # дефолтный gigaam (download-binaries), gigaam-system-ort = load-dynamic
+        # + наша bundled DLL.
+        shell: cmd
+        run: cargo tauri build --bundles nsis -- --no-default-features --features gigaam-system-ort
+
+      - name: Generate SHA256 checksum
+        # Отдельный файл (не общий SHA256SUMS.txt) — Linux-job грузит свой с
+        # --clobber, иначе перетёрли бы друг друга на одном релизе.
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem target\release\bundle\nsis\*-setup.exe | Select-Object -First 1
+          "$((Get-FileHash $exe.FullName -Algorithm SHA256).Hash)  $($exe.Name)" | Out-File -Encoding ascii SHA256SUMS-windows.txt
+          Get-Content SHA256SUMS-windows.txt
+
+      - name: Upload Windows assets to release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.event.release.tag_name }}"
+          $exe = (Get-ChildItem target\release\bundle\nsis\*-setup.exe | Select-Object -First 1).FullName
+          gh release upload "$tag" "$exe" SHA256SUMS-windows.txt --clobber

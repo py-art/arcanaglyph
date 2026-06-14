@@ -129,7 +129,11 @@ APPIMAGE_RUNTIME_FILE="${REPO_ROOT}/target/appimage-runtime-x86_64"
 if [[ ! -s "${APPIMAGE_RUNTIME_FILE}" ]]; then
     log "Phase 0.5/6: downloading AppImage runtime (plugin-appimage не follow'ит 302)"
     mkdir -p "$(dirname "${APPIMAGE_RUNTIME_FILE}")"
-    curl -fSL --retry 3 -o "${APPIMAGE_RUNTIME_FILE}" "${APPIMAGE_RUNTIME_URL}"
+    # --connect-timeout + --speed-time/--speed-limit: обрываем зависший curl
+    # (мёртвое соединение к GitHub = 0 байт надолго), иначе сборка висит вечно.
+    curl -fSL --connect-timeout 30 --retry 3 --retry-delay 5 \
+        --speed-limit 2048 --speed-time 60 \
+        -o "${APPIMAGE_RUNTIME_FILE}" "${APPIMAGE_RUNTIME_URL}"
     chmod +x "${APPIMAGE_RUNTIME_FILE}"
 fi
 export LDAI_RUNTIME_FILE="${APPIMAGE_RUNTIME_FILE}"
@@ -416,7 +420,9 @@ fi
 APPIMAGETOOL="${REPO_ROOT}/target/appimagetool-x86_64.AppImage"
 if [[ ! -x "${APPIMAGETOOL}" ]]; then
     log "Скачиваю appimagetool…"
-    curl -fSL -o "${APPIMAGETOOL}" \
+    curl -fSL --connect-timeout 30 --retry 3 --retry-delay 5 \
+        --speed-limit 2048 --speed-time 60 \
+        -o "${APPIMAGETOOL}" \
         https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
     chmod +x "${APPIMAGETOOL}"
 fi

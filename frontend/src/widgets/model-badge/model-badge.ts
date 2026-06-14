@@ -10,15 +10,21 @@ import type { CoreConfig } from '../../entities/config/types';
 
 let badgeEl: HTMLElement | null = null;
 
+/** Последний сегмент пути. Сплитит и по `/`, и по `\` — иначе на Windows
+ *  (пути с обратными слешами) возвращался бы весь путь целиком. */
+function basename(p: string): string {
+  return p.split(/[/\\]/).pop() ?? p;
+}
+
 export async function updateModelBadge(): Promise<void> {
   if (!badgeEl) return;
   try {
     const cfg = await invoke<CoreConfig>('load_config');
     const modelName =
-      cfg.transcriber === 'vosk' ? cfg.model_path.split('/').pop()
-      : cfg.transcriber === 'whisper' ? cfg.whisper_model_path.split('/').pop()
-      : cfg.transcriber === 'gigaam' ? cfg.gigaam_model_path.split('/').pop()
-      : cfg.transcriber === 'qwen3asr' ? cfg.qwen3asr_model_path.split('/').pop()
+      cfg.transcriber === 'vosk' ? basename(cfg.model_path)
+      : cfg.transcriber === 'whisper' ? basename(cfg.whisper_model_path)
+      : cfg.transcriber === 'gigaam' ? basename(cfg.gigaam_model_path)
+      : cfg.transcriber === 'qwen3asr' ? basename(cfg.qwen3asr_model_path)
       : cfg.transcriber;
     if (modelName) {
       badgeEl.textContent = MODEL_SHORT_NAMES[modelName] || modelName;
