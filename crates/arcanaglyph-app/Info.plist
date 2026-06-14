@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Описание для системного промпта доступа к микрофону. Без этого ключа
+       macOS падает (crash) при первой попытке открыть микрофон через cpal.
+       Tauri v2 авто-мёржит этот Info.plist в сгенерированный при сборке .app. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>ArcanaGlyph использует микрофон для записи и распознавания речи (голосовой ввод текста).</string>
+</dict>
+</plist>
