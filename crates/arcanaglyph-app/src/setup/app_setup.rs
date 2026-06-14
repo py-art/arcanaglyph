@@ -65,6 +65,12 @@ pub fn run_setup(
     build_recording_widget(app, &widget_position);
     register_app_hotkeys(app, &hotkey, &hotkey_pause);
 
+    // macOS гейтит вставку (Accessibility) и глобальный хоткей (Input Monitoring)
+    // отдельными грантами — логируем их статус при старте, чтобы denied было
+    // видно из лог-файла сразу (тест на macOS идёт через друга, цикл медленный).
+    #[cfg(target_os = "macos")]
+    crate::setup::macos_permissions::log_macos_permission_status();
+
     #[cfg(target_os = "linux")]
     ensure_gnome_hotkeys(&hotkey, &hotkey_pause);
 

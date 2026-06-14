@@ -14,6 +14,7 @@ export interface SettingsConfigSnapshot {
   model_path: string;
   whisper_model_path: string;
   gigaam_model_path: string;
+  gigaam_rnnt_model_path: string;
   qwen3asr_model_path: string;
   sample_rate: number;
   max_record_secs: number;

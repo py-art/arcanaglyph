@@ -24,6 +24,7 @@ export async function updateModelBadge(): Promise<void> {
       cfg.transcriber === 'vosk' ? basename(cfg.model_path)
       : cfg.transcriber === 'whisper' ? basename(cfg.whisper_model_path)
       : cfg.transcriber === 'gigaam' ? basename(cfg.gigaam_model_path)
+      : cfg.transcriber === 'gigaam-rnnt' ? basename(cfg.gigaam_rnnt_model_path)
       : cfg.transcriber === 'qwen3asr' ? basename(cfg.qwen3asr_model_path)
       : cfg.transcriber;
     if (modelName) {

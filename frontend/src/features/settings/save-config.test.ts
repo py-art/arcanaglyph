@@ -11,7 +11,7 @@ describe('save-config', () => {
   function baseConfig(over: Partial<SettingsConfigSnapshot> = {}): SettingsConfigSnapshot {
     return {
       transcriber: 'gigaam', model_path: '', whisper_model_path: '', gigaam_model_path: '',
-      qwen3asr_model_path: '', sample_rate: 16000, max_record_secs: 60, hotkey: '', hotkey_pause: '',
+      gigaam_rnnt_model_path: '', qwen3asr_model_path: '', sample_rate: 16000, max_record_secs: 60, hotkey: '', hotkey_pause: '',
       auto_type: false, debug: false, vad_enabled: false, vad_silence_secs: 3, remove_fillers: false,
       mic_gain: 1.0, mic_gain_per_device: {}, retention_hours: 0, autostart: false, start_minimized: false,
       show_widget: true, widget_position: 'bottom-center', show_tray: true, models_base_dir: '',
@@ -74,7 +74,7 @@ describe('save-config', () => {
       input('s-vad-silence', '4');
       for (const t of ['s-auto-type', 's-debug', 's-vad-enabled', 's-remove-fillers',
         's-autostart', 's-start-minimized', 's-show-widget', 's-show-tray',
-        's-preload-vosk', 's-preload-whisper', 's-preload-gigaam', 's-preload-qwen3asr']) {
+        's-preload-vosk', 's-preload-whisper', 's-preload-gigaam', 's-preload-gigaam-rnnt', 's-preload-qwen3asr']) {
         toggle(t, false);
       }
     });

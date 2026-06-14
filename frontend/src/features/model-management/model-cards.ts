@@ -268,6 +268,7 @@ export function getModelPathFromCard(ttype: string): string {
     vosk: 'model_path',
     whisper: 'whisper_model_path',
     gigaam: 'gigaam_model_path',
+    'gigaam-rnnt': 'gigaam_rnnt_model_path',
     qwen3asr: 'qwen3asr_model_path',
   };
   const field = fieldByType[ttype];

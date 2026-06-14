@@ -337,18 +337,35 @@ pub fn get_update_applying(history_db: tauri::State<'_, Arc<HistoryDB>>) -> Opti
 /// показывает toast.
 #[tauri::command]
 pub fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
-    // Detached spawn — новый процесс не зависит от родителя, который
-    // через миллисекунды exit'нется.
-    std::process::Command::new("arcanaglyph")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| format!("Запуск новой версии: {e}"))?;
-
-    // Небольшая задержка чтобы spawn успел запуститься до exit
-    // (на быстрых машинах race не случается, но safer side).
-    std::thread::sleep(std::time::Duration::from_millis(150));
+    // ВАЖНО: НЕ запускаем новый процесс сразу. Пока старый экземпляр ещё жив,
+    // tauri-plugin-single-instance заставляет новый отдать фокус старому и тут
+    // же выйти — в итоге оба завершаются и приложение «не перезапускается»
+    // (прежний код спавнил сразу + спал 150мс → гарантированно ловил эту гонку).
+    // Решение: detached-хелпер ждёт ~1с (старый успевает выйти и освободить
+    // single-instance lock), затем запускает новый `arcanaglyph` из PATH
+    // (wrapper выберет свежий бинарь после установки .deb).
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        std::process::Command::new("sh")
+            .arg("-c")
+            .arg("sleep 1; exec arcanaglyph")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .process_group(0) // своя process-group — переживёт exit родителя
+            .spawn()
+            .map_err(|e| format!("Запуск перезапуска: {e}"))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::process::Command::new("arcanaglyph")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("Запуск перезапуска: {e}"))?;
+    }
     app.exit(0);
     Ok(())
 }

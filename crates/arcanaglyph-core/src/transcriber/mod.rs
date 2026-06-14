@@ -37,6 +37,10 @@ pub fn build_transcriber(config: &CoreConfig, t_type: &TranscriberType) -> Resul
         TranscriberType::GigaAm => Ok(Box::new(crate::gigaam::transcriber::GigaAmTranscriber::new(
             &config.gigaam_model_path,
         )?)),
+        #[cfg(any(feature = "gigaam", feature = "gigaam-system-ort"))]
+        TranscriberType::GigaAmRnnt => Ok(Box::new(crate::gigaam::transcriber_rnnt::GigaAmRnntTranscriber::new(
+            &config.gigaam_rnnt_model_path,
+        )?)),
         #[cfg(feature = "qwen3asr")]
         TranscriberType::Qwen3Asr => Ok(Box::new(crate::qwen3asr::transcriber::Qwen3AsrTranscriber::new(
             &config.qwen3asr_model_path,

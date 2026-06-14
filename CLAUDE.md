@@ -4,10 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Описание проекта
 
-ArcanaGlyph — десктопное приложение для голосового ввода текста на Linux (Rust + Tauri v2).
-Горячая клавиша (Ctrl+Ё) начинает запись, повторная — останавливает и транскрибирует.
-Четыре STT-движка: Vosk, Whisper, GigaAM v3 (по умолчанию), Qwen3-ASR.
-Вставка текста в активное окно через clipboard + XDG RemoteDesktop portal.
+ArcanaGlyph — десктопное приложение для голосового ввода текста на Linux и Windows
+(Rust + Tauri v2). Горячая клавиша (Ctrl+Ё) начинает запись, повторная — останавливает
+и транскрибирует. Четыре STT-движка: Vosk, Whisper, GigaAM v3 (по умолчанию), Qwen3-ASR.
+Вставка распознанного текста в активное окно через буфер обмена + симуляцию вставки
+(платформо-зависимо: XDG RemoteDesktop / Shift+Insert на Linux, Ctrl+V на Windows).
 Иконка в трее: белая (idle), красная (запись), оранжевая (пауза).
 
 ## Команды
@@ -41,7 +42,7 @@ make dist
 ls target/release/bundle/deb/arcanaglyph_*.deb
 
 # 3. Установка (apt сам подтянет зависимости — wl-clipboard и др.)
-sudo apt install ./target/release/bundle/deb/ArcanaGlyph_1.6.0_amd64.deb
+sudo apt install ./target/release/bundle/deb/ArcanaGlyph_*_amd64.deb
 
 # 4. Запуск
 arcanaglyph                # из терминала
@@ -53,6 +54,14 @@ sudo dpkg -r arcanaglyph
 
 После установки в логах `arcanaglyph 2>&1` ищите строку `ORT_DYLIB_PATH = ...` —
 показывает какая ORT-либа выбрана (bundled .deb / self-build override / dev env).
+
+## Сборка под Windows (.exe / NSIS)
+
+`make dist` — только Linux (.deb/.AppImage). Windows-установщик `.exe` (NSIS, движок
+GigaAM через `gigaam-system-ort` + bundled `onnxruntime.dll`) собирает **только CI**:
+GitLab job `build-windows-test` (полигон на feature-ветках, manual) и GitHub Actions job
+`build-windows` в `release.yml` (на `release: published` — кладёт `.exe` в релиз). Локальной
+Windows-сборки нет. Файл логов на Windows: `%LOCALAPPDATA%\arcanaglyph\ArcanaGlyph\cache\logs\`.
 
 ## XDG-пути (после установки)
 
@@ -78,17 +87,24 @@ Cargo workspace из двух крейтов:
     - `mel.rs` — mel-спектрограмма (STFT, HTK mel filterbank, log)
     - `transcriber.rs` — `GigaAmTranscriber` (ONNX inference + CTC decode)
   - `audio.rs` — захват аудио через `cpal`, передача в transcriber
-  - `input.rs` — вставка текста: `wl-copy` + XDG RemoteDesktop на Wayland, `enigo` на X11
+  - `input.rs` — вставка текста, платформо-зависимо: clipboard + XDG RemoteDesktop Ctrl+V
+    (Wayland), `arboard` + Shift+Insert (X11), буфер + Ctrl+V через `enigo` (Windows),
+    `enigo.text()` (macOS)
   - `config.rs` — конфигурация с load/save из SQLite (`TranscriberType`: Vosk, Whisper, GigaAm)
   - `error.rs` — типизированные ошибки через `thiserror`
   - `main.rs` — legacy standalone-сервер (UDP + WebSocket, для отладки)
 
 - **arcanaglyph-app** (`crates/arcanaglyph-app/`) — Tauri v2 приложение:
-  - `main.rs` — инициализация engine, Tauri commands (trigger, is_recording),
-    регистрация глобальных хоткеев (tauri-plugin-global-shortcut),
-    проброс событий engine → фронтенд через `app.emit()`
+  - `main.rs` — точка входа: `init_logging` + panic-hook, Tauri Builder, регистрация
+    глобальных хоткеев (tauri-plugin-global-shortcut), делегирует setup в `setup/app_setup.rs`
+  - `setup/` — `bootstrap.rs` (ORT/пути, `--grant-portal`), `app_setup.rs` (`run_setup`-
+    оркестратор: engine-loader, tray, виджет, hotkeys, portal-warmup), `events.rs` (UDP/update-checker)
+  - `commands/` — Tauri-команды: `updater_cmds.rs` (apply_update, restart), `platform.rs`
+    (portal/gnome/version), history/config/models и др.
+  - `updater.rs` — авто-обновления (GitHub Releases, ETag, applying-state, asset-проверка)
   - `tray.rs` — иконка в системном трее с меню
-  - `dist/index.html` — фронтенд на vanilla JS, общается через Tauri IPC
+  - фронтенд — в `frontend/` (TypeScript + Vite, FSD-структура), общается через Tauri IPC;
+    папка `dist/` удалена в 1.7.1 (версия в About читается runtime через `get_app_version`)
 
 ## GitHub-зеркало
 
@@ -99,7 +115,7 @@ Cargo workspace из двух крейтов:
 
 Текущий список исключений: `CLAUDE.md`, `.gitlab-ci.yml`, `.markdownlint.yaml`,
 `.taplo.toml`, `rustfmt.toml`, `Makefile`, `NOTE.md`, `Roadmap.md`, `README.public.md`,
-`.env.example`, `scripts/`, `dev-notes/`.
+`.env.example`, `INBOX.md`, `.arcanacodex-arch.toml`, `scripts/`, `dev-notes/`.
 
 ## Конвенции
 

@@ -19,9 +19,13 @@ pub enum TranscriberType {
     Vosk,
     /// Whisper — медленнее, значительно точнее
     Whisper,
-    /// GigaAM v3 — лучший для русского (ONNX, SberDevices). Дефолтный движок.
-    #[default]
+    /// GigaAM v3 E2E CTC — точный для русского (ONNX, SberDevices), быстрый CTC-декод.
     GigaAm,
+    /// GigaAM v3 E2E RNN-T — точнее CTC (WER ~8.4% vs ~9.2%), но тяжелее
+    /// (encoder+decoder+joint, greedy-декод). Дефолтный движок.
+    #[default]
+    #[serde(rename = "gigaam-rnnt")]
+    GigaAmRnnt,
     /// Qwen3-ASR — мультиязычный (ONNX, Alibaba)
     Qwen3Asr,
 }
@@ -35,18 +39,25 @@ impl TranscriberType {
         match self {
             Self::Vosk => cfg!(feature = "vosk"),
             Self::Whisper => cfg!(feature = "whisper"),
-            Self::GigaAm => cfg!(feature = "gigaam") || cfg!(feature = "gigaam-system-ort"),
+            Self::GigaAm | Self::GigaAmRnnt => cfg!(feature = "gigaam") || cfg!(feature = "gigaam-system-ort"),
             Self::Qwen3Asr => cfg!(feature = "qwen3asr"),
         }
     }
 
     /// Список движков, скомпилированных в текущую сборку.
     /// Используется фронтендом для отрисовки disabled-пунктов в dropdown'е.
+    /// Порядок — как в UI-реестре моделей: RNN-T (дефолт) идёт перед CTC.
     pub fn compiled_engines() -> Vec<TranscriberType> {
-        [Self::Vosk, Self::Whisper, Self::GigaAm, Self::Qwen3Asr]
-            .into_iter()
-            .filter(Self::is_compiled_in)
-            .collect()
+        [
+            Self::Vosk,
+            Self::Whisper,
+            Self::GigaAmRnnt,
+            Self::GigaAm,
+            Self::Qwen3Asr,
+        ]
+        .into_iter()
+        .filter(Self::is_compiled_in)
+        .collect()
     }
 
     /// Строковое представление для UI / persistence.
@@ -55,6 +66,7 @@ impl TranscriberType {
             Self::Vosk => "vosk",
             Self::Whisper => "whisper",
             Self::GigaAm => "gigaam",
+            Self::GigaAmRnnt => "gigaam-rnnt",
             Self::Qwen3Asr => "qwen3asr",
         }
     }
@@ -65,6 +77,7 @@ impl TranscriberType {
             "vosk" => Some(Self::Vosk),
             "whisper" => Some(Self::Whisper),
             "gigaam" => Some(Self::GigaAm),
+            "gigaam-rnnt" => Some(Self::GigaAmRnnt),
             "qwen3asr" => Some(Self::Qwen3Asr),
             _ => None,
         }
@@ -104,6 +117,10 @@ pub struct CoreConfig {
     /// Директория должна содержать v3_e2e_ctc.int8.onnx и v3_e2e_ctc_vocab.txt
     #[serde(default = "default_gigaam_model_path")]
     pub gigaam_model_path: PathBuf,
+    /// Путь к директории GigaAM RNN-T (для transcriber = "gigaam-rnnt")
+    /// Директория: v3_e2e_rnnt_{encoder,decoder,joint}.int8.onnx + v3_e2e_rnnt_vocab.txt
+    #[serde(default = "default_gigaam_rnnt_model_path")]
+    pub gigaam_rnnt_model_path: PathBuf,
     /// Путь к директории Qwen3-ASR (для transcriber = "qwen3asr")
     /// Директория: onnx_models/ (4 onnx файла + embed_tokens.bin) + tokenizer.json
     #[serde(default = "default_qwen3asr_model_path")]
@@ -191,6 +208,10 @@ fn default_gigaam_model_path() -> PathBuf {
     default_models_dir().join("gigaam-v3-e2e-ctc")
 }
 
+fn default_gigaam_rnnt_model_path() -> PathBuf {
+    default_models_dir().join("gigaam-v3-e2e-rnnt")
+}
+
 fn default_true() -> bool {
     true
 }
@@ -252,12 +273,14 @@ impl Default for CoreConfig {
         let whisper_model_path = models.join("ggml-large-v3-turbo.bin");
         let qwen3asr_model_path = models.join("qwen3-asr-0.6b");
         let gigaam_model_path = models.join("gigaam-v3-e2e-ctc");
+        let gigaam_rnnt_model_path = models.join("gigaam-v3-e2e-rnnt");
 
         Self {
             transcriber: TranscriberType::Vosk,
             model_path,
             whisper_model_path,
             gigaam_model_path,
+            gigaam_rnnt_model_path,
             qwen3asr_model_path,
             sample_rate: 48000,
             max_record_secs: 20,
@@ -297,10 +320,12 @@ impl CoreConfig {
             .unwrap_or(self.mic_gain)
     }
 
-    /// Дефолтный конфиг с GigaAM по умолчанию (для новых пользователей)
-    pub fn default_gigaam() -> Self {
+    /// Дефолтный конфиг для новых пользователей: движок GigaAM v3 RNN-T —
+    /// самый точный для русского (WER ~8.4%). При первом запуске модель
+    /// (encoder/decoder/joint + словарь) скачивается автоматически.
+    pub fn default_gigaam_rnnt() -> Self {
         Self {
-            transcriber: TranscriberType::GigaAm,
+            transcriber: TranscriberType::GigaAmRnnt,
             ..Self::default()
         }
     }
@@ -354,6 +379,7 @@ impl CoreConfig {
             TranscriberType::Vosk => (&self.model_path, "vosk"),
             TranscriberType::Whisper => (&self.whisper_model_path, "whisper"),
             TranscriberType::GigaAm => (&self.gigaam_model_path, "gigaam"),
+            TranscriberType::GigaAmRnnt => (&self.gigaam_rnnt_model_path, "gigaam-rnnt"),
             TranscriberType::Qwen3Asr => (&self.qwen3asr_model_path, "qwen3asr"),
         };
         path.file_name()
@@ -372,6 +398,7 @@ impl CoreConfig {
             TranscriberType::Vosk => "vosk".to_string(),
             TranscriberType::Whisper => "whisper".to_string(),
             TranscriberType::GigaAm => "gigaam".to_string(),
+            TranscriberType::GigaAmRnnt => "gigaam-rnnt".to_string(),
             TranscriberType::Qwen3Asr => "qwen3asr".to_string(),
         }
     }
@@ -409,10 +436,10 @@ impl CoreConfig {
 
                 config
             } else {
-                Self::default_gigaam()
+                Self::default_gigaam_rnnt()
             }
         } else {
-            Self::default_gigaam()
+            Self::default_gigaam_rnnt()
         };
 
         // Сохраняем в БД
@@ -536,6 +563,7 @@ auto_type = false
             model_path: PathBuf::from("/tmp/test-model"),
             whisper_model_path: PathBuf::from("/tmp/test-whisper-model"),
             gigaam_model_path: PathBuf::from("/tmp/test-gigaam-model"),
+            gigaam_rnnt_model_path: PathBuf::from("/tmp/test-gigaam-rnnt-model"),
             qwen3asr_model_path: PathBuf::from("/tmp/test-qwen3asr-model"),
             sample_rate: 16000,
             max_record_secs: 30,

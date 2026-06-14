@@ -230,3 +230,91 @@ jobs:
           $tag = "${{ github.event.release.tag_name }}"
           $exe = (Get-ChildItem target\release\bundle\nsis\*-setup.exe | Select-Object -First 1).FullName
           gh release upload "$tag" "$exe" SHA256SUMS-windows.txt --clobber
+
+  # macOS .dmg (unsigned) — кросс-платформенность, этап 1: первый CI-полигон.
+  # Зеркалит build-windows: тот же ORT 1.20.1 (api-20 в ort-крейте), та же связка
+  # gigaam-system-ort (load-dynamic) + bundled libonnxruntime.dylib. Apple Silicon
+  # (arm64): раннер macos-latest у GitHub Actions сам arm64, поэтому качаем
+  # ORT-бинарь osx-arm64. Сборка БЕЗ подписи/нотаризации — для первого теста
+  # «работает или нет» Apple Developer ($99/год) не нужен; карантин снимает
+  # тестер на своей стороне (`xattr -cr ArcanaGlyph.app`). Подпись + нотаризация —
+  # отдельная задача, когда решим публиковать публично.
+  build-macos:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        # Node 22 LTS (как в build / build-windows).
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Cache Cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install frontend deps
+        run: npm --prefix frontend ci
+
+      - name: Build frontend
+        # Явная сборка frontend до tauri build — Tauri дальше читает готовый
+        # frontend/dist через frontendDist (как в Linux/Windows job выше).
+        run: npm --prefix frontend run build
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --locked
+
+      - name: Download onnxruntime (osx-arm64)
+        # ORT 1.20.1 под Apple Silicon (arm64). Кладём dylib в libs/ рядом с
+        # tauri.macos.conf.json (resources=libs/libonnxruntime.dylib). Версия =
+        # api-20 в ort-крейте (как onnxruntime.dll для Windows). Копируем
+        # версионированный файл (а не symlink) и переименовываем — символическую
+        # ссылку Tauri-bundler в resources класть не должен.
+        env:
+          ORT_VERSION: "1.20.1"
+        run: |
+          curl -sSfL -o ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-osx-arm64-${ORT_VERSION}.tgz"
+          tar -xzf ort.tgz
+          mkdir -p crates/arcanaglyph-app/libs
+          cp "onnxruntime-osx-arm64-${ORT_VERSION}/lib/libonnxruntime.${ORT_VERSION}.dylib" \
+            crates/arcanaglyph-app/libs/libonnxruntime.dylib
+
+      - name: Build .dmg (unsigned)
+        # --no-default-features отключает дефолтный gigaam (download-binaries);
+        # gigaam-system-ort = load-dynamic + наша bundled dylib (как в Windows job).
+        # Без signingIdentity Tauri собирает unsigned .app/.dmg — что и нужно для
+        # первого теста (карантин снимается на стороне тестера).
+        run: cargo tauri build --bundles dmg -- --no-default-features --features gigaam-system-ort
+
+      - name: Generate SHA256 checksum
+        # Отдельный файл (не общий SHA256SUMS.txt) — Linux/Windows job грузят свои
+        # с --clobber, иначе перетёрли бы друг друга на одном релизе.
+        run: |
+          DMG=$(ls target/release/bundle/dmg/*.dmg | head -n1)
+          shasum -a 256 "$DMG" > SHA256SUMS-macos.txt
+          cat SHA256SUMS-macos.txt
+
+      - name: Upload macOS assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          DMG=$(ls target/release/bundle/dmg/*.dmg | head -n1)
+          gh release upload "$TAG" "$DMG" SHA256SUMS-macos.txt --clobber
