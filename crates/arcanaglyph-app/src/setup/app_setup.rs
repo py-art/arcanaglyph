@@ -68,6 +68,13 @@ pub fn run_setup(
     #[cfg(target_os = "linux")]
     ensure_gnome_hotkeys(&hotkey, &hotkey_pause);
 
+    // Проактивный warmup XDG RemoteDesktop при старте (Wayland, нет токена):
+    // portal-popup всплывёт при запуске — спокойный момент, — а не лениво при
+    // первом Ctrl+Ё (диалог посреди записи). После первого согласия токен
+    // переиспользуется и диалога больше нет.
+    #[cfg(target_os = "linux")]
+    spawn_portal_warmup();
+
     // UDP-триггер для Wayland (внешний скрипт ag-trigger → UDP :9002)
     spawn_udp_listener(engine_state.clone());
 
@@ -83,6 +90,22 @@ fn run_startup_history_cleanup() {
     {
         let _ = db.cleanup_old_recordings(cfg.retention_hours);
     }
+}
+
+/// Проактивный warmup XDG RemoteDesktop при старте. Если на Wayland ещё нет
+/// сохранённого restore_token — запрашиваем разрешение в фоне сейчас (popup в
+/// момент запуска), чтобы не ловить его лениво при первом Ctrl+Ё посреди записи.
+/// Best-effort: ошибку только логируем (UI-баннер портала остаётся fallback'ом).
+#[cfg(target_os = "linux")]
+fn spawn_portal_warmup() {
+    if !arcanaglyph_core::input::needs_portal_grant() {
+        return;
+    }
+    tauri::async_runtime::spawn(async {
+        if let Err(e) = arcanaglyph_core::input::warmup_remote_desktop().await {
+            tracing::warn!("Проактивный warmup RemoteDesktop не удался: {e}");
+        }
+    });
 }
 
 /// Периодическая очистка истории: интервал = `retention_hours` (читается каждый цикл).
