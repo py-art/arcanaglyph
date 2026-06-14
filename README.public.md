@@ -1,6 +1,6 @@
 # ArcanaGlyph
 
-Десктопное приложение для голосового ввода текста на Linux (Wayland + X11).
+Десктопное приложение для голосового ввода текста на Linux (Wayland + X11) и Windows.
 Нажимаете горячую клавишу — говорите — нажимаете ещё раз — распознанный текст
 автоматически вставляется в активное окно. Вся транскрибация происходит локально,
 без передачи данных в облако.
@@ -8,7 +8,7 @@
 ## Возможности
 
 - 4 STT-движка на выбор (GigaAM v3, Whisper, Vosk, Qwen3-ASR)
-- Работает на Wayland и X11
+- Работает на Linux (Wayland + X11) и Windows
 - Настраиваемые горячие клавиши (обе раскладки)
 - Иконка в системном трее с управлением записью
 - Плавающий виджет записи поверх всех окон
@@ -38,11 +38,21 @@ curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | bash
 - На остальных Linux-дистрибутивах кладёт `.AppImage` в `~/.local/bin/arcanaglyph`
   и регистрирует ярлык в меню (без sudo).
 
-Поддерживается только Linux x86_64. Зафиксировать конкретную версию:
+One-liner выше — для Linux x86_64. Зафиксировать конкретную версию:
 
 ```bash
 curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | VERSION=1.8.0 bash
 ```
+
+### Windows
+
+Скачайте установщик `ArcanaGlyph_*_x64-setup.exe` из раздела
+[Releases](https://github.com/py-art/arcanaglyph/releases) и запустите двойным
+кликом. Установка идёт без прав администратора. При первом запуске Windows
+SmartScreen может предупредить о неизвестном издателе (приложение не подписано
+сертификатом) — нажмите «Подробнее» → «Выполнить в любом случае».
+
+### Первый запуск
 
 При первом запуске автоматически скачается GigaAM v3 (~225 МБ).
 Остальные модели можно скачать из настроек приложения.
@@ -89,6 +99,9 @@ curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/uninstall.sh | bash -s
 
 Вручную: `sudo apt remove arcana-glyph` (для `.deb`) или
 `rm ~/.local/bin/arcanaglyph ~/.local/share/applications/arcanaglyph.desktop` (для AppImage).
+
+На Windows — через «Параметры → Приложения → ArcanaGlyph → Удалить» или
+деинсталлятор в меню «Пуск».
 
 ## Лицензия
 
