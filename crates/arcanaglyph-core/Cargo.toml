@@ -86,3 +86,8 @@ ashpd = { version = "0.13", features = ["remote_desktop", "screencast"] }
 # на Linux X11 для вставки через clipboard + Shift+Insert вместо enigo.text(),
 # который посимвольно ремаппит XKB и зависает на слабых CPU без AVX (N5095).
 arboard = { version = "3", default-features = false }
+
+# На Windows arboard используется для вставки текста через буфер обмена + Ctrl+V
+# (надёжнее посимвольного enigo.text(), который в Notepad искажает быстрый поток).
+[target.'cfg(target_os = "windows")'.dependencies]
+arboard = { version = "3", default-features = false }

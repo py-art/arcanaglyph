@@ -19,6 +19,9 @@ use arcanaglyph_core::history::HistoryDB;
 use serde::{Deserialize, Serialize};
 
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+// На Windows/macOS in-app установка через install.sh не используется (apply_update
+// открывает страницу релиза), поэтому константа там «мёртвая» — глушим warning.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub const INSTALL_URL: &str = "https://github.com/py-art/arcanaglyph/raw/main/install.sh";
 
 const STATE_KEY: &str = "update_state";
@@ -306,6 +309,8 @@ pub fn dismiss(db: &HistoryDB, version: &str) -> Result<(), ArcanaError> {
 /// Помечает версию как «устанавливается». UI переходит в applying-режим
 /// (прогресс + «Перезапустить»), баннер «Доступно» не показывается
 /// поверх. Сбрасывается при старте, когда `APP_VERSION` догнал значение.
+/// Вызывается только из Linux-ветки apply_update — на Windows/macOS «мёртвая».
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn set_applying(db: &HistoryDB, version: &str) -> Result<(), ArcanaError> {
     let mut state = read_state(db);
     state.applying_version = Some(version.to_string());

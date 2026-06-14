@@ -310,7 +310,11 @@
         width: 100%;
         height: calc(100vh - 32px);
         padding: 1rem 1rem 0;
-        overflow-y: scroll;
+        /* auto, а не scroll: полоса появляется только при реальном переполнении.
+           На WebView2 (Windows) `scroll` всегда рисует видимый скроллбар, даже
+           когда контент влезает (на меню это была паразитная полоса справа);
+           WebKitGTK (Linux) для `scroll` использует overlay и её не показывает. */
+        overflow-y: auto;
       }
       .menu-page.visible, .settings-page.visible { display: flex; }
 
@@ -320,11 +324,12 @@
         margin-bottom: 1rem;
       }
 
-      /* Полоса прокрутки в стиле Tokyo Night */
-      .settings-page::-webkit-scrollbar { width: 6px; }
-      .settings-page::-webkit-scrollbar-track { background: transparent; }
-      .settings-page::-webkit-scrollbar-thumb { background: #292e42; border-radius: 3px; }
-      .settings-page::-webkit-scrollbar-thumb:hover { background: #565f89; }
+      /* Полоса прокрутки в стиле Tokyo Night (тонкая) — для обеих страниц,
+         чтобы на Windows не вылезал дефолтный широкий скроллбар Chromium. */
+      .menu-page::-webkit-scrollbar, .settings-page::-webkit-scrollbar { width: 6px; }
+      .menu-page::-webkit-scrollbar-track, .settings-page::-webkit-scrollbar-track { background: transparent; }
+      .menu-page::-webkit-scrollbar-thumb, .settings-page::-webkit-scrollbar-thumb { background: #292e42; border-radius: 3px; }
+      .menu-page::-webkit-scrollbar-thumb:hover, .settings-page::-webkit-scrollbar-thumb:hover { background: #565f89; }
 
       .menu-item {
         display: flex;

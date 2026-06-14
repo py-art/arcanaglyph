@@ -34,15 +34,56 @@ pub async fn type_text(text: &str) -> Result<(), ArcanaError> {
         }
     }
 
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        type_text_windows(text)
+    }
+
+    #[cfg(target_os = "macos")]
     {
         type_text_enigo(text)
     }
 }
 
-/// Вставка через enigo.text() — посимвольная симуляция нажатий.
-/// Используется только на Windows/macOS, где нативный backend быстрый.
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+/// Windows: буфер обмена + Ctrl+V. Посимвольный `enigo.text()` на Windows
+/// ненадёжен — классический Edit-control (Блокнот) теряет/искажает быстрый
+/// поток SendInput-Unicode (в Word/RichEdit проходит, в Notepad — нет). Ctrl+V
+/// из буфера работает одинаково во всех приложениях (как Shift+Insert на X11).
+/// На Windows буфер «владеет» копией данных, поэтому Clipboard можно дропнуть
+/// сразу — вставка переживёт закрытие хэндла.
+#[cfg(target_os = "windows")]
+fn type_text_windows(text: &str) -> Result<(), ArcanaError> {
+    use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+
+    {
+        let mut cb = arboard::Clipboard::new()
+            .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось открыть буфер обмена: {}", e)))?;
+        cb.set_text(text.to_string())
+            .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось скопировать в буфер: {}", e)))?;
+    }
+
+    // Небольшая пауза, чтобы буфер успел обновиться до Ctrl+V.
+    std::thread::sleep(std::time::Duration::from_millis(30));
+
+    let mut enigo = Enigo::new(&Settings::default())
+        .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось создать Enigo: {}", e)))?;
+    enigo
+        .key(Key::Control, Direction::Press)
+        .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка нажатия Ctrl: {}", e)))?;
+    enigo
+        .key(Key::Unicode('v'), Direction::Click)
+        .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка V: {}", e)))?;
+    enigo
+        .key(Key::Control, Direction::Release)
+        .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка отпускания Ctrl: {}", e)))?;
+
+    tracing::info!("Текст вставлен через буфер обмена + Ctrl+V ({} символов)", text.len());
+    Ok(())
+}
+
+/// Вставка через enigo.text() — посимвольная симуляция нажатий. Используется
+/// на macOS, где нативный backend надёжен.
+#[cfg(target_os = "macos")]
 fn type_text_enigo(text: &str) -> Result<(), ArcanaError> {
     use enigo::{Enigo, Keyboard, Settings};
 
