@@ -82,6 +82,28 @@ pub enum ApiErrorKind {
     Internal,
 }
 
+/// Платформо-зависимая подсказка для ошибок аудиоустройства. На Linux — pavucontrol,
+/// на Windows/macOS — системные настройки звука (показывать «pavucontrol» на Windows
+/// бессмысленно и сбивает с толку).
+fn audio_device_hint() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        "Проверьте устройство записи: Параметры Windows → Система → Звук → Ввод; \
+         и разрешите доступ к микрофону (Конфиденциальность → Микрофон)."
+            .to_string()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "Проверьте микрофон: Системные настройки → Звук → Вход; и разрешите доступ \
+         к микрофону в разделе Конфиденциальность."
+            .to_string()
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        "Проверьте микрофон в pavucontrol → Input Devices.".to_string()
+    }
+}
+
 impl ApiError {
     /// Создаёт ApiError из внутренней `ArcanaError`. Мост между core-типом и
     /// сериализуемым типом для UI. Hint выбирается per-variant — пользователю
@@ -92,7 +114,7 @@ impl ApiError {
             ArcanaError::AudioDevice(msg) => Self {
                 kind: ApiErrorKind::AudioDevice,
                 message: msg.clone(),
-                hint: Some("Проверьте микрофон в pavucontrol → Input Devices.".into()),
+                hint: Some(audio_device_hint()),
             },
             ArcanaError::AudioStream(msg) => Self {
                 kind: ApiErrorKind::AudioStream,
@@ -187,7 +209,7 @@ impl ApiError {
             return Self {
                 kind: ApiErrorKind::AudioDevice,
                 message: msg.into(),
-                hint: Some("Проверьте микрофон в pavucontrol → Input Devices.".into()),
+                hint: Some(audio_device_hint()),
             };
         }
         Self {

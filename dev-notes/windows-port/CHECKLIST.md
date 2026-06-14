@@ -65,8 +65,10 @@
 - [x] Tauri CLI через npm (prebuilt, экономит CI-минуты vs cargo install)
 - [x] `tauri build --bundles nsis -- --no-default-features --features gigaam-system-ort`
 - [x] `artifacts.paths` на `*-setup.exe`
-- [~] ⚠️ ПЕРВЫЙ ПРОГОН — боевая проверка: компиляция cfg(windows)-кода + раннер.
-      Возможны правки PATH/config-discovery/glob по логу job'а.
+- [x] ✅ ЗЕЛЁНАЯ (2026-06-13, коммит 36dace1, ~57 мин). Артефакт .exe 7.5 МБ;
+      7z подтвердил: внутри arcanaglyph.exe + libs/onnxruntime.dll.
+- [x] 3 CI-фикса: PowerShell `--`/`--%` → решение `cmd /c "tauri build ... -- ..."`;
+      `cache: when: always`. NB: кэш target/ большой, архивация ~5 мин (можно урезать).
 
 ## Шаг 9b — CI витрина (ПОСЛЕДНИМ): GitHub Actions Windows-job
 
