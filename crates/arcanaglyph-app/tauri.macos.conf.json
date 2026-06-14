@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "targets": ["dmg"],
+    "resources": ["libs/libonnxruntime.dylib"],
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    }
+  }
+}
