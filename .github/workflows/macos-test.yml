@@ -1,0 +1,73 @@
+name: macOS build (manual test)
+
+# Ручной триггер для итерации macOS-сборки БЕЗ публикации релиза. Основной job
+# `build-macos` в release.yml запускается только на `release: published`, поэтому
+# проверять macos-фиксы иначе пришлось бы жечь релизы. Здесь собираем unsigned
+# `.dmg` на текущей ветке по кнопке (Actions → этот workflow → Run workflow) и
+# кладём его в artifacts (без привязки к релизу).
+#
+# ВАЖНО: GitHub-зеркало содержит только `main` и обновляется при релизе, поэтому
+# кнопка «Run workflow» появится лишь после того, как этот файл попадёт на `main`
+# (т.е. со следующего релиза). Дальше — полноценная итерация macos без релизов.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-macos-test:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Cache Cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install frontend deps
+        run: npm --prefix frontend ci
+
+      - name: Build frontend
+        run: npm --prefix frontend run build
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --locked
+
+      - name: Download onnxruntime (osx-arm64)
+        # То же, что в release.yml build-macos: ORT 1.20.1 под Apple Silicon.
+        env:
+          ORT_VERSION: "1.20.1"
+        run: |
+          curl -sSfL -o ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-osx-arm64-${ORT_VERSION}.tgz"
+          tar -xzf ort.tgz
+          mkdir -p crates/arcanaglyph-app/libs
+          cp "onnxruntime-osx-arm64-${ORT_VERSION}/lib/libonnxruntime.${ORT_VERSION}.dylib" \
+            crates/arcanaglyph-app/libs/libonnxruntime.dylib
+
+      - name: Build .dmg (unsigned)
+        run: cargo tauri build --bundles dmg -- --no-default-features --features gigaam-system-ort
+
+      - name: Upload .dmg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: arcanaglyph-macos-dmg
+          path: target/release/bundle/dmg/*.dmg
+          if-no-files-found: error

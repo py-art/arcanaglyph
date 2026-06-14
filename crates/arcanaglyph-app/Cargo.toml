@@ -14,7 +14,12 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+# macos-private-api нужен для прозрачного окна (виджет записи, .transparent(true)
+# в app_setup.rs) на macOS — там метод закрыт за этой фичей (на Linux/Windows
+# доступен из коробки). На не-macOS фича — no-op. Требует "macOSPrivateApi": true
+# в tauri.conf.json. Исключает дистрибуцию через Mac App Store — нам не важно
+# (распространяем unsigned напрямую).
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
 arcanaglyph-core = { path = "../arcanaglyph-core", default-features = false }
 tokio = { version = "1.47.1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
