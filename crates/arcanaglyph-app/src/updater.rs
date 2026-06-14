@@ -81,6 +81,58 @@ pub fn release_has_installable_asset(release: &serde_json::Value) -> bool {
     })
 }
 
+/// Возвращает `browser_download_url` готового к установке asset'а под текущую
+/// платформу (`INSTALLABLE_ASSET_EXT`, `state == "uploaded"`) из JSON релиза,
+/// или None. Используется Windows-веткой apply_update для авто-скачивания
+/// установщика. Условие отбора то же, что в `release_has_installable_asset`.
+pub fn installable_asset_url(release: &serde_json::Value) -> Option<String> {
+    release.get("assets").and_then(|v| v.as_array()).and_then(|assets| {
+        assets.iter().find_map(|a| {
+            let name = a.get("name").and_then(|n| n.as_str())?;
+            let state = a.get("state").and_then(|s| s.as_str())?;
+            if name.ends_with(INSTALLABLE_ASSET_EXT) && state == "uploaded" {
+                a.get("browser_download_url")
+                    .and_then(|u| u.as_str())
+                    .map(str::to_string)
+            } else {
+                None
+            }
+        })
+    })
+}
+
+/// Скачивает JSON последнего релиза и возвращает URL установочного asset'а под
+/// текущую платформу. В отличие от `check_for_update`, НЕ использует ETag-кэш —
+/// на нажатие «Обновить» нужен свежий релиз именно сейчас. Сетевая функция,
+/// в unit-тестах не покрывается (логика отбора покрыта тестом на
+/// `installable_asset_url`). Компилируется на всех платформах (чтобы Linux-CI
+/// ловил ошибки), вызывается только на Windows.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub async fn fetch_installable_asset_url() -> Result<Option<String>, ArcanaError> {
+    let client = reqwest::Client::builder()
+        .user_agent(format!("arcanaglyph/{}", APP_VERSION))
+        .timeout(std::time::Duration::from_secs(CHECK_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| ArcanaError::Internal(format!("reqwest client: {}", e)))?;
+
+    let text = client
+        .get(RELEASES_API)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .await
+        .map_err(|e| ArcanaError::Internal(format!("release fetch: {}", e)))?
+        .error_for_status()
+        .map_err(|e| ArcanaError::Internal(format!("GitHub API status: {}", e)))?
+        .text()
+        .await
+        .map_err(|e| ArcanaError::Internal(format!("GitHub API read: {}", e)))?;
+
+    let body: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| ArcanaError::Internal(format!("GitHub API parse: {}", e)))?;
+    Ok(installable_asset_url(&body))
+}
+
 /// Состояние update-checker'а. Хранится в SQLite через `set_setting`.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct UpdateState {
@@ -309,8 +361,9 @@ pub fn dismiss(db: &HistoryDB, version: &str) -> Result<(), ArcanaError> {
 /// Помечает версию как «устанавливается». UI переходит в applying-режим
 /// (прогресс + «Перезапустить»), баннер «Доступно» не показывается
 /// поверх. Сбрасывается при старте, когда `APP_VERSION` догнал значение.
-/// Вызывается только из Linux-ветки apply_update — на Windows/macOS «мёртвая».
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+/// Вызывается из Linux- и Windows-веток apply_update — на macOS «мёртвая»
+/// (там apply_update только открывает страницу релиза).
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub fn set_applying(db: &HistoryDB, version: &str) -> Result<(), ArcanaError> {
     let mut state = read_state(db);
     state.applying_version = Some(version.to_string());
@@ -426,6 +479,53 @@ mod tests {
             ]
         });
         assert!(release_has_installable_asset(&release));
+    }
+
+    #[test]
+    fn asset_url_returns_uploaded_installer_for_platform() {
+        let release = serde_json::json!({
+            "assets": [
+                { "name": "ArcanaGlyph_1.7.8_amd64.deb", "state": "uploaded",
+                  "browser_download_url": "https://example.com/app.deb" },
+                { "name": "ArcanaGlyph_1.7.8_x64-setup.exe", "state": "uploaded",
+                  "browser_download_url": "https://example.com/app.exe" }
+            ]
+        });
+        let url = installable_asset_url(&release).expect("есть asset под платформу");
+        // INSTALLABLE_ASSET_EXT платформо-зависим: .deb на Linux, .exe на Windows.
+        if INSTALLABLE_ASSET_EXT == ".deb" {
+            assert_eq!(url, "https://example.com/app.deb");
+        } else {
+            assert_eq!(url, "https://example.com/app.exe");
+        }
+    }
+
+    #[test]
+    fn asset_url_none_when_not_uploaded() {
+        let release = serde_json::json!({
+            "assets": [
+                { "name": format!("ArcanaGlyph_1.7.8_amd64{INSTALLABLE_ASSET_EXT}"),
+                  "state": "starting", "browser_download_url": "https://example.com/app" }
+            ]
+        });
+        assert!(installable_asset_url(&release).is_none());
+    }
+
+    #[test]
+    fn asset_url_none_when_no_matching_ext() {
+        // Только asset чужой платформы — под текущую URL'а нет.
+        let foreign = if INSTALLABLE_ASSET_EXT == ".deb" {
+            ".exe"
+        } else {
+            ".deb"
+        };
+        let name = format!("ArcanaGlyph_1.7.8_pkg{foreign}");
+        let release = serde_json::json!({
+            "assets": [
+                { "name": name, "state": "uploaded", "browser_download_url": "https://example.com/other" }
+            ]
+        });
+        assert!(installable_asset_url(&release).is_none());
     }
 
     #[test]
