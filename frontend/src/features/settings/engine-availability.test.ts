@@ -53,7 +53,7 @@ describe('preloadChangedEngines', () => {
 
 describe('updatePreloadLocks', () => {
   beforeEach(() => {
-    for (const t of ['vosk', 'whisper', 'gigaam', 'qwen3asr']) {
+    for (const t of ['vosk', 'whisper', 'gigaam', 'gigaam-rnnt', 'qwen3asr']) {
       const el = document.createElement('div');
       el.id = `s-preload-${t}`;
       document.body.appendChild(el);

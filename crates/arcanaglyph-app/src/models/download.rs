@@ -237,6 +237,7 @@ pub async fn ensure_active_model(transcriber_type: &str, app: &tauri::AppHandle)
         "vosk" => cfg.model_path.clone(),
         "whisper" => cfg.whisper_model_path.clone(),
         "gigaam" => cfg.gigaam_model_path.clone(),
+        "gigaam-rnnt" => cfg.gigaam_rnnt_model_path.clone(),
         "qwen3asr" => cfg.qwen3asr_model_path.clone(),
         _ => return Ok(()), // unknown тип — пусть engine create вернёт нормальную ошибку
     };

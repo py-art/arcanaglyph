@@ -10,3 +10,8 @@ pub mod mel;
 // только способ доставки libonnxruntime.so (см. core/Cargo.toml).
 #[cfg(any(feature = "gigaam", feature = "gigaam-system-ort"))]
 pub mod transcriber;
+
+// E2E RNN-T вариант (точнее CTC, но тяжелее: encoder+decoder+joint, greedy-декод).
+// Тот же ort-backend, что и `transcriber`.
+#[cfg(any(feature = "gigaam", feature = "gigaam-system-ort"))]
+pub mod transcriber_rnnt;

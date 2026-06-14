@@ -49,6 +49,7 @@ export async function loadSettings(callbacks: ResetUiCallbacks): Promise<void> {
     model_path: cfg.model_path,
     whisper_model_path: cfg.whisper_model_path,
     gigaam_model_path: cfg.gigaam_model_path,
+    gigaam_rnnt_model_path: cfg.gigaam_rnnt_model_path,
     qwen3asr_model_path: cfg.qwen3asr_model_path,
     sample_rate: cfg.sample_rate,
     max_record_secs: cfg.max_record_secs,
@@ -105,6 +106,7 @@ export async function loadSettings(callbacks: ResetUiCallbacks): Promise<void> {
   document.getElementById('s-preload-vosk')!.classList.toggle('on', preload.includes('vosk') || cfg.transcriber === 'vosk');
   document.getElementById('s-preload-whisper')!.classList.toggle('on', preload.includes('whisper') || cfg.transcriber === 'whisper');
   document.getElementById('s-preload-gigaam')!.classList.toggle('on', preload.includes('gigaam') || cfg.transcriber === 'gigaam');
+  document.getElementById('s-preload-gigaam-rnnt')!.classList.toggle('on', preload.includes('gigaam-rnnt') || cfg.transcriber === 'gigaam-rnnt');
   document.getElementById('s-preload-qwen3asr')!.classList.toggle('on', preload.includes('qwen3asr') || cfg.transcriber === 'qwen3asr');
   updatePreloadLocks(cfg.transcriber);
 

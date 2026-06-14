@@ -4,13 +4,14 @@
 // с serialize-форматом (snake_case). Полная синхронизация — на следующей
 // итерации (генерация TS-типов из rust-стороны через ts-rs или вручную).
 
-export type TranscriberType = 'vosk' | 'whisper' | 'gigaam' | 'qwen3asr';
+export type TranscriberType = 'vosk' | 'whisper' | 'gigaam' | 'gigaam-rnnt' | 'qwen3asr';
 
 export interface CoreConfig {
   transcriber: TranscriberType;
   model_path: string;
   whisper_model_path: string;
   gigaam_model_path: string;
+  gigaam_rnnt_model_path: string;
   qwen3asr_model_path: string;
   sample_rate: number;
   max_record_secs: number;

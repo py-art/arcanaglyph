@@ -22,6 +22,7 @@ pub(crate) fn is_model_installed(path: &std::path::Path, transcriber_type: &str,
     let main_file: Option<std::path::PathBuf> = match transcriber_type {
         "whisper" => Some(path.to_path_buf()),
         "gigaam" => Some(path.join("v3_e2e_ctc.int8.onnx")),
+        "gigaam-rnnt" => Some(path.join("v3_e2e_rnnt_encoder.int8.onnx")),
         "qwen3asr" => Some(path.join("tokenizer.json")),
         _ => None,
     };
@@ -40,6 +41,11 @@ pub(crate) fn is_model_installed(path: &std::path::Path, transcriber_type: &str,
     // Дополнительные обязательные файлы (без проверки размера — только наличие)
     match transcriber_type {
         "gigaam" => path.join("v3_e2e_ctc_vocab.txt").exists(),
+        "gigaam-rnnt" => {
+            path.join("v3_e2e_rnnt_decoder.int8.onnx").exists()
+                && path.join("v3_e2e_rnnt_joint.int8.onnx").exists()
+                && path.join("v3_e2e_rnnt_vocab.txt").exists()
+        }
         "qwen3asr" => path.join("onnx_models/encoder_conv.onnx").exists(),
         "vosk" => path.join("conf").exists() || path.join("am").exists() || path.join("graph").exists(),
         _ => true,
@@ -68,6 +74,7 @@ pub fn get_models() -> Result<serde_json::Value, String> {
                 "vosk" => &config.model_path,
                 "whisper" => &config.whisper_model_path,
                 "gigaam" => &config.gigaam_model_path,
+                "gigaam-rnnt" => &config.gigaam_rnnt_model_path,
                 "qwen3asr" => &config.qwen3asr_model_path,
                 _ => &config.model_path,
             };
@@ -167,6 +174,10 @@ pub async fn delete_model(model_id: String, path: String) -> Result<(), String> 
         }
         "gigaam" if config.gigaam_model_path == pb => {
             config.gigaam_model_path = std::path::PathBuf::new();
+            true
+        }
+        "gigaam-rnnt" if config.gigaam_rnnt_model_path == pb => {
+            config.gigaam_rnnt_model_path = std::path::PathBuf::new();
             true
         }
         "qwen3asr" if config.qwen3asr_model_path == pb => {
@@ -292,6 +303,10 @@ pub async fn download_model(
                 }
                 "gigaam" => {
                     config.gigaam_model_path = saved_path;
+                    true
+                }
+                "gigaam-rnnt" => {
+                    config.gigaam_rnnt_model_path = saved_path;
                     true
                 }
                 "qwen3asr" => {

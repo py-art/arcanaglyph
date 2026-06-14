@@ -1475,10 +1475,11 @@
           <div class="custom-select" id="s-transcriber" data-value="vosk">
             <div class="custom-select-trigger"></div>
             <div class="custom-select-options">
+              <div class="custom-select-option" data-value="gigaam-rnnt" data-i18n="settings.t_gigaam_rnnt">GigaAM v3 RNN-T — самый точный для русского</div>
               <div class="custom-select-option" data-value="vosk" data-i18n="settings.t_vosk">Vosk — быстрый, менее точный</div>
               <div class="custom-select-option" data-value="whisper-tiny" data-i18n="settings.t_whisper_tiny">Whisper Tiny — для слабых CPU</div>
               <div class="custom-select-option" data-value="whisper-large" data-i18n="settings.t_whisper_large">Whisper Large V3 Turbo — точнее, нужен AVX2</div>
-              <div class="custom-select-option" data-value="gigaam" data-i18n="settings.t_gigaam">GigaAM v3 — лучший для русского</div>
+              <div class="custom-select-option" data-value="gigaam" data-i18n="settings.t_gigaam">GigaAM v3 CTC — точный, быстрее RNN-T</div>
               <div class="custom-select-option" data-value="qwen3asr" data-i18n="settings.t_qwen3asr">Qwen3-ASR — мультиязычный</div>
             </div>
           </div>
@@ -1493,7 +1494,11 @@
           <div class="toggle" id="s-preload-whisper"></div>
         </div>
         <div class="setting-row">
-          <label data-i18n="settings.preload_gigaam">Предзагрузка GigaAM</label>
+          <label data-i18n="settings.preload_gigaam_rnnt">Предзагрузка GigaAM RNN-T</label>
+          <div class="toggle" id="s-preload-gigaam-rnnt"></div>
+        </div>
+        <div class="setting-row">
+          <label data-i18n="settings.preload_gigaam">Предзагрузка GigaAM CTC</label>
           <div class="toggle" id="s-preload-gigaam"></div>
         </div>
         <div class="setting-row" style="margin-bottom:0.5rem;">

@@ -50,7 +50,8 @@ function fmtDuration(secs: number): string {
 const MODEL_TYPES = [
   { type: 'vosk', label: 'Vosk' },
   { type: 'whisper', label: 'Whisper' },
-  { type: 'gigaam', label: 'GigaAM' },
+  { type: 'gigaam-rnnt', label: 'GigaAM RNN-T' },
+  { type: 'gigaam', label: 'GigaAM CTC' },
   { type: 'qwen3asr', label: 'Qwen3-ASR' },
 ];
 

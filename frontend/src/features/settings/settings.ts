@@ -27,7 +27,7 @@ import { getFormConfig, saveConfig } from './save-config';
 import { settingsState } from './state';
 
 // Движки с отдельными preload-тумблерами (порядок = порядок строк в UI).
-const PRELOAD_ENGINES = ['vosk', 'whisper', 'gigaam', 'qwen3asr'] as const;
+const PRELOAD_ENGINES = ['vosk', 'whisper', 'gigaam', 'gigaam-rnnt', 'qwen3asr'] as const;
 
 // Маппинг полей конфига → DOM элементов для подсветки
 const fieldMap: Record<string, { el: string; type: 'group' | 'row' }> = {
@@ -325,6 +325,7 @@ export function mountSettings(): void {
     document.getElementById('s-preload-vosk')!.classList.toggle('on', preloadOrig.includes('vosk'));
     document.getElementById('s-preload-whisper')!.classList.toggle('on', preloadOrig.includes('whisper'));
     document.getElementById('s-preload-gigaam')!.classList.toggle('on', preloadOrig.includes('gigaam'));
+    document.getElementById('s-preload-gigaam-rnnt')!.classList.toggle('on', preloadOrig.includes('gigaam-rnnt'));
     document.getElementById('s-preload-qwen3asr')!.classList.toggle('on', preloadOrig.includes('qwen3asr'));
     checkChanges();
   });

@@ -87,15 +87,18 @@ export function updatePreloadLocks(transcriber: string): void {
   const voskToggle = document.getElementById('s-preload-vosk');
   const whisperToggle = document.getElementById('s-preload-whisper');
   const gigaamToggle = document.getElementById('s-preload-gigaam');
+  const gigaamRnntToggle = document.getElementById('s-preload-gigaam-rnnt');
   const qwen3asrToggle = document.getElementById('s-preload-qwen3asr');
-  if (!voskToggle || !whisperToggle || !gigaamToggle || !qwen3asrToggle) return;
+  if (!voskToggle || !whisperToggle || !gigaamToggle || !gigaamRnntToggle || !qwen3asrToggle) return;
   voskToggle.classList.toggle('locked', transcriber === 'vosk');
   whisperToggle.classList.toggle('locked', transcriber === 'whisper');
   gigaamToggle.classList.toggle('locked', transcriber === 'gigaam');
+  gigaamRnntToggle.classList.toggle('locked', transcriber === 'gigaam-rnnt');
   qwen3asrToggle.classList.toggle('locked', transcriber === 'qwen3asr');
   // Модель по умолчанию всегда ON
   if (transcriber === 'vosk') voskToggle.classList.add('on');
   if (transcriber === 'whisper') whisperToggle.classList.add('on');
   if (transcriber === 'gigaam') gigaamToggle.classList.add('on');
+  if (transcriber === 'gigaam-rnnt') gigaamRnntToggle.classList.add('on');
   if (transcriber === 'qwen3asr') qwen3asrToggle.classList.add('on');
 }

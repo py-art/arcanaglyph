@@ -8,6 +8,7 @@
 // они нужны UI, чтобы показать пользователю даже те модели, чей backend в текущей
 // сборке не включён (метка «не доступно»). Сами transcriber'ы по-прежнему за
 // `#[cfg(feature = ...)]` и в реестр `all()` попадают только активные.
+pub mod gigaam_v3_rnnt_speech_model;
 pub mod gigaam_v3_speech_model;
 pub mod qwen3_asr_speech_model;
 pub mod vosk_russian_speech_model;
@@ -58,6 +59,11 @@ pub fn all() -> Vec<&'static SpeechModelInfo> {
 /// (с пометкой «не доступно»), а пользователь видел, что в принципе поддерживается.
 pub fn all_with_availability() -> Vec<(&'static SpeechModelInfo, bool)> {
     vec![
+        // GigaAM v3 E2E RNN-T — дефолтная и самая точная модель: стоит ПЕРВОЙ в списке.
+        (
+            &gigaam_v3_rnnt_speech_model::MODEL,
+            cfg!(any(feature = "gigaam", feature = "gigaam-system-ort")),
+        ),
         (&vosk_russian_speech_model::MODEL, cfg!(feature = "vosk")),
         // Whisper: Tiny идёт первой (быстрая, ~80 МБ — для слабых CPU без AVX2).
         // Large V3 Turbo — точнее, но очень медленно на безAVX2 (~20× от AVX2-machine).
@@ -102,12 +108,13 @@ mod tests {
 
     #[test]
     fn test_all_with_availability_lists_every_known_model() {
-        // Реестр известных моделей фиксирован (5 шт.) и компилируется всегда,
+        // Реестр известных моделей фиксирован (6 шт.) и компилируется всегда,
         // независимо от включённых backend-фич — UI показывает все карточки.
         let all = all_with_availability();
-        assert_eq!(all.len(), 5);
+        assert_eq!(all.len(), 6);
         let ids: Vec<&str> = all.iter().map(|(m, _)| m.id).collect();
         for expected in [
+            gigaam_v3_rnnt_speech_model::MODEL.id,
             vosk_russian_speech_model::MODEL.id,
             whisper_tiny_speech_model::MODEL.id,
             whisper_large_v3_turbo_speech_model::MODEL.id,
@@ -116,6 +123,14 @@ mod tests {
         ] {
             assert!(ids.contains(&expected), "нет модели {expected} в реестре");
         }
+    }
+
+    #[test]
+    fn test_gigaam_rnnt_is_first_in_list() {
+        // Требование: дефолтная (самая точная) модель GigaAM v3 RNN-T идёт первой
+        // в списке «Доступные модели» — UI рисует карточки в порядке этого реестра.
+        let all = all_with_availability();
+        assert_eq!(all[0].0.id, "gigaam-v3-e2e-rnnt", "RNN-T должна быть первой в реестре");
     }
 
     #[test]
