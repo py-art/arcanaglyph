@@ -86,7 +86,9 @@ if [[ -f "${AVX2_TARGET}" ]]; then
 else
     log "Качаю Microsoft pre-built ORT v${ORT_VERSION}..."
     ORT_TGZ="${TMP_DIR}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
-    curl -fL --output "${ORT_TGZ}" "${ORT_URL}"
+    curl -fL --connect-timeout 30 --retry 3 --retry-delay 5 \
+        --speed-limit 2048 --speed-time 60 \
+        --output "${ORT_TGZ}" "${ORT_URL}"
     verify_sha256 "${ORT_TGZ}" "${ORT_TGZ_SHA256}"
     log "Распаковываю..."
     ORT_EXTRACT_DIR="${TMP_DIR}/ort-${ORT_VERSION}"
@@ -105,7 +107,9 @@ if [[ -f "${VOSK_TARGET}" ]]; then
 else
     log "Качаю vosk pre-built v${VOSK_VERSION}..."
     VOSK_ZIP="${TMP_DIR}/vosk-linux-x86_64-${VOSK_VERSION}.zip"
-    curl -fL --output "${VOSK_ZIP}" "${VOSK_URL}"
+    curl -fL --connect-timeout 30 --retry 3 --retry-delay 5 \
+        --speed-limit 2048 --speed-time 60 \
+        --output "${VOSK_ZIP}" "${VOSK_URL}"
     verify_sha256 "${VOSK_ZIP}" "${VOSK_ZIP_SHA256}"
     log "Распаковываю..."
     VOSK_EXTRACT_DIR="${TMP_DIR}/vosk-${VOSK_VERSION}"
