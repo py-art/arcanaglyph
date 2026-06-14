@@ -286,6 +286,7 @@ fn main() {
             commands::apply_update,
             commands::clear_update_applying,
             commands::get_update_applying,
+            commands::update_install_ready,
             commands::restart_app,
             commands::widget_extension_status,
             commands::install_widget_extension,

@@ -199,12 +199,20 @@ async fn apply_update_inner() -> Result<(), String> {
     // его прочитать. Файл лежит в /tmp/, очистится при reboot.
     let path = tmp.into_temp_path().keep().map_err(|e| format!("temp keep: {e}"))?;
 
+    // Флаг успешной установки: терминальная обёртка создаёт его при exit 0
+    // install.sh. UI ждёт этот флаг перед разблокировкой «Перезапустить»
+    // (баг #3 — иначе можно перезапустить СТАРУЮ версию до конца установки).
+    // Снимаем stale-флаг прошлой попытки перед стартом.
+    let ready_flag = update_ready_flag_path();
+    let _ = std::fs::remove_file(&ready_flag);
+
     // Преамбула: до запуска install.sh печатаем пошаговую инструкцию. Без неё
     // окно терминала на этапе «100% / пустой курсор» выглядит как «зависло» —
     // даже автор приложения не понимал, что делать (см. UPDATER-UX-BUGS.md).
     // Wrapper держит окно открытым после exit (echo 'Press Enter to close';
     // read), чтобы пользователь увидел сообщение об ошибке если apt/sudo не
-    // дошёл до конца.
+    // дошёл до конца. При exit 0 создаём ready-флаг — сигнал UI, что установка
+    // реально завершилась и «Перезапустить» можно разблокировать.
     let bash_cmd = format!(
         "echo '=== Обновление ArcanaGlyph ==='; \
          echo 'Сейчас будет скачан и установлен новый пакет.'; \
@@ -214,8 +222,10 @@ async fn apply_update_inner() -> Result<(), String> {
          echo '3. После установки появится строка «Press Enter to close» — нажмите Enter.'; \
          echo '4. Вернитесь в приложение и нажмите «Перезапустить».'; \
          echo '==============================='; echo; \
-         bash {} ; ec=$?; echo; echo \"Exit: $ec\"; echo 'Press Enter to close'; read",
-        path.display()
+         bash {} ; ec=$?; if [ \"$ec\" = 0 ]; then : > '{}'; fi; \
+         echo; echo \"Exit: $ec\"; echo 'Press Enter to close'; read",
+        path.display(),
+        ready_flag.display()
     );
     let args = terminal_args(terminal, &bash_cmd);
 
@@ -285,6 +295,23 @@ async fn download_installer_to_temp(url: &str) -> Result<std::path::PathBuf, Str
         .write_all(&bytes)
         .map_err(|e| format!("Запись установщика: {e}"))?;
     tmp.into_temp_path().keep().map_err(|e| format!("temp keep: {e}"))
+}
+
+/// Путь к флаг-файлу «установка успешно завершена». Терминальная обёртка
+/// (`apply_update_inner`) создаёт его при exit 0 install.sh; UI ждёт его перед
+/// разблокировкой «Перезапустить». Кроссплатформенно (temp_dir), но реально
+/// пишется только на Linux — на Windows `apply_update` выходит из приложения.
+fn update_ready_flag_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("arcanaglyph-update-ready")
+}
+
+/// Tauri-команда: завершилась ли установка обновления успехом. UI в
+/// applying-режиме держит «Перезапустить» disabled, пока здесь не вернётся
+/// `true` (флаг от терминальной обёртки) — чтобы не перезапустить старую
+/// версию до конца установки (баг #3 из UPDATER-UX-BUGS).
+#[tauri::command]
+pub fn update_install_ready() -> bool {
+    update_ready_flag_path().exists()
 }
 
 /// Tauri-команда: сбросить applying-метку (пользователь нажал × в
