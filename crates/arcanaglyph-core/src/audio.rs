@@ -68,39 +68,6 @@ pub enum AudioCommand {
     TogglePause,
 }
 
-/// Проверяет доступность микрофона перед началом записи (fail fast).
-/// Открывает аудиопоток на 200 мс и проверяет, приходят ли данные.
-pub fn check_microphone(sample_rate: u32) -> Result<(), ArcanaError> {
-    let device_name = cpal::default_host()
-        .default_input_device()
-        .and_then(|d| d.name().ok())
-        .unwrap_or_else(|| "неизвестно".into());
-    info!("Микрофон: {}", device_name);
-
-    // Открываем поток тем же адаптивным путём, что и реальная запись:
-    // моно/sample_rate/i16, а при отказе устройства — его родной mix-формат
-    // (Windows WASAPI shared mode) со сведением в моно i16.
-    let level = Arc::new(AtomicU32::new(0));
-    let handles = build_capture_stream(sample_rate, 1.0, false, level)?;
-
-    // Ждём до 1 сек — PipeWire/ALSA/WASAPI инициализируют поток не мгновенно.
-    for _ in 0..10 {
-        thread::sleep(Duration::from_millis(100));
-        if handles.audio_frames_received.load(Ordering::Relaxed) > 0 {
-            break;
-        }
-    }
-    let got_audio = handles.audio_frames_received.load(Ordering::Relaxed) > 0;
-    drop(handles);
-
-    if !got_audio {
-        return Err(ArcanaError::AudioDevice(mic_silent_message(&device_name)));
-    }
-
-    info!("Микрофон '{}' работает", device_name);
-    Ok(())
-}
-
 /// Результат записи и транскрибации
 pub struct RecordResult {
     /// Распознанный текст
@@ -158,16 +125,15 @@ fn apply_mic_gain(raw: &[i16], gain: f32) -> Cow<'_, [i16]> {
     }
 }
 
-/// RMS → уровень громкости 0..100 и флаг «живого» сигнала (rms > 10).
-/// Пустой вход → `(0, false)`. Чистая функция.
-fn compute_rms_level(data: &[i16]) -> (u32, bool) {
+/// RMS → уровень громкости 0..100 (для индикатора и VAD через `audio_level`).
+/// Пустой вход → `0`. Чистая функция.
+fn compute_rms_level(data: &[i16]) -> u32 {
     if data.is_empty() {
-        return (0, false);
+        return 0;
     }
     let sum_sq: f64 = data.iter().map(|&s| (s as f64) * (s as f64)).sum();
     let rms = (sum_sq / data.len() as f64).sqrt();
-    let level = ((rms / 3000.0).min(1.0) * 100.0) as u32;
-    (level, rms > 10.0)
+    ((rms / 3000.0).min(1.0) * 100.0) as u32
 }
 
 /// Колбэк ошибок cpal-потока. Вынесен в fn (fn-item Copy) — чтобы переиспользовать
@@ -223,11 +189,13 @@ fn process_captured(
 ) {
     let data = apply_mic_gain(raw, gain);
     if !data.is_empty() {
-        let (lvl, voiced) = compute_rms_level(&data);
-        level.store(lvl, Ordering::Relaxed);
-        if voiced {
-            frames.fetch_add(1, Ordering::Relaxed);
-        }
+        level.store(compute_rms_level(&data), Ordering::Relaxed);
+        // Любой непустой буфер = поток живой. Считаем кадры независимо от
+        // громкости: иначе тихий, но РАБОЧИЙ микрофон (аппаратное
+        // шумоподавление, напр. Intel Smart Sound) выглядит «мёртвым» —
+        // в тишине rms около нуля, и детекция мёртвого микрофона ложно
+        // срабатывала, обрывая запись до первого слова.
+        frames.fetch_add(1, Ordering::Relaxed);
     }
     if let Ok(mut buf) = samples.lock() {
         buf.extend_from_slice(&data);
@@ -684,12 +652,33 @@ fn track_speech_and_check_stop(
 /// Записывает аудио с микрофона и транскрибирует через выбранный движок.
 /// Блокирующая функция — ждёт команд через `cmd_rx`.
 /// Автоматически останавливается при тишине (VAD) или по таймауту.
+/// Грейс-окно живости микрофона: ждёт первый аудио-буфер (до ~1.5с) на УЖЕ
+/// запущенном потоке записи. `Ok` — поток отдал хотя бы один кадр; `Err` —
+/// за окно не пришло ни одного кадра (микрофон мёртв/отключён/замьючен).
+///
+/// Заменяет прежний throwaway-probe `check_microphone`: проверка идёт на ТОМ ЖЕ
+/// потоке, что и запись, без двойного cold-start, и поток всё это время копит
+/// сэмплы — начало фразы не теряется. Счётчик растёт на любом непустом буфере
+/// (см. `process_captured`), поэтому рабочий-но-тихий микрофон (аппаратное
+/// шумоподавление) проходит сразу, а не ждёт первого слова.
+fn ensure_mic_alive(handles: &CaptureHandles, device_name: &str) -> Result<(), ArcanaError> {
+    for _ in 0..15 {
+        if handles.audio_frames_received.load(Ordering::Relaxed) > 0 {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    Err(ArcanaError::AudioDevice(mic_silent_message(device_name)))
+}
+
 pub fn record_and_transcribe(
     params: RecordParams,
     channels: RecordChannels,
     transcriber: &dyn Transcriber,
 ) -> Result<RecordResult, ArcanaError> {
     let recording_start = std::time::Instant::now();
+    let device_name = default_input_device_name().unwrap_or_else(|| "неизвестно".into());
+    info!("Микрофон: {}", device_name);
     info!("Начинаю запись...");
 
     let streaming = transcriber.supports_streaming();
@@ -701,6 +690,8 @@ pub fn record_and_transcribe(
         Arc::clone(&channels.audio_level),
     )?;
 
+    ensure_mic_alive(&handles, &device_name)?;
+    info!("Микрофон '{}' работает", device_name);
     info!("Идет запись... (нажмите хоткей для останова или ждите таймаут)");
 
     let silence_timeout = Duration::from_secs(params.silence_timeout_secs);
@@ -837,13 +828,13 @@ mod tests {
 
     #[test]
     fn test_compute_rms_level() {
-        assert_eq!(compute_rms_level(&[0; 160]), (0, false));
-        // rms = 3000 → level = (3000/3000).min(1.0)*100 = 100; voiced (rms > 10).
-        let (level, voiced) = compute_rms_level(&[3000; 160]);
-        assert_eq!(level, 100);
-        assert!(voiced);
+        // Тишина → уровень 0 (но это НЕ признак мёртвого микрофона — живость
+        // считается по факту прихода буфера в process_captured, не по громкости).
+        assert_eq!(compute_rms_level(&[0; 160]), 0);
+        // rms = 3000 → level = (3000/3000).min(1.0)*100 = 100.
+        assert_eq!(compute_rms_level(&[3000; 160]), 100);
         // Пустой вход.
-        assert_eq!(compute_rms_level(&[]), (0, false));
+        assert_eq!(compute_rms_level(&[]), 0);
     }
 
     #[test]

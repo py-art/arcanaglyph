@@ -44,16 +44,6 @@ fn build_history_entry(rec_text: &str, remove_fillers: bool) -> String {
     }
 }
 
-/// Маппинг результата `spawn_blocking(check_microphone)` в текст ошибки.
-/// `None` — микрофон в порядке. Чистая функция (тестируется через `Ok(Ok(()))`).
-fn mic_error_message(mic_check: Result<Result<(), ArcanaError>, tokio::task::JoinError>) -> Option<String> {
-    match mic_check {
-        Ok(Err(e)) => Some(e.to_string()),
-        Err(e) => Some(format!("Ошибка проверки микрофона: {:?}", e)),
-        Ok(Ok(())) => None,
-    }
-}
-
 /// Регистрирует только что созданную модель: кладёт в пул, делает активной,
 /// засекает `last_used` (иначе sweeper мог бы выгрузить её на следующем тике) и
 /// возвращает UI в «готов»-состояние. Вынесено из `resolve_reloaded_transcriber`.
@@ -136,30 +126,6 @@ pub(super) async fn resolve_reloaded_transcriber(
             None
         }
     }
-}
-
-/// Проверяет доступность микрофона перед записью (fail-fast). Возвращает `true`,
-/// если запись нужно прервать: ошибка уже залогирована и отправлена в UI, а при
-/// скрытом окне текст ошибки дополнительно вставлен через `type_text`.
-/// Вынесено из `trigger` дословно — поведение не меняется.
-pub(super) async fn check_mic_or_abort(
-    sample_rate: u32,
-    window_visible: &Arc<AtomicBool>,
-    event_tx: &broadcast::Sender<EngineEvent>,
-) -> bool {
-    let mic_check = tokio::task::spawn_blocking(move || audio::check_microphone(sample_rate)).await;
-    let Some(msg) = mic_error_message(mic_check) else {
-        return false;
-    };
-    tracing::error!("{}", msg);
-    eprintln!("[Ошибка] {}", msg);
-    let is_visible = window_visible.load(Ordering::Relaxed);
-    if !is_visible {
-        let error_text = format!("[Ошибка микрофона] {}", msg);
-        let _ = crate::input::type_text(&error_text).await;
-    }
-    let _ = event_tx.send(EngineEvent::Error(msg));
-    true
 }
 
 /// Параметры фоновой задачи «запись → транскрибация → финализация».
@@ -294,10 +260,23 @@ pub(super) async fn run_record_session(session: RecordSession, cmd_rx: std_mpsc:
             )
             .await;
         }
-        Ok(Err(crate::error::ArcanaError::Cancelled)) => {
+        Ok(Err(ArcanaError::Cancelled)) => {
             // Пользователь нажал «Стоп» во время инференса —
             // не ошибка, тихо завершаем без error-toast.
             tracing::info!("Транскрибация отменена пользователем");
+        }
+        Ok(Err(e @ ArcanaError::AudioDevice(_))) => {
+            // Мёртвый/молчащий микрофон (грейс-окно живости в record_and_transcribe).
+            // Раньше это ловил pre-flight `check_mic_or_abort`; сохраняем его UX —
+            // при скрытом окне вставляем текст ошибки в активное поле, иначе
+            // пользователь не увидит ничего (плашка в трее).
+            let msg = e.to_string();
+            tracing::error!("{}", msg);
+            eprintln!("[Ошибка] {}", msg);
+            if !window_visible.load(Ordering::Relaxed) {
+                let _ = crate::input::type_text(&format!("[Ошибка микрофона] {}", msg)).await;
+            }
+            let _ = event_tx.send(EngineEvent::Error(msg));
         }
         Ok(Err(e)) => {
             tracing::error!("Ошибка транскрибации: {}", e);
@@ -338,11 +317,5 @@ mod tests {
     fn test_build_history_entry() {
         assert_eq!(build_history_entry("э привет", true), "привет");
         assert_eq!(build_history_entry("э привет", false), "э привет");
-    }
-
-    #[test]
-    fn test_mic_error_message() {
-        assert!(mic_error_message(Ok(Ok(()))).is_none());
-        assert!(mic_error_message(Ok(Err(ArcanaError::AudioDevice("нет".into())))).is_some());
     }
 }
