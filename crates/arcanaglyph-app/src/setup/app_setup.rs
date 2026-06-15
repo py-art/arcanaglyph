@@ -165,21 +165,22 @@ fn init_history_db(app: &mut tauri::App) -> Result<Arc<HistoryDB>, Box<dyn std::
 /// Восстанавливает applying-режим после restart, эмитит cached-available и
 /// запускает фоновый update-checker.
 fn init_update_checker(app: &tauri::App, history_db: &Arc<HistoryDB>) {
-    // 0. Восстановление applying-режима после реального restart.
-    //    Если applying_version == APP_VERSION — установка прошла
-    //    успешно, чистим метку. Иначе — эмитим applying, чтобы UI
-    //    показал баннер «Установка идёт... / Перезапустить».
-    //    Делаем это ДО cached_pending_update, чтобы applying имел
-    //    приоритет над available для той же версии.
-    {
-        let state = updater::read_state(history_db);
-        if let Some(v) = state.applying_version.clone() {
-            if v == updater::APP_VERSION {
-                let _ = updater::clear_applying(history_db);
-            } else {
-                let _ = app.handle().emit("update://applying", v);
-            }
-        }
+    // 0. Сброс устаревшей applying-метки на старте приложения.
+    //    На СВЕЖЕМ старте метка всегда устаревшая, что бы в ней ни стояло:
+    //      * applying == APP_VERSION → установка прошла успешно (версия догнала);
+    //      * applying != APP_VERSION → установка НЕ завершилась (пользователь
+    //        закрыл терминал install.sh до конца / отмена / падение — версия
+    //        не догнала).
+    //    В обоих случаях метку снимаем. Раньше для несовпавшей версии здесь
+    //    повторно эмитился `update://applying`, и при прерванной установке
+    //    приложение НАВСЕГДА залипало в баннере «Установка идёт… / Перезапустить»
+    //    (applying глушит баннер «Доступно», кнопка «Перезапустить» ждёт флаг
+    //    готовности, которого после обрыва нет) — перезапуск приложения не лечил.
+    //    Сняв метку, отдаём приоритет `cached_pending_update` ниже: при
+    //    незавершённой установке снова покажется баннер «Доступно», и пользователь
+    //    сможет повторить обновление.
+    if updater::read_state(history_db).applying_version.is_some() {
+        let _ = updater::clear_applying(history_db);
     }
     // 1. Если в state уже знаем про более свежий релиз — эмитим
     //    `update://available` сразу, чтобы UI получил баннер до
