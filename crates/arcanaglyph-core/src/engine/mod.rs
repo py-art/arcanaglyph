@@ -3,7 +3,7 @@
 mod lru;
 mod record_session;
 
-use record_session::{RecordSession, check_mic_or_abort, resolve_reloaded_transcriber, run_record_session};
+use record_session::{RecordSession, resolve_reloaded_transcriber, run_record_session};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -430,11 +430,11 @@ impl ArcanaEngine {
                 return;
             };
 
-            // Проверяем микрофон перед записью (fail fast).
-            if check_mic_or_abort(sample_rate, &window_visible, &event_tx).await {
-                return;
-            }
-
+            // Микрофон больше НЕ проверяем отдельным probe-потоком: запись стартует
+            // сразу (плашка появляется по нажатию, а не после первого слова), а
+            // мёртвый/молчащий микрофон ловится грейс-окном живости внутри
+            // `record_and_transcribe` на том же потоке — без двойного cold-start и
+            // потери начала фразы. Ошибка приходит в UI через `EngineEvent::Error`.
             *busy_guard = true;
             *is_paused.lock().await = false;
             drop(busy_guard);
