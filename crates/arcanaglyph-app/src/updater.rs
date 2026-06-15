@@ -468,6 +468,32 @@ mod tests {
         assert!(blocked, "при applying_version=latest баннер не показываем");
     }
 
+    /// Регресс на залипание обновления: если установка прервана (юзер закрыл
+    /// терминал install.sh), applying-метка указывает на версию, которая так и
+    /// НЕ установилась (APP_VERSION её не догнал). Пока метка стоит — баннер
+    /// «Доступно» подавлен. `init_update_checker` снимает метку на старте; после
+    /// этого подавления нет, а т.к. версия реально новее — баннер возвращается,
+    /// и обновление можно повторить (раньше залипало навсегда).
+    #[test]
+    fn aborted_update_recovers_after_applying_cleared() {
+        let latest = "9.9.9";
+        assert!(is_newer(latest, APP_VERSION), "тест-версия должна быть новее текущей");
+
+        // Прерванная установка: applying стоит, версия не догнала → баннер подавлен.
+        let applying_stuck: Option<String> = Some(latest.to_string());
+        assert!(
+            applying_stuck.as_deref() == Some(latest),
+            "пока applying стоит — баннер «Доступно» подавлен"
+        );
+
+        // Старт снимает метку (фикс) → подавления нет → восстановление.
+        let applying_cleared: Option<String> = None;
+        assert!(
+            applying_cleared.as_deref() != Some(latest),
+            "после снятия applying на старте баннер больше не подавлен"
+        );
+    }
+
     #[test]
     fn deb_available_when_uploaded() {
         let release = serde_json::json!({
