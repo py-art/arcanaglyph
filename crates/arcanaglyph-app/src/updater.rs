@@ -316,7 +316,14 @@ pub async fn check_for_update(db: &HistoryDB) -> Result<Option<UpdateInfo>, Arca
             }
             None
         }
-        ReleaseFetch::NotModified => None,
+        ReleaseFetch::NotModified => {
+            // 304: содержимое релиза не изменилось с прошлого fetch. Берём уже
+            // зафиксированный `latest_known` из кэша — иначе известное обновление
+            // «пропадало» на первом же 304 (баг: «Установлена последняя версия»
+            // при наличии newer установимого .deb). Актуальность отсеет общий
+            // фильтр is_newer/dismissed/applying ниже.
+            pending_info_from_state(&state)
+        }
     };
 
     write_state(db, &state)?;
@@ -328,12 +335,14 @@ pub async fn check_for_update(db: &HistoryDB) -> Result<Option<UpdateInfo>, Arca
     }))
 }
 
-/// Достаёт UpdateInfo из state без HTTP-запроса. Используется при старте
-/// приложения, чтобы UI получил баннер мгновенно (до того как фоновый
-/// чекер сделает свой первый fetch через 60 секунд).
-pub fn cached_pending_update(db: &HistoryDB) -> Option<UpdateInfo> {
-    let state = read_state(db);
-    let latest_version = state.latest_known?;
+/// Собирает предлагаемое обновление из закэшированного `state` (без HTTP):
+/// `latest_known` новее текущей версии И не dismissed/applying. `None` —
+/// кэшировать нечего или версия неактуальна. Чистая функция (тестируема).
+/// Общий источник для `cached_pending_update` (мгновенный баннер при старте)
+/// и для ветки `NotModified` в `check_for_update` (304 не должен «терять»
+/// уже известное обновление).
+fn pending_info_from_state(state: &UpdateState) -> Option<UpdateInfo> {
+    let latest_version = state.latest_known.clone()?;
     if !is_newer(&latest_version, APP_VERSION) {
         return None;
     }
@@ -345,9 +354,16 @@ pub fn cached_pending_update(db: &HistoryDB) -> Option<UpdateInfo> {
     }
     Some(UpdateInfo {
         latest_version,
-        release_url: state.latest_release_url.unwrap_or_default(),
-        published_at: state.latest_published_at.unwrap_or_default(),
+        release_url: state.latest_release_url.clone().unwrap_or_default(),
+        published_at: state.latest_published_at.clone().unwrap_or_default(),
     })
+}
+
+/// Достаёт UpdateInfo из state без HTTP-запроса. Используется при старте
+/// приложения, чтобы UI получил баннер мгновенно (до того как фоновый
+/// чекер сделает свой первый fetch через 60 секунд).
+pub fn cached_pending_update(db: &HistoryDB) -> Option<UpdateInfo> {
+    pending_info_from_state(&read_state(db))
 }
 
 /// Записывает `version` в `dismissed_version`. Баннер не появится для
@@ -492,6 +508,53 @@ mod tests {
             applying_cleared.as_deref() != Some(latest),
             "после снятия applying на старте баннер больше не подавлен"
         );
+    }
+
+    /// `pending_info_from_state` — общий источник для старт-баннера и ветки 304.
+    /// Покрывает баг «304 теряет известное обновление»: при заполненном
+    /// `latest_known` (новее текущей) обновление ВОЗВРАЩАЕТСЯ, а dismissed/
+    /// applying/старая версия корректно дают None.
+    #[test]
+    fn pending_info_from_state_cases() {
+        let newer = "9.9.9";
+        assert!(is_newer(newer, APP_VERSION), "тест-версия должна быть новее текущей");
+
+        let base = UpdateState {
+            latest_known: Some(newer.to_string()),
+            latest_release_url: Some("https://example.com/v9".into()),
+            latest_published_at: Some("2026-06-15T00:00:00Z".into()),
+            ..Default::default()
+        };
+
+        // Известный установимый релиз новее текущего → предлагаем (это и есть
+        // поведение, которого не хватало на 304).
+        let got = pending_info_from_state(&base).expect("newer known release → Some");
+        assert_eq!(got.latest_version, newer);
+        assert_eq!(got.release_url, "https://example.com/v9");
+
+        // Кэш пуст → нечего предлагать.
+        assert!(pending_info_from_state(&UpdateState::default()).is_none());
+
+        // dismissed именно этой версии → None.
+        let dismissed = UpdateState {
+            dismissed_version: Some(newer.to_string()),
+            ..base.clone()
+        };
+        assert!(pending_info_from_state(&dismissed).is_none());
+
+        // applying этой версии → None (не перебиваем applying-режим).
+        let applying = UpdateState {
+            applying_version: Some(newer.to_string()),
+            ..base.clone()
+        };
+        assert!(pending_info_from_state(&applying).is_none());
+
+        // latest_known не новее текущей версии → None.
+        let stale = UpdateState {
+            latest_known: Some("0.0.1".into()),
+            ..base.clone()
+        };
+        assert!(pending_info_from_state(&stale).is_none());
     }
 
     #[test]
