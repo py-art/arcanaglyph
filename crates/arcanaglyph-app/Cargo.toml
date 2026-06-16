@@ -2,7 +2,7 @@
 
 [package]
 name = "arcanaglyph-app"
-version = "1.9.5"
+version = "1.10.0"
 edition = "2024"
 build = "src/build.rs"
 
@@ -46,6 +46,11 @@ tempfile = "3"
 # отключает bzip2/zstd/aes — Vosk-zip использует только deflate; экономит размер бинаря
 # и убирает нативные deps.
 zip = { version = "8", default-features = false, features = ["deflate"] }
+
+# Автозапуск на Windows пишется в реестр HKCU\...\Run через winreg. Target-specific:
+# в Linux/macOS-сборку не попадает. Версия совпадает с той, что уже тянет reqwest.
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
 
 [features]
 # default включает app-feature "gigaam", которая каскадно включает core/gigaam.

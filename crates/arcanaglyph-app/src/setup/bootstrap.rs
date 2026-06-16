@@ -64,10 +64,107 @@ pub(crate) fn set_autostart(enabled: bool) {
     }
 }
 
-// Заглушка автозапуска для Windows/macOS.
-// На Windows нужен HKCU\Software\Microsoft\Windows\CurrentVersion\Run,
-// на macOS — ~/Library/LaunchAgents/*.plist. Оставлено на следующий этап портирования.
-#[cfg(not(target_os = "linux"))]
+/// Автозапуск на Windows: значение в `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+/// `current_exe()` здесь корректен — на Windows один бинарь (NSIS-установщик, без
+/// avx/noavx wrapper'а как на Linux). Путь в кавычках: `Program Files` содержит пробелы.
+#[cfg(target_os = "windows")]
+pub(crate) fn set_autostart(enabled: bool) {
+    use winreg::RegKey;
+    use winreg::enums::HKEY_CURRENT_USER;
+
+    const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    const VALUE_NAME: &str = "ArcanaGlyph";
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let run = match hkcu.create_subkey(RUN_KEY) {
+        Ok((key, _)) => key,
+        Err(e) => {
+            tracing::warn!("Автозапуск: не удалось открыть ключ реестра Run: {}", e);
+            return;
+        }
+    };
+
+    if enabled {
+        let exe = match std::env::current_exe() {
+            Ok(p) => p.display().to_string(),
+            Err(e) => {
+                tracing::warn!("Автозапуск: не удалось определить путь к .exe: {}", e);
+                return;
+            }
+        };
+        let value = format!("\"{}\"", exe);
+        if let Err(e) = run.set_value(VALUE_NAME, &value) {
+            tracing::warn!("Автозапуск: не удалось записать ключ реестра: {}", e);
+        } else {
+            tracing::info!("Автозапуск включён (реестр Run): {}", value);
+        }
+    } else {
+        // delete_value на отсутствующем значении возвращает NotFound — это не ошибка.
+        match run.delete_value(VALUE_NAME) {
+            Ok(()) => tracing::info!("Автозапуск отключён (реестр Run)"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => tracing::warn!("Автозапуск: не удалось удалить ключ реестра: {}", e),
+        }
+    }
+}
+
+/// Автозапуск на macOS: LaunchAgent plist в `~/Library/LaunchAgents/`.
+/// `current_exe()` указывает на бинарь внутри `.app/Contents/MacOS/` — корректный
+/// `ProgramArguments[0]` для launchd. НЕ протестировано на железе (нет своего Mac);
+/// ветка изолирована `#[cfg]`, на Linux/Windows не компилируется и не влияет.
+#[cfg(target_os = "macos")]
+pub(crate) fn set_autostart(enabled: bool) {
+    let home = match std::env::var("HOME") {
+        Ok(h) => std::path::PathBuf::from(h),
+        Err(_) => return,
+    };
+    let agents_dir = home.join("Library/LaunchAgents");
+    // Label = bundle identifier из tauri.conf.json (com.arcanaglyph.dev).
+    let plist_file = agents_dir.join("com.arcanaglyph.dev.plist");
+
+    if enabled {
+        let exe = match std::env::current_exe() {
+            Ok(p) => p.display().to_string(),
+            Err(e) => {
+                tracing::warn!("Автозапуск: не удалось определить путь к бинарю: {}", e);
+                return;
+            }
+        };
+        let _ = std::fs::create_dir_all(&agents_dir);
+
+        let content = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+             <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \
+             \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+             <plist version=\"1.0\">\n\
+             <dict>\n\
+             \t<key>Label</key>\n\
+             \t<string>com.arcanaglyph.dev</string>\n\
+             \t<key>ProgramArguments</key>\n\
+             \t<array>\n\
+             \t\t<string>{}</string>\n\
+             \t</array>\n\
+             \t<key>RunAtLoad</key>\n\
+             \t<true/>\n\
+             </dict>\n\
+             </plist>\n",
+            exe
+        );
+
+        if let Err(e) = std::fs::write(&plist_file, content) {
+            tracing::warn!("Не удалось создать LaunchAgent: {}", e);
+        } else {
+            tracing::info!("Автозапуск включён: {}", plist_file.display());
+        }
+    } else if plist_file.exists() {
+        let _ = std::fs::remove_file(&plist_file);
+        tracing::info!("Автозапуск отключён");
+    }
+}
+
+// Прочие ОС (не linux/windows/macos): автозапуск не реализован — no-op,
+// чтобы безусловный вызов из save_config компилировался на любой платформе.
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
 pub(crate) fn set_autostart(_enabled: bool) {}
 
 /// Удаляет legacy-скрипты ag-trigger/ag-pause, оставшиеся от прежнего механизма
