@@ -4,7 +4,7 @@
 // с явными параметрами. Создаёт виджет, регистрирует tauri-plugin хоткеи,
 // авторегистрирует GNOME custom-keybindings (Wayland/X11), спавнит engine в фоне
 // после ensure_active_model, поднимает auto-cleanup истории, update checker и
-// UDP listener.
+// IPC trigger listener (Unix-сокет, только Linux).
 //
 // Тело разбито на связные step-функции: `run_setup` — линейный оркестратор,
 // каждый шаг изолирован (ниже по файлу). Чистая логика probe/XKB — в
@@ -12,8 +12,10 @@
 
 use crate::commands::EngineState;
 use crate::models;
-use crate::setup::bootstrap::install_wayland_scripts;
-use crate::setup::events::{run_engine_event_loop, spawn_udp_listener, spawn_update_checker};
+use crate::setup::bootstrap::cleanup_legacy_scripts;
+#[cfg(target_os = "linux")]
+use crate::setup::events::spawn_trigger_listener;
+use crate::setup::events::{run_engine_event_loop, spawn_update_checker};
 use crate::tray;
 use crate::updater;
 use arcanaglyph_core::error::ApiError;
@@ -37,7 +39,14 @@ pub fn run_setup(
         let _ = std::fs::create_dir_all(&models_dir);
     }
 
-    install_wayland_scripts();
+    cleanup_legacy_scripts();
+
+    // Синхронизируем autostart .desktop с конфигом при старте. На UI-save
+    // `set_autostart` мог записать dev-путь (`make run`) или файл устарел после
+    // переустановки — здесь перезаписываем актуальным `Exec=` (или удаляем, если
+    // выключено). Тот же принцип, что у авто-миграции GNOME-хоткеев.
+    #[cfg(target_os = "linux")]
+    crate::setup::bootstrap::set_autostart(config.autostart);
 
     run_startup_history_cleanup();
     spawn_retention_cleanup();
@@ -81,8 +90,11 @@ pub fn run_setup(
     #[cfg(target_os = "linux")]
     spawn_portal_warmup();
 
-    // UDP-триггер для Wayland (внешний скрипт ag-trigger → UDP :9002)
-    spawn_udp_listener(engine_state.clone());
+    // IPC-триггер для Linux (GNOME-хоткей → `arcanaglyph --trigger` → Unix-сокет).
+    // На Win/macOS хоткей ловится in-process плагином global-shortcut — слушатель
+    // не нужен.
+    #[cfg(target_os = "linux")]
+    spawn_trigger_listener(engine_state.clone());
 
     Ok(())
 }
@@ -145,9 +157,13 @@ fn init_window_visibility(app: &mut tauri::App) -> Arc<AtomicBool> {
     let window_visible = Arc::new(AtomicBool::new(!start_minimized));
     app.manage(window_visible.clone());
 
-    // Если запуск в свёрнутом виде — скрываем окно сразу
-    if start_minimized && let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
+    // Окно создаётся скрытым (`"visible": false` в tauri.conf) — показываем его
+    // ТОЛЬКО если старт не свёрнутый. Так нет гонки «окно мелькнуло и спряталось»:
+    // при start_minimized оно вообще не появляется. Прежний подход (visible:true +
+    // hide() здесь) был ненадёжен — компоновщик успевал показать окно до hide().
+    if !start_minimized && let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
     }
 
     window_visible
@@ -370,7 +386,7 @@ fn register_app_hotkeys(app: &tauri::App, hotkey: &str, hotkey_pause: &str) {
 #[cfg(target_os = "linux")]
 fn ensure_gnome_hotkeys(hotkey: &str, hotkey_pause: &str) {
     use crate::commands::hotkeys::{
-        binding_is_empty, build_setxkbmap_args, parse_setxkbmap_query, register_gnome_hotkeys,
+        binding_is_empty, build_setxkbmap_args, command_is_legacy, parse_setxkbmap_query, register_gnome_hotkeys,
     };
 
     if hotkey.is_empty() {
@@ -396,10 +412,32 @@ fn ensure_gnome_hotkeys(hotkey: &str, hotkey_pause: &str) {
             Err(_) => true,
         }
     };
+    // Миграция со старого механизма: до перехода на Unix-сокет command хоткея
+    // указывал на bash-скрипт ag-trigger (UDP :9002). Теперь это `<exe> --trigger`.
+    // Если в slot осталась старая форма — принудительно перерегистрируем, иначе
+    // обновившийся пользователь продолжил бы дёргать удалённый скрипт.
+    let cmd_outdated = |slot: &str| -> bool {
+        let check = std::process::Command::new("gsettings")
+            .args([
+                "get",
+                &format!(
+                    "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/{}/",
+                    slot
+                ),
+                "command",
+            ])
+            .output();
+        match check {
+            Ok(out) => command_is_legacy(&String::from_utf8_lossy(&out.stdout)),
+            Err(_) => false,
+        }
+    };
     let needs_register = probe("arcanaglyph-trigger")
         || probe("arcanaglyph-trigger-cyr")
         || probe("arcanaglyph-pause")
-        || probe("arcanaglyph-pause-cyr");
+        || probe("arcanaglyph-pause-cyr")
+        || cmd_outdated("arcanaglyph-trigger")
+        || cmd_outdated("arcanaglyph-pause");
     if needs_register {
         tracing::info!("Регистрирую глобальные горячие клавиши в GNOME...");
         if let Err(e) = register_gnome_hotkeys(hotkey.to_string(), hotkey_pause.to_string()) {

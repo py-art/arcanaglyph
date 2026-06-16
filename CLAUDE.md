@@ -76,7 +76,7 @@ Windows-сборки нет. Файл логов на Windows: `%LOCALAPPDATA%\a
 
 Cargo workspace из двух крейтов:
 
-- **arcanaglyph-core** (`crates/arcanaglyph-core/`) — библиотека + legacy бинарник:
+- **arcanaglyph-core** (`crates/arcanaglyph-core/`) — библиотека (только `[lib]`):
   - `lib.rs` — публичный API: `ArcanaEngine`, `CoreConfig`, `EngineEvent`, `ArcanaError`
   - `engine.rs` — основной движок: управление записью (start/stop), broadcast событий
   - `transcriber/` — модуль: `mod.rs` (трейт `Transcriber` + фабрика `build_transcriber`
@@ -92,7 +92,6 @@ Cargo workspace из двух крейтов:
     `enigo.text()` (macOS)
   - `config.rs` — конфигурация с load/save из SQLite (`TranscriberType`: Vosk, Whisper, GigaAm)
   - `error.rs` — типизированные ошибки через `thiserror`
-  - `main.rs` — legacy standalone-сервер (UDP + WebSocket, для отладки)
 
 - **arcanaglyph-app** (`crates/arcanaglyph-app/`) — Tauri v2 приложение:
   - `main.rs` — точка входа: `init_logging` + panic-hook, Tauri Builder, регистрация

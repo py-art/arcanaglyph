@@ -2,10 +2,28 @@
 //
 // Подготовка окружения до старта Tauri: выбор libonnxruntime.so для ORT,
 // установка g_prgname (WM_CLASS для GNOME Dash), autostart .desktop файл,
-// установка Wayland-скриптов ag-trigger/ag-pause, CLI `arcanaglyph --grant-portal`.
+// очистка legacy-скриптов ag-trigger/ag-pause, CLI-подкоманды
+// `arcanaglyph --grant-portal` и `arcanaglyph --trigger`/`--pause`.
 
 #[cfg(target_os = "linux")]
 use arcanaglyph_core::CoreConfig;
+
+/// Путь к бинарю для строки `Exec=` в autostart .desktop. Установленная `.deb`:
+/// стабильный wrapper `/usr/bin/arcanaglyph` (сам выбирает avx/noavx по CPU).
+/// Dev (`make run`): `current_exe()` (target/debug/...). Через один лишь
+/// `current_exe()` нельзя: при сохранении галочки в dev-режиме путь залипал на
+/// `target/debug`, и после установки `.deb` автозапуск вёл на несуществующий
+/// dev-бинарь (тот же класс, что был у GNOME-хоткеев со скриптами).
+#[cfg(target_os = "linux")]
+fn autostart_exec_path() -> String {
+    let installed = std::path::Path::new("/usr/bin/arcanaglyph");
+    if installed.exists() {
+        return "/usr/bin/arcanaglyph".to_string();
+    }
+    std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "arcanaglyph".to_string())
+}
 
 /// Управляет автозапуском через .desktop файл в ~/.config/autostart/
 #[cfg(target_os = "linux")]
@@ -20,10 +38,7 @@ pub(crate) fn set_autostart(enabled: bool) {
     if enabled {
         let _ = std::fs::create_dir_all(&autostart_dir);
 
-        // Определяем путь к исполняемому файлу
-        let exec_path = std::env::current_exe()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "arcanaglyph-app".to_string());
+        let exec_path = autostart_exec_path();
 
         let content = format!(
             "[Desktop Entry]\n\
@@ -55,49 +70,53 @@ pub(crate) fn set_autostart(enabled: bool) {
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn set_autostart(_enabled: bool) {}
 
-/// Устанавливает UDP-скрипты ag-trigger и ag-pause (для Wayland)
+/// Удаляет legacy-скрипты ag-trigger/ag-pause, оставшиеся от прежнего механизма
+/// (GNOME-хоткей → bash-скрипт → `nc` → UDP :9002). Теперь хоткей запускает
+/// `arcanaglyph --trigger` напрямую (см. `send_trigger_and_exit` + Unix-сокет в
+/// `events.rs`), поэтому скрипты больше не нужны. Чистим при старте, чтобы у
+/// обновившихся пользователей не осталось мёртвых файлов.
 #[cfg(target_os = "linux")]
-pub(crate) fn install_wayland_scripts() {
-    // Скрипты ставим на ЛЮБОМ Linux: на Wayland tauri-plugin-global-shortcut
-    // вообще не работает (нет X11 grab), на X11+GNOME он часто не доставляет
-    // event'ы (mutter перехватывает раньше). В обоих случаях нативные GNOME
-    // custom-keybindings → ag-trigger → UDP — единственное что работает надёжно.
-    let bin_dir = match CoreConfig::scripts_dir() {
-        Some(d) => d,
-        None => return,
+pub(crate) fn cleanup_legacy_scripts() {
+    let Some(bin_dir) = CoreConfig::scripts_dir() else {
+        return;
     };
-    let _ = std::fs::create_dir_all(&bin_dir);
-
-    let scripts = [
-        (
-            "ag-trigger",
-            "#!/bin/bash\n# ArcanaGlyph: UDP-триггер записи\necho \"trigger\" | /usr/bin/nc -u -w0 127.0.0.1 9002\n",
-        ),
-        (
-            "ag-pause",
-            "#!/bin/bash\n# ArcanaGlyph: UDP-триггер паузы\necho \"pause\" | /usr/bin/nc -u -w0 127.0.0.1 9002\n",
-        ),
-    ];
-
-    for (name, content) in &scripts {
+    for name in ["ag-trigger", "ag-pause"] {
         let path = bin_dir.join(name);
-        if !path.exists() {
-            if let Err(e) = std::fs::write(&path, content) {
-                tracing::warn!("Не удалось создать {}: {}", path.display(), e);
-                continue;
-            }
-            // chmod +x
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755));
-            tracing::info!("Установлен скрипт: {}", path.display());
+        if path.exists() && std::fs::remove_file(&path).is_ok() {
+            tracing::info!("Удалён legacy-скрипт: {}", path.display());
         }
     }
+    // Директорию scripts/ удаляем, только если пуста (не трогаем чужие файлы).
+    let _ = std::fs::remove_dir(&bin_dir);
 }
 
-// Заглушка установки Wayland-скриптов для Windows/macOS — там нет ни Wayland,
-// ни /usr/bin/nc; UDP-триггер всё ещё доступен через прямую отправку датаграмм.
+// На Windows/macOS legacy-скриптов не было — no-op.
 #[cfg(not(target_os = "linux"))]
-pub(crate) fn install_wayland_scripts() {}
+pub(crate) fn cleanup_legacy_scripts() {}
+
+/// Клиентская часть IPC-триггера. Запускается нативным GNOME-хоткеем как
+/// `arcanaglyph --trigger` / `--pause`: подключается к Unix-сокету основного
+/// процесса, шлёт одну датаграмму ("trigger" | "pause") и сразу завершается —
+/// НЕ поднимая Tauri/трей/engine/ORT. Вызывать из `main()` ДО любой инициализации.
+#[cfg(target_os = "linux")]
+pub(crate) fn send_trigger_and_exit(command: &str) -> ! {
+    use std::os::unix::net::UnixDatagram;
+
+    let code = match CoreConfig::trigger_socket_path() {
+        Some(path) => match UnixDatagram::unbound().and_then(|s| s.send_to(command.as_bytes(), &path)) {
+            Ok(_) => 0,
+            Err(e) => {
+                eprintln!("arcanaglyph --{command}: не удалось отправить триггер ({e}) — приложение запущено?");
+                1
+            }
+        },
+        None => {
+            eprintln!("arcanaglyph --{command}: не удалось определить путь IPC-сокета");
+            1
+        }
+    };
+    std::process::exit(code);
+}
 
 /// Выбирает путь к `libonnxruntime.so` для load-dynamic backend ORT и записывает его в
 /// `ORT_DYLIB_PATH`. ВАЖНО: вызывать ДО первого касания `ort` (первый вызов —

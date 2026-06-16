@@ -33,7 +33,7 @@
 
 - [x] Глобальные горячие клавиши (tauri-plugin-global-shortcut для X11)
 - [x] Автоматическая регистрация хоткеев через gsettings (Wayland/GNOME)
-- [x] UDP-скрипты ag-trigger / ag-pause для Wayland
+- [x] Триггер записи для Wayland/GNOME: custom-keybinding → `arcanaglyph --trigger` → Unix-сокет
 - [x] Вставка текста: wl-copy + XDG RemoteDesktop portal (Wayland), enigo (X11)
 - [x] Иконка в системном трее: белая (idle), красная (запись), оранжевая (пауза)
 - [x] Меню трея: Открыть / Запись / Настройки / Выход (с разделителями)

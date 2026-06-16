@@ -74,7 +74,7 @@ pub struct ArcanaEngine {
 
 /// Дебаунс double-trigger: `true` → этот вызов нужно проглотить (повтор в пределах
 /// 250мс от предыдущего). На GNOME одна клавиша приходит и через Tauri global-
-/// shortcut, и через GNOME→ag-trigger→UDP — два `trigger()` за миллисекунды дают
+/// shortcut, и через GNOME→`arcanaglyph --trigger`→Unix-сокет — два `trigger()` за миллисекунды дают
 /// start+stop («визуал пляшет»). Человек физически не успевает нажать старт+стоп
 /// за это время, так что окно безопасно. Состояние — в process-global `static`.
 fn trigger_debounced(now: Instant) -> bool {

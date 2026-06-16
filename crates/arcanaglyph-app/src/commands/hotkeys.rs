@@ -5,9 +5,6 @@
 // не работает, на X11+GNOME mutter перехватывает event'ы — это единственный
 // надёжный путь. На Win/macOS — no-op.
 
-#[cfg(target_os = "linux")]
-use arcanaglyph_core::CoreConfig;
-
 /// Конвертация формата хоткея из Tauri ("Super+Alt+Control+Space") в gsettings ("<Super><Alt><Control>space")
 #[cfg(target_os = "linux")]
 pub(crate) fn tauri_hotkey_to_gsettings(hotkey: &str) -> String {
@@ -36,6 +33,17 @@ pub(crate) fn tauri_hotkey_to_gsettings(hotkey: &str) -> String {
 #[cfg(target_os = "linux")]
 pub(crate) fn binding_is_empty(value: &str) -> bool {
     value.is_empty() || value == "''" || value.contains("No such")
+}
+
+/// Классифицирует `command` custom-keybinding'а как «старого формата»: указывает
+/// на bash-скрипт ag-trigger/ag-pause (UDP :9002) вместо нового прямого вызова
+/// `<exe> --trigger`/`--pause` (Unix-сокет). Используется для авто-миграции при
+/// старте у обновившихся пользователей. Пустой/несозданный slot legacy НЕ считаем
+/// — его подхватит `probe()`. Чистая функция (тестируется без gsettings).
+#[cfg(target_os = "linux")]
+pub(crate) fn command_is_legacy(command: &str) -> bool {
+    let command = command.trim();
+    !binding_is_empty(command) && !command.contains("--trigger") && !command.contains("--pause")
 }
 
 /// Парсит вывод `setxkbmap -query` → `(layout, variant)`.
@@ -345,11 +353,17 @@ fn register_gnome_hotkeys_linux(hotkey_trigger: String, hotkey_pause: String) ->
     let ag_pause_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/arcanaglyph-pause/";
     let ag_pause_cyr_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/arcanaglyph-pause-cyr/";
 
-    // Определяем путь к скриптам
-    let scripts_dir =
-        CoreConfig::scripts_dir().ok_or_else(|| "Не удалось определить директорию скриптов".to_string())?;
-    let trigger_cmd = scripts_dir.join("ag-trigger").display().to_string();
-    let pause_cmd = scripts_dir.join("ag-pause").display().to_string();
+    // Команда хоткея — запуск самого бинаря с флагом. Раньше тут был путь к
+    // bash-скрипту ag-trigger, который слал UDP через `nc`; теперь короткоживущий
+    // `arcanaglyph --trigger` пишет напрямую в Unix-сокет основного процесса
+    // (см. `bootstrap::send_trigger_and_exit`). `current_exe()` после exec
+    // wrapper'а указывает на реальный бинарь (avx/noavx) без пробелов в пути.
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("Не удалось определить путь к исполняемому файлу: {}", e))?
+        .display()
+        .to_string();
+    let trigger_cmd = format!("{} --trigger", exe);
+    let pause_cmd = format!("{} --pause", exe);
 
     // Регистрируем слоты (латиница + кириллический дубль для русской раскладки).
     register_hotkey_pair(
@@ -415,6 +429,20 @@ mod tests {
         assert_eq!(tauri_hotkey_to_gsettings("Shift+A"), "<Shift>a");
         // Одна клавиша без модификаторов.
         assert_eq!(tauri_hotkey_to_gsettings("F1"), "f1");
+    }
+
+    #[test]
+    fn test_command_is_legacy() {
+        // Старый формат — путь к bash-скрипту ag-trigger/ag-pause.
+        assert!(command_is_legacy("'/home/u/.config/arcanaglyph/scripts/ag-trigger'"));
+        assert!(command_is_legacy("'/home/u/.config/arcanaglyph/scripts/ag-pause'"));
+        // Новый формат — прямой вызов бинаря с флагом (любой вариант пути).
+        assert!(!command_is_legacy("'/usr/lib/arcanaglyph/arcanaglyph-noavx --trigger'"));
+        assert!(!command_is_legacy("'/usr/bin/arcanaglyph --pause'"));
+        // Пустой/несозданный slot — НЕ legacy (его поймает probe()).
+        assert!(!command_is_legacy("''"));
+        assert!(!command_is_legacy(""));
+        assert!(!command_is_legacy("   "));
     }
 
     #[test]

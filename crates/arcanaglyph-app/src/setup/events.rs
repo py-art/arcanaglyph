@@ -5,12 +5,15 @@
 //      виджет + Tauri events для frontend.
 //   2. `spawn_update_checker` — фоновый раз-в-сутки чек GitHub releases с
 //      exponential backoff на сетевых ошибках.
-//   3. `spawn_udp_listener` — UDP :9002, на который пишут скрипты ag-trigger /
-//      ag-pause (GNOME custom-keybindings).
+//   3. `spawn_trigger_listener` (только Linux) — Unix-сокет trigger.sock, в
+//      который пишет короткоживущий `arcanaglyph --trigger`, запускаемый
+//      нативным GNOME custom-keybinding'ом.
 
 use crate::commands::EngineState;
 use crate::tray;
 use crate::updater;
+#[cfg(target_os = "linux")]
+use arcanaglyph_core::CoreConfig;
 use arcanaglyph_core::EngineEvent;
 use arcanaglyph_core::error::ApiError;
 use arcanaglyph_core::history::HistoryDB;
@@ -145,35 +148,46 @@ pub fn spawn_update_checker(app_handle: AppHandle, history_db: Arc<HistoryDB>) {
     });
 }
 
-/// UDP-триггер для Wayland: внешний скрипт `ag-trigger` отправляет UDP-пакет на
-/// 127.0.0.1:9002. Передаём команду в engine. Слушает до завершения процесса.
-pub fn spawn_udp_listener(engine_state: EngineState) {
+/// IPC-триггер для Linux (Wayland/GNOME): короткоживущий `arcanaglyph --trigger`,
+/// запущенный нативным GNOME custom-keybinding'ом, шлёт датаграмму в Unix-сокет
+/// `~/.config/arcanaglyph/trigger.sock`. Передаём команду в engine. Слушает до
+/// завершения процесса. Заменяет прежний UDP :9002 + bash-скрипты с `nc` —
+/// больше нет ни жёстко зашитого порта, ни внешних скриптов.
+#[cfg(target_os = "linux")]
+pub fn spawn_trigger_listener(engine_state: EngineState) {
     tauri::async_runtime::spawn(async move {
-        // Если порт занят (запущена вторая копия приложения) — НЕ паникуем в
-        // spawned-task (это уронило бы приложение), а тихо выходим из listener'а.
-        let udp_socket = match tokio::net::UdpSocket::bind("127.0.0.1:9002").await {
+        let path = match CoreConfig::trigger_socket_path() {
+            Some(p) => p,
+            None => {
+                tracing::error!("Не удалось определить путь IPC-сокета триггера");
+                return;
+            }
+        };
+        // Гарантируем директорию и снимаем устаревший сокет: bind упадёт, если
+        // файл уже существует (например, после некорректного завершения прошлой
+        // копии). single-instance гарантирует, что второго слушателя нет.
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::remove_file(&path);
+        let socket = match tokio::net::UnixDatagram::bind(&path) {
             Ok(s) => s,
             Err(e) => {
-                tracing::error!("Не удалось привязать UDP :9002 (порт занят? вторая копия?): {e}");
+                tracing::error!("Не удалось привязать IPC-сокет {}: {e}", path.display());
                 return;
             }
         };
         let mut buf = [0u8; 1024];
-        tracing::info!("Слушаю UDP-триггеры на порту 9002");
+        tracing::info!("Слушаю IPC-триггеры на {}", path.display());
         loop {
-            if let Ok((n, src)) = udp_socket.recv_from(&mut buf).await
+            if let Ok(n) = socket.recv(&mut buf).await
                 && let Some(engine) = engine_state.get()
             {
                 let msg = String::from_utf8_lossy(&buf[0..n]);
-                // Диагностика double-trigger: лог каждого UDP packet'а с
-                // источником и содержимым. Позволяет соотнести с
-                // tauri-shortcut логами и call_id из engine.rs trigger().
-                tracing::info!(
-                    source = "udp",
-                    from = %src,
-                    payload = %msg.trim(),
-                    "UDP packet received"
-                );
+                // Диагностика double-trigger: лог каждой датаграммы с содержимым.
+                // Позволяет соотнести с tauri-shortcut логами и call_id из
+                // engine.rs trigger().
+                tracing::info!(source = "uds", payload = %msg.trim(), "IPC packet received");
                 if msg.contains("pause") {
                     engine.pause();
                 } else if msg.contains("trigger") {
