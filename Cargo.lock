@@ -102,7 +102,7 @@ dependencies = [
 
 [[package]]
 name = "arcanaglyph-app"
-version = "1.9.5"
+version = "1.10.0"
 dependencies = [
  "arcanaglyph-core",
  "base64 0.22.1",
@@ -122,12 +122,13 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "winreg",
  "zip",
 ]
 
 [[package]]
 name = "arcanaglyph-core"
-version = "1.9.5"
+version = "1.10.0"
 dependencies = [
  "arboard",
  "ashpd",
