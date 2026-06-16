@@ -166,16 +166,22 @@ async fn apply_update_inner() -> Result<(), String> {
         )
     })?;
 
-    // Скачиваем install.sh.
-    let body = reqwest::Client::builder()
-        .user_agent(format!("arcanaglyph/{}", updater::APP_VERSION))
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
+    // Скачиваем install.sh. build_http_client сам подставит системный прокси,
+    // если он настроен (за фаерволом raw.githubusercontent.com может быть
+    // доступен только через прокси — без него `send()` падает с
+    // "error sending request"). Ошибку логируем в WARN: до этого фикса она
+    // уходила только в UI-тост, а в файловом логе было пусто.
+    tracing::info!("Установка обновления: скачиваю install.sh ({})", updater::INSTALL_URL);
+    let body = crate::net::build_http_client(30)
         .map_err(|e| format!("HTTP client: {e}"))?
         .get(updater::INSTALL_URL)
         .send()
         .await
-        .map_err(|e| format!("Скачивание install.sh: {e}"))?
+        .map_err(|e| {
+            let msg = format!("Скачивание install.sh: {e}");
+            tracing::warn!("{msg}");
+            msg
+        })?
         .error_for_status()
         .map_err(|e| format!("install.sh HTTP: {e}"))?
         .text()
@@ -271,15 +277,16 @@ async fn apply_update_windows() -> Result<(), String> {
 async fn download_installer_to_temp(url: &str) -> Result<std::path::PathBuf, String> {
     use std::io::Write;
 
-    let bytes = reqwest::Client::builder()
-        .user_agent(format!("arcanaglyph/{}", updater::APP_VERSION))
-        .timeout(std::time::Duration::from_secs(600))
-        .build()
+    let bytes = crate::net::build_http_client(600)
         .map_err(|e| format!("HTTP client: {e}"))?
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("Скачивание установщика: {e}"))?
+        .map_err(|e| {
+            let msg = format!("Скачивание установщика: {e}");
+            tracing::warn!("{msg}");
+            msg
+        })?
         .error_for_status()
         .map_err(|e| format!("Установщик HTTP: {e}"))?
         .bytes()
