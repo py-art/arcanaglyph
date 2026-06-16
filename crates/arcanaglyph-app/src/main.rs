@@ -118,6 +118,19 @@ fn main() {
         setup::run_grant_portal_and_exit();
     }
 
+    // Раннее: --trigger / --pause — короткоживущий клиент IPC-триггера, который
+    // запускает нативный GNOME-хоткей вместо прежних bash-скриптов с `nc`. Шлём
+    // одну датаграмму в Unix-сокет основного процесса и сразу выходим, НЕ поднимая
+    // Tauri/трей/engine/ORT. Только Linux: на Win/macOS хоткей ловится in-process.
+    #[cfg(target_os = "linux")]
+    if let Some(cmd) = std::env::args().find_map(|a| match a.as_str() {
+        "--trigger" => Some("trigger"),
+        "--pause" => Some("pause"),
+        _ => None,
+    }) {
+        setup::bootstrap::send_trigger_and_exit(cmd);
+    }
+
     // Инициализируем логирование: stdout (для `make run`) + файл с ротацией по дням.
     // Файловый лог критичен для Windows-сборки (windows_subsystem = "windows" → нет
     // консоли, stdout теряется) — это единственный канал диагностики от пользователя

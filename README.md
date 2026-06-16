@@ -196,8 +196,8 @@ crates/
 dist/
   index.html               # Фронтенд (vanilla HTML/JS)
 scripts/
-  ag-trigger               # UDP-скрипт для Wayland (запись)
-  ag-pause                 # UDP-скрипт для Wayland (пауза)
+  build-deb.sh             # Сборка self-contained .deb
+  run-dev.sh               # Локальный запуск (make run)
 assets/
   arcanaglyph.desktop      # Шаблон .desktop файла
 ```

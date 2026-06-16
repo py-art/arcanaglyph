@@ -362,6 +362,15 @@ impl CoreConfig {
         Self::project_dirs().map(|dirs| dirs.config_dir().join("scripts"))
     }
 
+    /// Путь к Unix-сокету IPC-триггера (Linux): ~/.config/arcanaglyph/trigger.sock
+    /// Короткоживущий `arcanaglyph --trigger`, запущенный нативным GNOME-хоткеем,
+    /// шлёт в него датаграмму и будит основной процесс. Заменяет прежний
+    /// UDP :9002 + bash-скрипты ag-trigger/ag-pause с зависимостью от `nc`.
+    #[cfg(target_os = "linux")]
+    pub fn trigger_socket_path() -> Option<PathBuf> {
+        Self::project_dirs().map(|dirs| dirs.config_dir().join("trigger.sock"))
+    }
+
     /// Директория логов: на Linux `~/.cache/arcanaglyph/logs/`, на Windows
     /// `%LOCALAPPDATA%\arcanaglyph\ArcanaGlyph\cache\logs\`. Критично для Windows:
     /// там приложение собрано с `windows_subsystem = "windows"` (нет консоли),

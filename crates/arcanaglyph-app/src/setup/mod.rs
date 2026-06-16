@@ -2,7 +2,7 @@
 //
 // Bootstrap (env, ORT, autostart), тело `.setup(...)` Tauri-приложения
 // (engine spawn, виджет, хоткеи, авторегистрация в GNOME), фоновые spawn-задачи
-// (engine→frontend event loop, update checker, UDP listener).
+// (engine→frontend event loop, update checker, IPC trigger listener).
 
 pub mod app_setup;
 pub mod bootstrap;

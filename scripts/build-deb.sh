@@ -437,8 +437,14 @@ fi
 log "Перепаковка AppImage…"
 rm -f "${APPIMAGE_FILE}"
 APPIMAGETOOL_LOG="$(mktemp)"
+# --runtime-file: переиспользуем runtime, уже скачанный в Phase 0.5. Без этого
+# appimagetool лезет качать runtime-x86_64 с GitHub своим внутренним downloader'ом
+# и падает на любом сетевом обрыве ("server returned status code 0/302"). Phase 0.5
+# уже обошёл это через curl -L — здесь просто отдаём готовый файл, и Phase 6 больше
+# не зависит от сети.
 if ! APPIMAGE_EXTRACT_AND_RUN=1 "${APPIMAGETOOL}" \
         --no-appstream \
+        --runtime-file "${APPIMAGE_RUNTIME_FILE}" \
         "${APPDIR}" "${APPIMAGE_FILE}" >"${APPIMAGETOOL_LOG}" 2>&1; then
     cat "${APPIMAGETOOL_LOG}" >&2
     rm -f "${APPIMAGETOOL_LOG}"
