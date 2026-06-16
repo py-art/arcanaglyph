@@ -124,6 +124,10 @@ pub fn spawn_update_checker(app_handle: AppHandle, history_db: Arc<HistoryDB>) {
             let state = updater::read_state(&history_db);
             let now = updater::unix_now();
             if update_check_due(state.last_check_at, now, force_check) {
+                // INFO, а не DEBUG: апдейтер раньше «молчал» в файловом логе
+                // (нормальный путь был на DEBUG, лог пишется на INFO) — нельзя
+                // было понять, ходил ли чекер вообще. Раз в сутки — не спам.
+                tracing::info!("Проверка обновлений: запрос к GitHub Releases");
                 match updater::check_for_update(&history_db).await {
                     Ok(Some(info)) => {
                         tracing::info!("Update available: {}", info.latest_version);
@@ -131,7 +135,7 @@ pub fn spawn_update_checker(app_handle: AppHandle, history_db: Arc<HistoryDB>) {
                         backoff = std::time::Duration::from_secs(86400);
                     }
                     Ok(None) => {
-                        tracing::debug!("Update check: no new release");
+                        tracing::info!("Проверка обновлений: новых релизов нет");
                         backoff = std::time::Duration::from_secs(86400);
                     }
                     Err(e) => {

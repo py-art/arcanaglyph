@@ -4,6 +4,7 @@
 
 mod commands;
 mod models;
+mod net;
 mod setup;
 mod tray;
 mod updater;

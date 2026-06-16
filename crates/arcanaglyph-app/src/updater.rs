@@ -109,11 +109,7 @@ pub fn installable_asset_url(release: &serde_json::Value) -> Option<String> {
 /// ловил ошибки), вызывается только на Windows.
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub async fn fetch_installable_asset_url() -> Result<Option<String>, ArcanaError> {
-    let client = reqwest::Client::builder()
-        .user_agent(format!("arcanaglyph/{}", APP_VERSION))
-        .timeout(std::time::Duration::from_secs(CHECK_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| ArcanaError::Internal(format!("reqwest client: {}", e)))?;
+    let client = crate::net::build_http_client(CHECK_TIMEOUT_SECS)?;
 
     let text = client
         .get(RELEASES_API)
@@ -204,13 +200,9 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
 /// - `Ok(ReleaseFetch::NotModified)` — 304 Not Modified.
 /// - `Err(_)` — сетевая/HTTP ошибка. Caller применяет exponential backoff.
 pub async fn fetch_latest_release(etag: Option<&str>) -> Result<ReleaseFetch, ArcanaError> {
-    // User-Agent обязателен: без него GitHub возвращает 403 + сообщение
-    // "Request forbidden by administrative rules".
-    let client = reqwest::Client::builder()
-        .user_agent(format!("arcanaglyph/{}", APP_VERSION))
-        .timeout(std::time::Duration::from_secs(CHECK_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| ArcanaError::Internal(format!("reqwest client: {}", e)))?;
+    // User-Agent обязателен (его проставляет build_http_client): без него
+    // GitHub возвращает 403 + "Request forbidden by administrative rules".
+    let client = crate::net::build_http_client(CHECK_TIMEOUT_SECS)?;
 
     let mut req = client
         .get(RELEASES_API)
