@@ -13,9 +13,27 @@ use arcanaglyph_core::CoreConfig;
 use arcanaglyph_core::config::TranscriberType;
 use commands::EngineState;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
 use tauri_plugin_global_shortcut::ShortcutState;
+
+/// Глобально удерживаемый `WorkerGuard` файлового лог-аппендера. Раньше держался
+/// локальной переменной в `main()`, но при kill-по-сигналу `main()` не доходит до
+/// конца — guard не дропается, и последние строки лога (в т.ч. сама причина выхода)
+/// теряются в буфере non-blocking аппендера. Глобальное хранилище позволяет
+/// флашить его из обработчика сигналов перед `process::exit`. См. [`flush_logs`].
+static LOG_GUARD: Mutex<Option<tracing_appender::non_blocking::WorkerGuard>> = Mutex::new(None);
+
+/// Принудительно дописывает буфер файлового лога на диск (через drop `WorkerGuard`).
+/// Идемпотентна: повторный вызов — no-op (guard уже взят). Вызывается из обработчика
+/// сигналов и в конце `main()` — кто первый, тот и флашит.
+fn flush_logs() {
+    if let Ok(mut g) = LOG_GUARD.lock() {
+        // take() + неявный drop возвращённого значения = синхронный флаш буфера.
+        let _ = g.take();
+    }
+}
 
 /// Настраивает подписчика трейсинга с двумя слоями: stdout и файл (ротация по
 /// дням, non-blocking). Возвращает `WorkerGuard` файлового аппендера — его нужно
@@ -92,6 +110,64 @@ fn install_panic_hook() {
     }));
 }
 
+/// Перехватывает терминирующие сигналы (SIGTERM/SIGINT/SIGHUP/SIGQUIT) в выделенном
+/// потоке, логирует имя сигнала И ОТПРАВИТЕЛЯ (PID + `/proc/<pid>/comm`), флашит лог
+/// и завершает процесс кодом `128 + N`. Зачем: приложение несколько раз «само»
+/// закрывалось без следа в логах — apport ловит только фатальные SIGSEGV/SIGABRT,
+/// а SIGTERM/SIGHUP уходят молча, и при kill-по-сигналу буфер non-blocking лога не
+/// дописывается. Теперь в логе останется строка `target=signal` с именем убийцы —
+/// это и есть инструмент для поиска причины спонтанных завершений.
+///
+/// SIGKILL/SIGSTOP перехватить невозможно (ядро): если виновник шлёт именно их,
+/// строки в логе не будет — тогда отправителя ловим извне (`bpftrace`/`auditctl`).
+#[cfg(unix)]
+fn install_signal_logger() {
+    use signal_hook::consts::{SIGHUP, SIGINT, SIGQUIT, SIGTERM};
+    use signal_hook::iterator::SignalsInfo;
+    use signal_hook::iterator::exfiltrator::origin::WithOrigin;
+
+    // WithOrigin прокидывает siginfo: signal + отправитель (pid/uid), если ядро их дало.
+    let mut signals = match SignalsInfo::<WithOrigin>::new([SIGTERM, SIGINT, SIGHUP, SIGQUIT]) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("Не удалось установить диагностический обработчик сигналов: {e}");
+            return;
+        }
+    };
+
+    let spawned = std::thread::Builder::new().name("signal-diag".into()).spawn(move || {
+        // Первого терминирующего сигнала достаточно — логируем его и выходим.
+        if let Some(origin) = (&mut signals).into_iter().next() {
+            let signum = origin.signal;
+            let signame = signal_hook::low_level::signal_name(signum).unwrap_or("UNKNOWN");
+            // Кто послал сигнал. `process` = None, когда сигнал от ядра/анонимный.
+            let (sender_pid, sender_name) = match origin.process {
+                Some(p) => {
+                    let name = std::fs::read_to_string(format!("/proc/{}/comm", p.pid))
+                        .map(|s| s.trim().to_string())
+                        .unwrap_or_else(|_| "<comm недоступен>".to_string());
+                    (p.pid.to_string(), name)
+                }
+                None => ("<ядро/анонимно>".to_string(), "<нет данных>".to_string()),
+            };
+            tracing::error!(
+                target: "signal",
+                signal = signame,
+                signum,
+                sender_pid = %sender_pid,
+                sender = %sender_name,
+                "Получен терминирующий сигнал — приложение завершается ИЗВНЕ (не штатный выход)"
+            );
+            flush_logs();
+            // 128 + N — конвенциональный код выхода shell для смерти по сигналу.
+            std::process::exit(128 + signum);
+        }
+    });
+    if let Err(e) = spawned {
+        tracing::warn!("Не удалось запустить поток диагностики сигналов: {e}");
+    }
+}
+
 /// Пишет в лог стартовую диагностику: версия, ОС, архитектура, наличие AVX и путь
 /// к файлу логов. Эти строки — первое, что мы попросим у пользователя при разборе
 /// проблем на Windows (AVX особенно: его отсутствие = SIGILL в ORT-движках).
@@ -137,8 +213,16 @@ fn main() {
     // консоли, stdout теряется) — это единственный канал диагностики от пользователя
     // без dev-окружения. `_log_guard` держим живым до конца main(): при его drop'е
     // non-blocking appender дописывает буфер на диск.
-    let _log_guard = init_logging();
+    // Guard храним в глобале (а не в локальной переменной): обработчик сигналов
+    // флашит его перед exit, иначе причина kill-по-сигналу теряется в буфере.
+    if let Ok(mut g) = LOG_GUARD.lock() {
+        *g = init_logging();
+    }
     install_panic_hook();
+    // Диагностика спонтанных завершений (Unix). Ставим сразу после логирования,
+    // чтобы поймать сигнал на любом этапе старта.
+    #[cfg(unix)]
+    install_signal_logger();
     log_startup_diagnostics();
 
     // Выбираем libonnxruntime.so для GigaAM/Qwen3-ASR. Делаем сразу после init трейсинга,
@@ -244,7 +328,7 @@ fn main() {
         hotkey_pause.parse().ok()
     });
 
-    tauri::Builder::default()
+    let run_result = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // Второй экземпляр — показываем окно первого
             tray::show_window(app);
@@ -333,6 +417,12 @@ fn main() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("Ошибка запуска Tauri");
+        .run(tauri::generate_context!());
+    // Штатный выход из event-loop (трей «Выход», апдейтер): флашим лог перед концом
+    // процесса. При ошибке запуска — логируем её (panic-hook бы тоже поймал, но так
+    // причина попадёт в файл до флаша).
+    if let Err(e) = run_result {
+        tracing::error!("Ошибка запуска/работы Tauri: {e}");
+    }
+    flush_logs();
 }

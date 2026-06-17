@@ -2,7 +2,7 @@
 
 [package]
 name = "arcanaglyph-app"
-version = "1.10.2"
+version = "1.10.3"
 edition = "2024"
 build = "src/build.rs"
 
@@ -51,6 +51,15 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 # в Linux/macOS-сборку не попадает. Версия совпадает с той, что уже тянет reqwest.
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
+
+# Диагностика спонтанных завершений: перехватываем терминирующие сигналы
+# (SIGTERM/SIGINT/SIGHUP/SIGQUIT) и логируем их ВМЕСТЕ с PID/именем отправителя
+# (фича `extended-siginfo` → siginfo.si_pid через WithOrigin). Нужно, потому что
+# при kill-по-сигналу non-blocking лог-аппендер не флашится и причина выхода
+# теряется — а apport ловит только фатальные SIGSEGV/SIGABRT, но не SIGTERM.
+# Unix-only: на Windows модель сигналов другая (ctrl-c handler, не нужен здесь).
+[target.'cfg(unix)'.dependencies]
+signal-hook = { version = "0.3", features = ["extended-siginfo"] }
 
 [features]
 # default включает app-feature "gigaam", которая каскадно включает core/gigaam.

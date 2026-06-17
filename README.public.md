@@ -41,7 +41,7 @@ curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | bash
 One-liner выше — для Linux x86_64. Зафиксировать конкретную версию:
 
 ```bash
-curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | VERSION=1.10.2 bash
+curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | VERSION=1.10.3 bash
 ```
 
 ### Windows
