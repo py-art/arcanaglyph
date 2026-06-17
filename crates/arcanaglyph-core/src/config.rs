@@ -426,7 +426,9 @@ impl CoreConfig {
         if let Some(json_str) = db.get_setting("core_config") {
             let config: CoreConfig = serde_json::from_str(&json_str)
                 .map_err(|e| ArcanaError::Config(format!("Ошибка парсинга конфига из БД: {}", e)))?;
-            tracing::info!("Конфигурация загружена из БД");
+            // DEBUG, а не INFO: load() вызывается на каждом тике фоновых задач
+            // (LRU-sweeper раз в минуту) — на INFO это спамит лог в простое.
+            tracing::debug!("Конфигурация загружена из БД");
             return Ok(config);
         }
 

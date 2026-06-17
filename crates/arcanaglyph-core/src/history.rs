@@ -86,7 +86,11 @@ impl HistoryDB {
         // Применяем миграции
         crate::db::run_migrations(&conn)?;
 
-        tracing::info!("БД истории открыта: {:?}", db_path);
+        // DEBUG, а не INFO: открытие БД делается на каждом тике фоновых задач
+        // (LRU-sweeper читает конфиг раз в минуту), иначе INFO-лог спамит
+        // «БД истории открыта» в простое. Реальный сбой БД идёт по ветке
+        // ошибки выше (ArcanaError::Database) и виден независимо от этого уровня.
+        tracing::debug!("БД истории открыта: {:?}", db_path);
         Ok(Self {
             conn: Mutex::new(conn),
             audio_cache_dir,
