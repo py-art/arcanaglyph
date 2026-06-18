@@ -167,10 +167,6 @@ impl Transcriber for GigaAmRnntTranscriber {
         let text = rnnt_tokens_to_text(&token_ids, &self.vocab);
         Ok(text)
     }
-
-    fn supports_streaming(&self) -> bool {
-        false
-    }
 }
 
 impl GigaAmRnntTranscriber {

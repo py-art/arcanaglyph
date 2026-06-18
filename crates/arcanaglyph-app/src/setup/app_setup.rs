@@ -255,28 +255,7 @@ fn spawn_engine_loader(
                 }
 
                 // Предзагрузка дополнительных моделей в фоне
-                if engine_state.get().is_some() {
-                    let preload_list: Vec<_> = {
-                        let cfg = arcanaglyph_core::CoreConfig::load().ok();
-                        cfg.map(|c| c.preload_models).unwrap_or_default()
-                    };
-                    for t_type in preload_list {
-                        let app_h = app_handle.clone();
-                        let es = engine_state.clone();
-                        tokio::task::spawn_blocking(move || {
-                            if let Some(e) = es.get() {
-                                match e.preload_model(&t_type) {
-                                    Ok(name) => {
-                                        tracing::info!("Модель '{}' предзагружена", name);
-                                        let _ = app_h
-                                            .emit("engine://model-preloaded", serde_json::json!({ "model": name }));
-                                    }
-                                    Err(err) => tracing::warn!("Не удалось предзагрузить модель: {}", err),
-                                }
-                            }
-                        });
-                    }
-                }
+                spawn_model_preload(&app_handle, &engine_state);
 
                 // Event loop: пробрасываем события engine → фронтенд
                 tokio::spawn(run_engine_event_loop(app_handle.clone(), engine_state.clone(), rx));
@@ -293,6 +272,36 @@ fn spawn_engine_loader(
             }
         }
     });
+}
+
+/// Предзагружает в фоне дополнительные модели из `config.preload_models` — каждую в
+/// своём `spawn_blocking`, чтобы не блокировать. На успех эмитит `engine://model-
+/// preloaded`. Вынесено из `spawn_engine_loader` ради снятия глубокой вложенности
+/// (был nesting 6). Async/Tauri-bound — проверяется live-verify, не юнитом.
+fn spawn_model_preload(app_handle: &tauri::AppHandle, engine_state: &EngineState) {
+    if engine_state.get().is_none() {
+        return;
+    }
+    let preload_list: Vec<_> = arcanaglyph_core::CoreConfig::load()
+        .ok()
+        .map(|c| c.preload_models)
+        .unwrap_or_default();
+    for t_type in preload_list {
+        let app_h = app_handle.clone();
+        let es = engine_state.clone();
+        tokio::task::spawn_blocking(move || {
+            let Some(e) = es.get() else {
+                return;
+            };
+            match e.preload_model(&t_type) {
+                Ok(name) => {
+                    tracing::info!("Модель '{}' предзагружена", name);
+                    let _ = app_h.emit("engine://model-preloaded", serde_json::json!({ "model": name }));
+                }
+                Err(err) => tracing::warn!("Не удалось предзагрузить модель: {}", err),
+            }
+        });
+    }
 }
 
 /// Создаёт иконку в системном трее (и скрывает её, если выключена в настройках).

@@ -9,8 +9,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tracing::info;
 
-use crate::engine::EngineEvent;
 use crate::error::ArcanaError;
+use crate::event::EngineEvent;
 use crate::transcriber::Transcriber;
 
 /// Возвращает user-friendly имя текущего default-микрофона.

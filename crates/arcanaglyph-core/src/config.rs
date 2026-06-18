@@ -426,7 +426,9 @@ impl CoreConfig {
         if let Some(json_str) = db.get_setting("core_config") {
             let config: CoreConfig = serde_json::from_str(&json_str)
                 .map_err(|e| ArcanaError::Config(format!("Ошибка парсинга конфига из БД: {}", e)))?;
-            tracing::info!("Конфигурация загружена из БД");
+            // DEBUG, а не INFO: load() вызывается на каждом тике фоновых задач
+            // (LRU-sweeper раз в минуту) — на INFO это спамит лог в простое.
+            tracing::debug!("Конфигурация загружена из БД");
             return Ok(config);
         }
 
@@ -670,5 +672,38 @@ auto_type = false
         // Имя модели — последний компонент пути активного движка.
         assert_eq!(config.transcriber_model_name(), "vosk-model-ru-0.42");
         assert_eq!(config.transcriber_type_str(), "vosk");
+    }
+
+    #[test]
+    fn test_widget_position_xy_corners_and_center() {
+        // Экран 1000×800, виджет 100×40. MARGIN=24, TOP=48, BOTTOM=60.
+        let (sw, sh, ww, wh) = (1000.0, 800.0, 100.0, 40.0);
+        let x_left = 24.0;
+        let x_center = (sw - ww) / 2.0; // 450
+        let x_right = sw - ww - 24.0; // 876
+        let y_top = 48.0;
+        let y_mid = (sh - wh) / 2.0; // 380
+        let y_bot = sh - wh - 60.0; // 700
+
+        assert_eq!(widget_position_xy("top-left", sw, sh, ww, wh), (x_left, y_top));
+        assert_eq!(widget_position_xy("top-center", sw, sh, ww, wh), (x_center, y_top));
+        assert_eq!(widget_position_xy("top-right", sw, sh, ww, wh), (x_right, y_top));
+        assert_eq!(widget_position_xy("middle-left", sw, sh, ww, wh), (x_left, y_mid));
+        assert_eq!(widget_position_xy("middle-center", sw, sh, ww, wh), (x_center, y_mid));
+        assert_eq!(widget_position_xy("middle-right", sw, sh, ww, wh), (x_right, y_mid));
+        assert_eq!(widget_position_xy("bottom-left", sw, sh, ww, wh), (x_left, y_bot));
+        assert_eq!(widget_position_xy("bottom-right", sw, sh, ww, wh), (x_right, y_bot));
+        // bottom-center — явный валидный кейс.
+        assert_eq!(widget_position_xy("bottom-center", sw, sh, ww, wh), (x_center, y_bot));
+    }
+
+    #[test]
+    fn test_widget_position_xy_invalid_falls_back_to_bottom_center() {
+        // Любое невалидное имя позиции → bottom-center (дефолт CoreConfig).
+        let (sw, sh, ww, wh) = (1920.0, 1080.0, 200.0, 60.0);
+        let expected = ((sw - ww) / 2.0, sh - wh - 60.0);
+        assert_eq!(widget_position_xy("", sw, sh, ww, wh), expected);
+        assert_eq!(widget_position_xy("garbage", sw, sh, ww, wh), expected);
+        assert_eq!(widget_position_xy("CENTER", sw, sh, ww, wh), expected);
     }
 }

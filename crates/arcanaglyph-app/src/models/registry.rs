@@ -3,52 +3,39 @@
 // Tauri-команды для управления реестром моделей: get_models (с проверкой
 // наличия и подбором display-пути), delete_model (удаляет файлы + чистит
 // совпадающий путь в config), download_model (старт ручной загрузки из UI).
-// Хелпер `is_model_installed` живёт здесь и переиспользуется `download::ensure_active_model`.
+// Проверка «модель установлена» живёт в нейтральном `installed` (разрыв цикла
+// `download ↔ registry`).
 
 use super::download::{download_file, extract_zip_into_model_dir};
+use super::installed::is_model_installed;
 use arcanaglyph_core::CoreConfig;
 
-/// Проверяет, установлена ли модель (не просто существование директории, а ключевые файлы).
+/// Резолвит путь к файлу модели для проверки наличия и отображения в UI.
 ///
-/// `min_size` — минимальный ожидаемый размер главного файла. Если задан и фактический
-/// размер меньше — считаем, что файл повреждён (например, прерванное скачивание).
-pub(crate) fn is_model_installed(path: &std::path::Path, transcriber_type: &str, min_size: Option<u64>) -> bool {
-    if !path.exists() {
-        return false;
+/// Для Whisper в реестре две модели (Tiny + Large), но `whisper_model_path` в config
+/// один. Если бы для обеих карточек брали config_path, одна показывала бы статус
+/// другой (Large card видела бы `ggml-tiny.bin` → размер не совпадает с expected →
+/// ложное «Не найдена», хотя файл Large лежит в `models_base_dir/...`). Решение:
+/// **для Whisper — всегда `models_base_dir/<default_filename>` per-model**, независимо
+/// от config_path (сам config_path engine использует для загрузки активной модели).
+///
+/// Для Vosk/GigaAM/Qwen3-ASR — одна модель на движок: берём config-путь, а если он
+/// пуст — fallback на дефолтную локацию. Чистая функция — тестируема без диска.
+fn resolve_model_file_path(transcriber_type: &str, default_filename: &str, config: &CoreConfig) -> std::path::PathBuf {
+    if transcriber_type == "whisper" {
+        return config.models_base_dir.join(default_filename);
     }
-
-    // Главный файл, размер которого валидируем по `min_size` (если задан).
-    // Для whisper это сам путь (это файл), для директорных движков — главный файл внутри.
-    let main_file: Option<std::path::PathBuf> = match transcriber_type {
-        "whisper" => Some(path.to_path_buf()),
-        "gigaam" => Some(path.join("v3_e2e_ctc.int8.onnx")),
-        "gigaam-rnnt" => Some(path.join("v3_e2e_rnnt_encoder.int8.onnx")),
-        "qwen3asr" => Some(path.join("tokenizer.json")),
-        _ => None,
+    let config_path = match transcriber_type {
+        "gigaam" => &config.gigaam_model_path,
+        "gigaam-rnnt" => &config.gigaam_rnnt_model_path,
+        "qwen3asr" => &config.qwen3asr_model_path,
+        // vosk и неизвестные движки исторически читают `model_path`.
+        _ => &config.model_path,
     };
-    if let Some(ref f) = main_file {
-        if !f.exists() {
-            return false;
-        }
-        if let Some(min) = min_size {
-            match std::fs::metadata(f) {
-                Ok(meta) if meta.is_file() && meta.len() >= min => {}
-                _ => return false,
-            }
-        }
-    }
-
-    // Дополнительные обязательные файлы (без проверки размера — только наличие)
-    match transcriber_type {
-        "gigaam" => path.join("v3_e2e_ctc_vocab.txt").exists(),
-        "gigaam-rnnt" => {
-            path.join("v3_e2e_rnnt_decoder.int8.onnx").exists()
-                && path.join("v3_e2e_rnnt_joint.int8.onnx").exists()
-                && path.join("v3_e2e_rnnt_vocab.txt").exists()
-        }
-        "qwen3asr" => path.join("onnx_models/encoder_conv.onnx").exists(),
-        "vosk" => path.join("conf").exists() || path.join("am").exists() || path.join("graph").exists(),
-        _ => true,
+    if config_path.as_os_str().is_empty() {
+        config.models_base_dir.join(default_filename)
+    } else {
+        config_path.clone()
     }
 }
 
@@ -70,38 +57,9 @@ pub fn get_models() -> Result<serde_json::Value, String> {
     let result: Vec<_> = models
         .iter()
         .map(|(m, available)| {
-            let config_path = match m.transcriber_type {
-                "vosk" => &config.model_path,
-                "whisper" => &config.whisper_model_path,
-                "gigaam" => &config.gigaam_model_path,
-                "gigaam-rnnt" => &config.gigaam_rnnt_model_path,
-                "qwen3asr" => &config.qwen3asr_model_path,
-                _ => &config.model_path,
-            };
-            // Резолвим путь к ФАЙЛУ модели (для проверки наличия + UI display).
-            //
-            // Для Whisper в реестре две модели (Tiny + Large), но `whisper_model_path`
-            // в config один. Если бы мы использовали config_path для обеих карточек,
-            // одна из них показывала бы статус другой (например, Large card видела бы
-            // `ggml-tiny.bin` если в config'е лежит он → размер не совпадает с
-            // expected → installed=false → ложное «Не найдена», хотя файл Large
-            // лежит в models_base_dir/ggml-large-v3-turbo.bin). Решение:
-            // **для Whisper — всегда `models_base_dir/<default_filename>` per-model**,
-            // независимо от config_path. Сам config_path всё ещё используется engine'ом
-            // для загрузки активной модели через `getModelPathFromCard`/dropdown в UI.
-            //
-            // Для Vosk/GigaAM/Qwen3-ASR — одна модель на движок, конфликта нет.
-            // Используем config_path; если пуст — fallback на default-локацию.
-            let resolved_path: std::path::PathBuf = match m.transcriber_type {
-                "whisper" => config.models_base_dir.join(m.default_filename),
-                _ => {
-                    if config_path.as_os_str().is_empty() {
-                        config.models_base_dir.join(m.default_filename)
-                    } else {
-                        config_path.clone()
-                    }
-                }
-            };
+            // Резолвим путь к ФАЙЛУ модели (для проверки наличия + UI display) —
+            // подробности per-движок в doc `resolve_model_file_path`.
+            let resolved_path = resolve_model_file_path(m.transcriber_type, m.default_filename, &config);
             // Файл «установлен» считаем только для доступных движков —
             // нет смысла показывать «зелёную галочку» для модели, которой backend нет.
             let installed =
@@ -131,6 +89,29 @@ pub fn get_models() -> Result<serde_json::Value, String> {
     Ok(serde_json::json!(result))
 }
 
+/// Удаляет файлы модели с диска (idempotent — отсутствие файла не ошибка). Whisper
+/// хранит сам `.bin`-файл → `remove_file`; директорные движки (Vosk/GigaAM/Qwen3-ASR)
+/// → `remove_dir_all`. Вынесено из `delete_model` ради снижения сложности. Async (fs)
+/// — не юнит-тестируется (проверяется live).
+async fn remove_model_from_disk(transcriber_type: &str, pb: &std::path::Path) -> Result<(), String> {
+    if !pb.exists() {
+        return Ok(());
+    }
+    // Директорные движки удаляют дерево; whisper (и вырожденный «не директория») — файл.
+    if transcriber_type != "whisper" && pb.is_dir() {
+        tokio::fs::remove_dir_all(pb)
+            .await
+            .map_err(|e| format!("Не удалось удалить директорию {}: {}", pb.display(), e))?;
+        tracing::info!("Удалена директория модели: {}", pb.display());
+    } else {
+        tokio::fs::remove_file(pb)
+            .await
+            .map_err(|e| format!("Не удалось удалить файл {}: {}", pb.display(), e))?;
+        tracing::info!("Удалён файл модели: {}", pb.display());
+    }
+    Ok(())
+}
+
 /// Tauri-команда: удалить файлы модели с диска + очистить совпадающий путь в config'е.
 /// Если в config-поле для движка лежит ИМЕННО этот путь — оно затирается на пустой
 /// (чтобы UI после re-render'а не показывал мёртвый путь, и engine при следующем
@@ -147,46 +128,11 @@ pub async fn delete_model(model_id: String, path: String) -> Result<(), String> 
         .ok_or_else(|| format!("Модель '{}' не найдена в реестре", model_id))?;
     let pb = std::path::PathBuf::from(&path);
 
-    // Удаление файлов с диска (idempotent: если уже нет — продолжаем чистить config)
-    if pb.exists() {
-        if model_info.transcriber_type == "whisper" {
-            std::fs::remove_file(&pb).map_err(|e| format!("Не удалось удалить файл {}: {}", path, e))?;
-            tracing::info!("Удалён файл модели: {}", path);
-        } else if pb.is_dir() {
-            std::fs::remove_dir_all(&pb).map_err(|e| format!("Не удалось удалить директорию {}: {}", path, e))?;
-            tracing::info!("Удалена директория модели: {}", path);
-        } else {
-            std::fs::remove_file(&pb).map_err(|e| format!("Не удалось удалить {}: {}", path, e))?;
-            tracing::info!("Удалён файл модели: {}", path);
-        }
-    }
+    remove_model_from_disk(model_info.transcriber_type, &pb).await?;
 
     // Чистим config-путь, если он совпадает с удалённым.
     let mut config = CoreConfig::load().map_err(|e| e.to_string())?;
-    let cleared = match model_info.transcriber_type {
-        "vosk" if config.model_path == pb => {
-            config.model_path = std::path::PathBuf::new();
-            true
-        }
-        "whisper" if config.whisper_model_path == pb => {
-            config.whisper_model_path = std::path::PathBuf::new();
-            true
-        }
-        "gigaam" if config.gigaam_model_path == pb => {
-            config.gigaam_model_path = std::path::PathBuf::new();
-            true
-        }
-        "gigaam-rnnt" if config.gigaam_rnnt_model_path == pb => {
-            config.gigaam_rnnt_model_path = std::path::PathBuf::new();
-            true
-        }
-        "qwen3asr" if config.qwen3asr_model_path == pb => {
-            config.qwen3asr_model_path = std::path::PathBuf::new();
-            true
-        }
-        _ => false,
-    };
-    if cleared {
+    if clear_model_config_path_if_matches(&mut config, model_info.transcriber_type, &pb) {
         config.save().map_err(|e| e.to_string())?;
         tracing::info!(
             "Очищен config-путь для движка '{}' после удаления модели",
@@ -194,6 +140,87 @@ pub async fn delete_model(model_id: String, path: String) -> Result<(), String> 
         );
     }
     Ok(())
+}
+
+/// Путь, который считается «установленной моделью» для движка: Whisper хранит сам
+/// `.bin`-файл, остальные движки (Vosk/GigaAM/Qwen3-ASR) — директорию модели.
+/// Чистая функция — единый выбор для guard'а установки и обновления config-пути
+/// (раньше дублировался в `download_model` дважды). Тестируема без tauri.
+fn model_install_path(
+    transcriber_type: &str,
+    main_dest: &std::path::Path,
+    dest_path: &std::path::Path,
+) -> std::path::PathBuf {
+    if transcriber_type == "whisper" {
+        main_dest.to_path_buf()
+    } else {
+        dest_path.to_path_buf()
+    }
+}
+
+/// Проставляет в `config` путь скачанной модели в поле, соответствующее движку.
+/// Возвращает `true`, если движок известен и поле обновлено (вызывающий тогда
+/// сохраняет config); `false` для неизвестного типа. Чистая функция — мутирует
+/// config без I/O, тестируема без tauri.
+fn apply_model_config_path(config: &mut CoreConfig, transcriber_type: &str, path: std::path::PathBuf) -> bool {
+    match transcriber_type {
+        "vosk" => config.model_path = path,
+        "whisper" => config.whisper_model_path = path,
+        "gigaam" => config.gigaam_model_path = path,
+        "gigaam-rnnt" => config.gigaam_rnnt_model_path = path,
+        "qwen3asr" => config.qwen3asr_model_path = path,
+        _ => return false,
+    }
+    true
+}
+
+/// Затирает config-путь движка на пустой, ЕСЛИ он совпадает с удалённым `deleted_path`.
+/// Возвращает `true`, если поле было очищено (вызывающий тогда сохраняет config).
+/// Несколько моделей одного движка (Whisper Tiny+Large): чистим только при точном
+/// совпадении пути — иначе удаление одной обнулило бы путь к оставшейся. Чистая
+/// функция — мутирует config без I/O, тестируема.
+fn clear_model_config_path_if_matches(
+    config: &mut CoreConfig,
+    transcriber_type: &str,
+    deleted_path: &std::path::Path,
+) -> bool {
+    let field = match transcriber_type {
+        "vosk" => &mut config.model_path,
+        "whisper" => &mut config.whisper_model_path,
+        "gigaam" => &mut config.gigaam_model_path,
+        "gigaam-rnnt" => &mut config.gigaam_rnnt_model_path,
+        "qwen3asr" => &mut config.qwen3asr_model_path,
+        _ => return false,
+    };
+    if field == deleted_path {
+        *field = std::path::PathBuf::new();
+        true
+    } else {
+        false
+    }
+}
+
+/// Обновляет config-путь движка на скачанный файл и сохраняет config. Вынесено из
+/// `download_model` ради снижения вложенности orchestrator'а. Зачем нужно: после
+/// `delete_model` config-путь пуст, и без этого скачанная заново модель считалась бы
+/// «не выбранной»; также позволяет переключать варианты Whisper (Tiny/Large) одним
+/// «Скачать». Ошибка сохранения не фатальна (файлы уже на диске) — только логируется.
+/// Ядро выбора поля — чистый `apply_model_config_path` (покрыт тестами).
+fn persist_downloaded_model_path(transcriber_type: &str, main_dest: &std::path::Path, dest_path: &std::path::Path) {
+    let saved_path = model_install_path(transcriber_type, main_dest, dest_path);
+    let Ok(mut config) = CoreConfig::load() else {
+        return;
+    };
+    if !apply_model_config_path(&mut config, transcriber_type, saved_path) {
+        return;
+    }
+    match config.save() {
+        Err(e) => tracing::warn!("Не удалось сохранить config-путь после скачивания: {}", e),
+        Ok(()) => tracing::info!(
+            "Config-путь для движка '{}' обновлён на скачанный файл",
+            transcriber_type
+        ),
+    }
 }
 
 /// Tauri-команда: скачать модель (один или несколько файлов) с прогрессом
@@ -207,7 +234,7 @@ pub async fn download_model(
     use tauri::Emitter;
 
     let dest_path = std::path::PathBuf::from(&dest_dir);
-    let _ = std::fs::create_dir_all(&dest_path);
+    let _ = tokio::fs::create_dir_all(&dest_path).await;
 
     // Находим модель в реестре для extra_files
     let model_info = arcanaglyph_core::transcription_models::find(&model_id);
@@ -229,12 +256,7 @@ pub async fn download_model(
     // ниже как обычно, чтобы карточка перерисовалась корректно.
     let already_installed = match model_info {
         Some(m) => {
-            // Whisper хранит сам файл .bin как путь модели; остальные движки — директорию.
-            let install_path: std::path::PathBuf = if m.transcriber_type == "whisper" {
-                main_dest.clone()
-            } else {
-                dest_path.clone()
-            };
+            let install_path = model_install_path(m.transcriber_type, &main_dest, &dest_path);
             is_model_installed(&install_path, m.transcriber_type, m.expected_min_size_bytes)
         }
         None => false,
@@ -250,8 +272,9 @@ pub async fn download_model(
         // сразу распаковываем. Это нужно когда прошлая попытка распаковки упала
         // (extract_zip_into_model_dir на ошибке оставляет zip нетронутым), и пользователь
         // повторно нажал «Скачать» — перекачивать 1.8 ГБ не нужно.
+        let zip_meta = tokio::fs::metadata(&main_dest).await;
         let zip_already_downloaded = main_dest.extension().and_then(|s| s.to_str()) == Some("zip")
-            && match (min_size, std::fs::metadata(&main_dest)) {
+            && match (min_size, zip_meta) {
                 (Some(min), Ok(m)) if m.is_file() => m.len() >= min,
                 _ => false,
             };
@@ -278,54 +301,9 @@ pub async fn download_model(
         }
     }
 
-    // Авто-обновление config-пути для скачанной модели. Без этого:
-    //   1. После delete_model config-путь пуст; пользователь нажимает «Скачать» — файл
-    //      на диске есть, но config.whisper_model_path всё ещё "" → engine думает
-    //      что модель не выбрана, dropdown в UI помечает её как «(нет модели)».
-    //   2. Если пользователь хочет переключить варианты Whisper (Tiny/Large) через UI,
-    //      достаточно нажать «Скачать» — путь в config'е обновится сам.
-    // Whisper: путь — это сам .bin файл. Vosk/GigaAM/Qwen3-ASR — директория модели.
+    // Авто-обновление config-пути для скачанной модели (детали — в doc хелпера).
     if let Some(model_info) = model_info {
-        let saved_path: std::path::PathBuf = if model_info.transcriber_type == "whisper" {
-            main_dest.clone()
-        } else {
-            dest_path.clone()
-        };
-        if let Ok(mut config) = CoreConfig::load() {
-            let updated = match model_info.transcriber_type {
-                "vosk" => {
-                    config.model_path = saved_path;
-                    true
-                }
-                "whisper" => {
-                    config.whisper_model_path = saved_path;
-                    true
-                }
-                "gigaam" => {
-                    config.gigaam_model_path = saved_path;
-                    true
-                }
-                "gigaam-rnnt" => {
-                    config.gigaam_rnnt_model_path = saved_path;
-                    true
-                }
-                "qwen3asr" => {
-                    config.qwen3asr_model_path = saved_path;
-                    true
-                }
-                _ => false,
-            };
-            if updated {
-                if let Err(e) = config.save() {
-                    tracing::warn!("Не удалось сохранить config-путь после скачивания: {}", e);
-                } else {
-                    tracing::info!(
-                        "Config-путь для движка '{}' обновлён на скачанный файл",
-                        model_info.transcriber_type
-                    );
-                }
-            }
-        }
+        persist_downloaded_model_path(model_info.transcriber_type, &main_dest, &dest_path);
     }
 
     let _ = app.emit(
@@ -342,65 +320,114 @@ pub async fn download_model(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use std::path::PathBuf;
 
-    /// Уникальная временная директория под тест (без внешних crate'ов, как `temp_db`).
-    fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("arcanaglyph_registry_test_{}_{}", name, std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("create temp dir");
-        dir
-    }
-
-    fn write_file(path: &std::path::Path, bytes: usize) {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).expect("create parent");
+    #[test]
+    fn test_model_install_path_whisper_is_file_others_dir() {
+        let main_dest = PathBuf::from("/models/ggml-large-v3-turbo.bin");
+        let dest_dir = PathBuf::from("/models/whisper-dir");
+        // Whisper → сам .bin-файл.
+        assert_eq!(model_install_path("whisper", &main_dest, &dest_dir), main_dest);
+        // Остальные движки → директория модели.
+        for t in ["vosk", "gigaam", "gigaam-rnnt", "qwen3asr", "totally-unknown"] {
+            assert_eq!(model_install_path(t, &main_dest, &dest_dir), dest_dir);
         }
-        fs::write(path, vec![0u8; bytes]).expect("write file");
     }
 
     #[test]
-    fn test_missing_path_is_not_installed() {
-        let missing = std::env::temp_dir().join("arcanaglyph_registry_does_not_exist_xyz");
-        let _ = fs::remove_dir_all(&missing);
-        assert!(!is_model_installed(&missing, "gigaam", None));
+    fn test_apply_model_config_path_sets_right_field() {
+        let p = PathBuf::from("/models/downloaded");
+
+        let mut config = CoreConfig::default();
+        assert!(apply_model_config_path(&mut config, "vosk", p.clone()));
+        assert_eq!(config.model_path, p);
+
+        let mut config = CoreConfig::default();
+        assert!(apply_model_config_path(&mut config, "whisper", p.clone()));
+        assert_eq!(config.whisper_model_path, p);
+
+        let mut config = CoreConfig::default();
+        assert!(apply_model_config_path(&mut config, "gigaam", p.clone()));
+        assert_eq!(config.gigaam_model_path, p);
+
+        let mut config = CoreConfig::default();
+        assert!(apply_model_config_path(&mut config, "gigaam-rnnt", p.clone()));
+        assert_eq!(config.gigaam_rnnt_model_path, p);
+
+        let mut config = CoreConfig::default();
+        assert!(apply_model_config_path(&mut config, "qwen3asr", p.clone()));
+        assert_eq!(config.qwen3asr_model_path, p);
     }
 
     #[test]
-    fn test_gigaam_requires_main_file_and_vocab() {
-        let dir = temp_dir("gigaam");
-        // Только onnx, без vocab → не установлена.
-        write_file(&dir.join("v3_e2e_ctc.int8.onnx"), 1024);
-        assert!(!is_model_installed(&dir, "gigaam", None));
-        // Добавили vocab → установлена.
-        write_file(&dir.join("v3_e2e_ctc_vocab.txt"), 16);
-        assert!(is_model_installed(&dir, "gigaam", None));
-        // Главный файл отсутствует → не установлена.
-        fs::remove_file(dir.join("v3_e2e_ctc.int8.onnx")).unwrap();
-        assert!(!is_model_installed(&dir, "gigaam", None));
-        let _ = fs::remove_dir_all(&dir);
+    fn test_apply_model_config_path_unknown_returns_false_and_no_mutation() {
+        let mut config = CoreConfig::default();
+        let before = config.model_path.clone();
+        // Неизвестный движок → false, ни одно поле не тронуто.
+        assert!(!apply_model_config_path(
+            &mut config,
+            "totally-unknown",
+            PathBuf::from("/x")
+        ));
+        assert_eq!(config.model_path, before);
     }
 
     #[test]
-    fn test_whisper_validates_min_size() {
-        let dir = temp_dir("whisper");
-        let model = dir.join("ggml-large-v3-turbo.bin");
-        write_file(&model, 100);
-        // Размер 100 >= min 50 → установлена.
-        assert!(is_model_installed(&model, "whisper", Some(50)));
-        // Размер 100 < min 1000 → повреждена/недокачана.
-        assert!(!is_model_installed(&model, "whisper", Some(1000)));
-        // Без min_size — достаточно существования файла.
-        assert!(is_model_installed(&model, "whisper", None));
-        let _ = fs::remove_dir_all(&dir);
+    fn test_clear_model_config_path_if_matches() {
+        let p = PathBuf::from("/models/gigaam-v3");
+        // Совпадает → поле очищено, true.
+        let mut config = CoreConfig {
+            gigaam_model_path: p.clone(),
+            ..Default::default()
+        };
+        assert!(clear_model_config_path_if_matches(&mut config, "gigaam", &p));
+        assert_eq!(config.gigaam_model_path, PathBuf::new());
+
+        // Не совпадает (другая модель того же движка) → не трогаем, false.
+        let other = PathBuf::from("/models/gigaam-other");
+        let mut config = CoreConfig {
+            gigaam_model_path: other.clone(),
+            ..Default::default()
+        };
+        assert!(!clear_model_config_path_if_matches(&mut config, "gigaam", &p));
+        assert_eq!(config.gigaam_model_path, other);
+
+        // Неизвестный движок → false.
+        let mut config = CoreConfig::default();
+        assert!(!clear_model_config_path_if_matches(&mut config, "totally-unknown", &p));
     }
 
     #[test]
-    fn test_unknown_type_only_checks_path_exists() {
-        let dir = temp_dir("unknown");
-        // Неизвестный тип: main_file = None, доп-файлов нет → достаточно наличия пути.
-        assert!(is_model_installed(&dir, "totally-unknown", None));
-        let _ = fs::remove_dir_all(&dir);
+    fn test_resolve_model_file_path_whisper_always_base_dir() {
+        // Whisper всегда base_dir/<filename>, даже если whisper_model_path задан.
+        let config = CoreConfig {
+            models_base_dir: PathBuf::from("/base"),
+            whisper_model_path: PathBuf::from("/somewhere/ggml-tiny.bin"),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_model_file_path("whisper", "ggml-large-v3-turbo.bin", &config),
+            PathBuf::from("/base/ggml-large-v3-turbo.bin")
+        );
+    }
+
+    #[test]
+    fn test_resolve_model_file_path_uses_config_or_fallback() {
+        let config = CoreConfig {
+            models_base_dir: PathBuf::from("/base"),
+            gigaam_model_path: PathBuf::from("/custom/gigaam"),
+            gigaam_rnnt_model_path: PathBuf::new(), // явно пусто → fallback
+            ..Default::default()
+        };
+        // Непустой config-путь движка → берётся как есть.
+        assert_eq!(
+            resolve_model_file_path("gigaam", "gigaam-v3-e2e-ctc", &config),
+            PathBuf::from("/custom/gigaam")
+        );
+        // Пустой config-путь → fallback на base_dir/<filename>.
+        assert_eq!(
+            resolve_model_file_path("gigaam-rnnt", "gigaam-v3-e2e-rnnt", &config),
+            PathBuf::from("/base/gigaam-v3-e2e-rnnt")
+        );
     }
 }

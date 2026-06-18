@@ -186,11 +186,10 @@ sudo apt install wl-clipboard
 - Whisper: `models/ggml-large-v3-turbo.bin` (HuggingFace ggerganov/whisper.cpp)
 - GigaAM v3: `models/gigaam-v3-e2e-ctc/` (istupakov/gigaam-v3-onnx)
 
-<!-- arcanacodex:rules:begin v=0.213.1 -->
-
+<!-- arcanacodex:rules:begin v=0.278.6 -->
 ## ArcanaCodex MCP — highest-priority rule in this file
 
-> _Auto-managed by `arcanacodex project install` (v0.213.1, 2026-06-12T01:22:15Z)._
+> _Auto-managed by `arcanacodex project install` (v0.278.6, 2026-06-17T19:14:10Z)._
 > _Не редактировать руками — изменения затрутся при следующем
 > `arcanacodex project update`. Чтобы удалить — `arcanacodex project uninstall <path>`._
 
@@ -205,15 +204,15 @@ cheatsheet, escape hatches, hook behavior, scope guarantees) — в
 
 **Quick cheatsheet** — что вызывать вместо `rg`/`Read`:
 
-| Tool                                  | Вопрос                                   |
-| ------------------------------------- | ---------------------------------------- |
-| `who_calls("X")`                      | Кто вызывает функцию X?                  |
-| `function_skeleton(file)`             | Структура файла >300 строк?              |
-| `signature` / `hover`                 | Сигнатура / docstring qualified-name?    |
-| `affected_by(symbol)`                 | Что сломается если изменить этот символ? |
-| `code_for_intent("...")`              | Не помню имя — найти по NL описанию?     |
-| `file_health(file_path)`              | Один файл — стоит ли рефакторить?        |
-| `refactor_candidates(scope="staged")` | Что рефакторить перед коммитом?          |
+| Tool | Вопрос |
+| --- | --- |
+| `who_calls("X")` | Кто вызывает функцию X? |
+| `function_skeleton(file)` | Структура файла >300 строк? |
+| `signature` / `hover` | Сигнатура / docstring qualified-name? |
+| `affected_by(symbol)` | Что сломается если изменить этот символ? |
+| `code_for_intent("...")` | Не помню имя — найти по NL описанию? |
+| `file_health(file_path)` | Один файл — стоит ли рефакторить? |
+| `refactor_candidates(scope="staged")` | Что рефакторить перед коммитом? |
 
 **Escape:** добавить `# arcana: allow` (с пробелом перед `#` в реальной
 команде) в конец `rg`/`grep` команды для one-off bypass.
@@ -222,5 +221,4 @@ cheatsheet, escape hatches, hook behavior, scope guarantees) — в
 **MUST READ:** прочитать `.arcanacodex/AGENT_RULES.md` ПЕРЕД первым
 ответом про код в этом репо — там полный anti-pattern checklist, scope
 гарантии, поведение hooks, объяснение envelope confidence-сигналов.
-
 <!-- arcanacodex:rules:end -->

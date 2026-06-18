@@ -86,14 +86,25 @@ impl HistoryDB {
         // Применяем миграции
         crate::db::run_migrations(&conn)?;
 
-        tracing::info!("БД истории открыта: {:?}", db_path);
+        // DEBUG, а не INFO: открытие БД делается на каждом тике фоновых задач
+        // (LRU-sweeper читает конфиг раз в минуту), иначе INFO-лог спамит
+        // «БД истории открыта» в простое. Реальный сбой БД идёт по ветке
+        // ошибки выше (ArcanaError::Database) и виден независимо от этого уровня.
+        tracing::debug!("БД истории открыта: {:?}", db_path);
         Ok(Self {
             conn: Mutex::new(conn),
             audio_cache_dir,
         })
     }
 
-    /// Добавляет запись аудио
+    /// Берёт блокировку соединения, маппя poison-ошибку Mutex в `ArcanaError::Database`.
+    /// Единый путь вместо повторения `.lock().map_err(...)` в каждом методе.
+    fn lock_conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, ArcanaError> {
+        self.conn
+            .lock()
+            .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))
+    }
+
     /// Получить настройку по ключу
     pub fn get_setting(&self, key: &str) -> Option<String> {
         let conn = self.conn.lock().ok()?;
@@ -107,10 +118,7 @@ impl HistoryDB {
 
     /// Установить настройку
     pub fn set_setting(&self, key: &str, value: &str) -> Result<(), ArcanaError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        let conn = self.lock_conn()?;
         conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
             rusqlite::params![key, value],
@@ -121,10 +129,7 @@ impl HistoryDB {
 
     /// Получить все настройки
     pub fn get_all_settings(&self) -> Result<std::collections::HashMap<String, String>, ArcanaError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare("SELECT key, value FROM settings")
             .map_err(|e| ArcanaError::Database(format!("Ошибка запроса настроек: {}", e)))?;
@@ -137,10 +142,7 @@ impl HistoryDB {
     }
 
     pub fn add_recording(&self, audio_path: &str, duration_secs: u32) -> Result<i64, ArcanaError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        let conn = self.lock_conn()?;
         let timestamp = chrono::Utc::now().timestamp();
         conn.execute(
             "INSERT INTO recordings (audio_path, timestamp, duration_secs) VALUES (?1, ?2, ?3)",
@@ -158,10 +160,7 @@ impl HistoryDB {
         model_name: &str,
         transcriber_type: &str,
     ) -> Result<i64, ArcanaError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        let conn = self.lock_conn()?;
         let created_at = chrono::Utc::now().timestamp();
         conn.execute(
             "INSERT INTO transcriptions (recording_id, text, model_name, transcriber_type, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -178,10 +177,7 @@ impl HistoryDB {
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<HistoryEntry>, u32), ArcanaError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        let conn = self.lock_conn()?;
 
         // Общее количество записей
         let total: u32 = conn
@@ -232,10 +228,7 @@ impl HistoryDB {
 
     /// Получить транскрибации для конкретной записи
     pub fn get_transcriptions(&self, recording_id: i64) -> Result<Vec<Transcription>, ArcanaError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare(TRANSCRIPTIONS_BY_RECORDING_SQL)
             .map_err(|e| ArcanaError::Database(format!("Ошибка запроса: {}", e)))?;
@@ -251,10 +244,7 @@ impl HistoryDB {
 
     /// Удаляет запись и её транскрибации + аудиофайл
     pub fn delete_recording(&self, id: i64) -> Result<(), ArcanaError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        let conn = self.lock_conn()?;
 
         // Получаем путь к аудио для удаления файла
         let audio_path: Option<String> = conn
@@ -279,10 +269,7 @@ impl HistoryDB {
 
     /// Очищает всю историю и кэш аудио
     pub fn clear(&self) -> Result<(), ArcanaError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        let conn = self.lock_conn()?;
         conn.execute_batch("DELETE FROM transcriptions; DELETE FROM recordings;")
             .map_err(|e| ArcanaError::Database(format!("Ошибка очистки: {}", e)))?;
 
@@ -302,10 +289,7 @@ impl HistoryDB {
             return Ok(0);
         }
         let cutoff = chrono::Utc::now().timestamp() - (hours as i64 * 3600);
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| ArcanaError::Database(format!("Mutex: {}", e)))?;
+        let conn = self.lock_conn()?;
 
         // Собираем пути аудио для удаления файлов
         let mut stmt = conn

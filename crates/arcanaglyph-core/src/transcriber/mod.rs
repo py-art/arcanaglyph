@@ -56,8 +56,11 @@ pub trait Transcriber: Send + Sync {
     /// Транскрибирует аудио (i16 сэмплы, mono)
     fn transcribe(&self, samples: &[i16], sample_rate: u32) -> Result<String, ArcanaError>;
 
-    /// Поддерживает ли потоковую обработку (partial results в реальном времени)
-    fn supports_streaming(&self) -> bool;
+    /// Поддерживает ли потоковую обработку (partial results в реальном времени).
+    /// Дефолт — `false`; только Vosk (streaming-движок) переопределяет на `true`.
+    fn supports_streaming(&self) -> bool {
+        false
+    }
 
     /// Потоковая обработка сэмплов — вызывается из audio callback (только Vosk)
     fn accept_waveform(&self, _samples: &[i16]) -> Result<(), ArcanaError> {
