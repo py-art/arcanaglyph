@@ -6,7 +6,7 @@
 // что вызывающий код (Tauri-spawn и команда `download_model`) ожидает
 // именно `Result<_, String>`.
 
-use super::registry::is_model_installed;
+use super::installed::is_model_installed;
 use arcanaglyph_core::CoreConfig;
 
 /// Скачивание одного файла с прогрессом.
@@ -31,7 +31,7 @@ pub(crate) async fn download_file(
     use tauri::Emitter;
 
     if let Some(parent) = dest.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        let _ = tokio::fs::create_dir_all(parent).await;
     }
 
     let filename = dest.file_name().and_then(|n| n.to_str()).unwrap_or("file");
@@ -186,7 +186,7 @@ pub(crate) async fn extract_zip_into_model_dir(
         ));
     }
 
-    if let Err(e) = std::fs::remove_file(zip_path) {
+    if let Err(e) = tokio::fs::remove_file(zip_path).await {
         tracing::warn!(
             "Не удалось удалить архив {} после распаковки: {}",
             zip_path.display(),
@@ -273,13 +273,14 @@ pub async fn ensure_active_model(transcriber_type: &str, app: &tauri::AppHandle)
     let main_dest: std::path::PathBuf = if transcriber_type == "whisper" {
         path.clone()
     } else {
-        let _ = std::fs::create_dir_all(&path);
+        let _ = tokio::fs::create_dir_all(&path).await;
         let main_filename = model.download_url.rsplit('/').next().unwrap_or("model.bin");
         path.join(main_filename)
     };
 
     // Чистим повреждённый главный файл (меньше порога), чтобы не путать atomic-rename.
-    if let (Some(min), Ok(meta)) = (min_size, std::fs::metadata(&main_dest))
+    let main_meta = tokio::fs::metadata(&main_dest).await;
+    if let (Some(min), Ok(meta)) = (min_size, main_meta)
         && meta.is_file()
         && meta.len() < min
     {
@@ -289,15 +290,16 @@ pub async fn ensure_active_model(transcriber_type: &str, app: &tauri::AppHandle)
             min,
             main_dest.display()
         );
-        let _ = std::fs::remove_file(&main_dest);
+        let _ = tokio::fs::remove_file(&main_dest).await;
     }
 
     let extras = model.extra_files.unwrap_or(&[]);
     let total_files = 1 + extras.len();
     // Тот же skip как в download_model: если zip уже скачан и валиден по размеру,
     // не перекачиваем 1.8 ГБ ради повторной попытки распаковки.
+    let zip_meta = tokio::fs::metadata(&main_dest).await;
     let zip_already_downloaded = main_dest.extension().and_then(|s| s.to_str()) == Some("zip")
-        && match (min_size, std::fs::metadata(&main_dest)) {
+        && match (min_size, zip_meta) {
             (Some(min), Ok(m)) if m.is_file() => m.len() >= min,
             _ => false,
         };

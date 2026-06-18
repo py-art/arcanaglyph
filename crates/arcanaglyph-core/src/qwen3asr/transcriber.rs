@@ -570,10 +570,6 @@ impl Transcriber for Qwen3AsrTranscriber {
 
         Ok(result)
     }
-
-    fn supports_streaming(&self) -> bool {
-        false
-    }
 }
 
 // ONNX Session является Send + Sync через Mutex

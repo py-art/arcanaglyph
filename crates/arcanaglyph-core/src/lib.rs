@@ -15,6 +15,7 @@ pub mod db;
 pub mod dsp;
 pub mod engine;
 pub mod error;
+pub mod event;
 // Модуль gigaam подключается при ЛЮБОМ из двух backend-features:
 // - `gigaam` (ort + Microsoft pre-built ONNX, требует AVX)
 // - `gigaam-system-ort` (ort + локально собранная libonnxruntime.so без AVX)
@@ -28,5 +29,6 @@ pub mod transcriber;
 pub mod transcription_models;
 
 pub use config::CoreConfig;
-pub use engine::{ArcanaEngine, EngineEvent};
+pub use engine::ArcanaEngine;
 pub use error::ArcanaError;
+pub use event::EngineEvent;

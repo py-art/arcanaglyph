@@ -210,7 +210,7 @@ async fn apply_update_inner() -> Result<(), String> {
     // (баг #3 — иначе можно перезапустить СТАРУЮ версию до конца установки).
     // Снимаем stale-флаг прошлой попытки перед стартом.
     let ready_flag = update_ready_flag_path();
-    let _ = std::fs::remove_file(&ready_flag);
+    let _ = tokio::fs::remove_file(&ready_flag).await;
 
     // Преамбула: до запуска install.sh печатаем пошаговую инструкцию. Без неё
     // окно терминала на этапе «100% / пустой курсор» выглядит как «зависло» —

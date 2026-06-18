@@ -105,6 +105,33 @@ fn audio_device_hint() -> String {
 }
 
 impl ApiError {
+    /// Классифицирует ошибку загрузки модели по тексту в подкатегорию для UI.
+    /// ORT/whisper.cpp кладут «No space left on device» и «expected N tensors, got M»
+    /// как substring в наш `msg` — выделяем из общего `ModelLoad` отдельный
+    /// `DiskSpace` (частый failure mode на маленьких SSD) и кейс «повреждённый файл».
+    fn model_load_error(msg: &str) -> Self {
+        let message = msg.to_string();
+        if msg.contains("No space left") {
+            Self {
+                kind: ApiErrorKind::DiskSpace,
+                message,
+                hint: Some("Освободите ≥ 2 ГБ на диске и повторите загрузку.".into()),
+            }
+        } else if msg.contains("expected") && msg.contains("tensors") {
+            Self {
+                kind: ApiErrorKind::ModelLoad,
+                message,
+                hint: Some("Файл модели повреждён. Удалите её в Settings → Models и скачайте заново.".into()),
+            }
+        } else {
+            Self {
+                kind: ApiErrorKind::ModelLoad,
+                message,
+                hint: Some("Не удалось загрузить модель. Проверьте логи в терминале.".into()),
+            }
+        }
+    }
+
     /// Создаёт ApiError из внутренней `ArcanaError`. Мост между core-типом и
     /// сериализуемым типом для UI. Hint выбирается per-variant — пользователю
     /// предлагается конкретное действие («проверьте микрофон в pavucontrol»,
@@ -121,29 +148,7 @@ impl ApiError {
                 message: msg.clone(),
                 hint: Some("Закройте другие записывающие программы (Zoom, OBS, браузерные звонки).".into()),
             },
-            ArcanaError::ModelLoad(msg) => {
-                // Парсим текст ошибки. ORT/whisper.cpp возвращают «No space left on
-                // device» и «expected N tensors, got M» как substring в нашем msg.
-                if msg.contains("No space left") {
-                    Self {
-                        kind: ApiErrorKind::DiskSpace,
-                        message: msg.clone(),
-                        hint: Some("Освободите ≥ 2 ГБ на диске и повторите загрузку.".into()),
-                    }
-                } else if msg.contains("expected") && msg.contains("tensors") {
-                    Self {
-                        kind: ApiErrorKind::ModelLoad,
-                        message: msg.clone(),
-                        hint: Some("Файл модели повреждён. Удалите её в Settings → Models и скачайте заново.".into()),
-                    }
-                } else {
-                    Self {
-                        kind: ApiErrorKind::ModelLoad,
-                        message: msg.clone(),
-                        hint: Some("Не удалось загрузить модель. Проверьте логи в терминале.".into()),
-                    }
-                }
-            }
+            ArcanaError::ModelLoad(msg) => Self::model_load_error(msg),
             ArcanaError::Recognizer(msg) => Self {
                 kind: ApiErrorKind::Internal,
                 message: msg.clone(),
@@ -217,5 +222,102 @@ impl ApiError {
             message: msg.into(),
             hint: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_from_arcana_maps_kind_and_message() {
+        // Прямые варианты: kind проставляется, message переносится дословно.
+        let e = ApiError::from_arcana(&ArcanaError::AudioDevice("нет устройства".into()));
+        assert_eq!(e.kind, ApiErrorKind::AudioDevice);
+        assert_eq!(e.message, "нет устройства");
+        assert!(e.hint.is_some());
+
+        let e = ApiError::from_arcana(&ArcanaError::Network("timeout".into()));
+        assert_eq!(e.kind, ApiErrorKind::Network);
+        assert_eq!(e.message, "timeout");
+
+        let e = ApiError::from_arcana(&ArcanaError::InputSimulation("portal".into()));
+        assert_eq!(e.kind, ApiErrorKind::InputSimulation);
+    }
+
+    #[test]
+    fn test_from_arcana_modelload_disk_space_subcategory() {
+        // «No space left» внутри ModelLoad → выделенный kind DiskSpace.
+        let e = ApiError::from_arcana(&ArcanaError::ModelLoad("write failed: No space left on device".into()));
+        assert_eq!(e.kind, ApiErrorKind::DiskSpace);
+        assert!(e.hint.as_deref().unwrap().contains("2 ГБ"));
+
+        // «expected N tensors» → ModelLoad с подсказкой про повреждённый файл.
+        let e = ApiError::from_arcana(&ArcanaError::ModelLoad("expected 5 tensors, got 3".into()));
+        assert_eq!(e.kind, ApiErrorKind::ModelLoad);
+
+        // Прочий текст ModelLoad → общий ModelLoad-hint.
+        let e = ApiError::from_arcana(&ArcanaError::ModelLoad("broken".into()));
+        assert_eq!(e.kind, ApiErrorKind::ModelLoad);
+    }
+
+    #[test]
+    fn test_from_arcana_internal_variants_have_no_hint() {
+        // Database/Config/Internal/Recognizer → Internal без подсказки.
+        for err in [
+            ArcanaError::Database("db".into()),
+            ArcanaError::Config("cfg".into()),
+            ArcanaError::Internal("oops".into()),
+        ] {
+            let e = ApiError::from_arcana(&err);
+            assert_eq!(e.kind, ApiErrorKind::Internal);
+            assert!(e.hint.is_none());
+        }
+        let e = ApiError::from_arcana(&ArcanaError::Recognizer("rec".into()));
+        assert_eq!(e.kind, ApiErrorKind::Internal);
+
+        // Cancelled — отдельный kind, фиксированное сообщение, без hint.
+        let e = ApiError::from_arcana(&ArcanaError::Cancelled);
+        assert_eq!(e.kind, ApiErrorKind::Cancelled);
+        assert_eq!(e.message, "Транскрибация отменена");
+        assert!(e.hint.is_none());
+
+        // EngineNotAvailable — имя движка попадает в сообщение.
+        let e = ApiError::from_arcana(&ArcanaError::EngineNotAvailable("qwen3asr".into()));
+        assert_eq!(e.kind, ApiErrorKind::EngineNotAvailable);
+        assert!(e.message.contains("qwen3asr"));
+    }
+
+    #[test]
+    fn test_from_message_parses_display_prefixes() {
+        // Префикс Display-форматтера ArcanaError → правильный kind, message без префикса.
+        let e = ApiError::from_message("Ошибка аудиоустройства: мик занят");
+        assert_eq!(e.kind, ApiErrorKind::AudioDevice);
+        assert_eq!(e.message, "мик занят");
+
+        let e = ApiError::from_message("Ошибка сети: 503");
+        assert_eq!(e.kind, ApiErrorKind::Network);
+        assert_eq!(e.message, "503");
+
+        // ModelLoad-префикс + «No space left» → DiskSpace (двойной проход через from_arcana).
+        let e = ApiError::from_message("Ошибка загрузки модели: No space left on device");
+        assert_eq!(e.kind, ApiErrorKind::DiskSpace);
+
+        let e = ApiError::from_message("Транскрибация отменена");
+        assert_eq!(e.kind, ApiErrorKind::Cancelled);
+    }
+
+    #[test]
+    fn test_from_message_microphone_substring_and_fallback() {
+        // Строка без префикса, но со словом «микрофон» → AudioDevice.
+        let e = ApiError::from_message("Микрофон не захватил речь");
+        assert_eq!(e.kind, ApiErrorKind::AudioDevice);
+        assert!(e.hint.is_some());
+
+        // Произвольная строка → Internal без подсказки.
+        let e = ApiError::from_message("что-то пошло не так");
+        assert_eq!(e.kind, ApiErrorKind::Internal);
+        assert!(e.hint.is_none());
+        assert_eq!(e.message, "что-то пошло не так");
     }
 }

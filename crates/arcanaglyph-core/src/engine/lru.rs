@@ -152,9 +152,6 @@ mod tests {
         fn transcribe(&self, _samples: &[i16], _sample_rate: u32) -> Result<String, crate::error::ArcanaError> {
             Ok(String::new())
         }
-        fn supports_streaming(&self) -> bool {
-            false
-        }
     }
 
     #[test]

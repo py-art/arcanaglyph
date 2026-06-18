@@ -22,31 +22,10 @@ use crate::history::HistoryDB;
 // здесь напрямую — их конструирует единая фабрика `transcriber::build_transcriber`.
 use crate::transcriber::Transcriber;
 
-/// События движка, рассылаемые подписчикам
-#[derive(Debug, Clone)]
-pub enum EngineEvent {
-    /// Запись началась
-    RecordingStarted,
-    /// Запись приостановлена
-    RecordingPaused,
-    /// Запись возобновлена
-    RecordingResumed,
-    /// Результат транскрибации
-    TranscriptionResult(String),
-    /// Транскрибация началась (запись завершена, идёт распознавание)
-    Transcribing,
-    /// Обработка завершена, система готова к новой записи
-    FinishedProcessing,
-    /// Запрос на вывод окна на передний план (когда окно видимо)
-    RequestFocus,
-    /// Начата загрузка модели в память (eager-preload из save_config или lazy-fallback в trigger).
-    /// Payload — отображаемое имя модели для UI ("Vosk Russian 0.42").
-    ModelLoading(String),
-    /// Модель загружена, приложение готово к работе
-    ModelLoaded,
-    /// Ошибка, которую нужно показать пользователю
-    Error(String),
-}
+// `EngineEvent` переехал в нейтральный модуль `crate::event` (разрыв цикла
+// `audio ↔ engine`). Реэкспортируем здесь, чтобы `crate::engine::EngineEvent` и
+// `super::EngineEvent` в подмодулях (record_session) продолжали работать.
+pub use crate::event::EngineEvent;
 
 /// Основной движок ArcanaGlyph: управляет записью, распознаванием и рассылкой событий
 pub struct ArcanaEngine {
@@ -537,9 +516,6 @@ mod tests {
     impl Transcriber for DummyTranscriber {
         fn transcribe(&self, _samples: &[i16], _sample_rate: u32) -> Result<String, ArcanaError> {
             Ok(String::new())
-        }
-        fn supports_streaming(&self) -> bool {
-            false
         }
     }
 

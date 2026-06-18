@@ -74,42 +74,46 @@ pub(crate) fn build_setxkbmap_args(layout: &str, variant: &str) -> Vec<String> {
     args
 }
 
-/// Маппинг латинских клавиш → XKB keysym кириллических (для GNOME gsettings)
+/// Таблица раскладочных дублей: латинская клавиша QWERTY → XKB keysym кириллицы
+/// (ЙЦУКЕН), для GNOME gsettings. Спец-клавиша `grave` (клавиша слева от 1, `/~)
+/// на русской раскладке даёт Ё; без неё keybinding `<Control>grave` не срабатывает
+/// на ru-раскладке — GNOME ищет `<Control>Cyrillic_io` и не находит его.
+#[cfg(target_os = "linux")]
+const LATIN_TO_CYRILLIC_KEYSYMS: &[(&str, &str)] = &[
+    ("q", "Cyrillic_shorti"),   // й
+    ("w", "Cyrillic_tse"),      // ц
+    ("e", "Cyrillic_u"),        // у
+    ("r", "Cyrillic_ka"),       // к
+    ("t", "Cyrillic_ie"),       // е
+    ("y", "Cyrillic_en"),       // н
+    ("u", "Cyrillic_ghe"),      // г
+    ("i", "Cyrillic_sha"),      // ш
+    ("o", "Cyrillic_shcha"),    // щ
+    ("p", "Cyrillic_ze"),       // з
+    ("a", "Cyrillic_ef"),       // ф
+    ("s", "Cyrillic_yeru"),     // ы
+    ("d", "Cyrillic_ve"),       // в
+    ("f", "Cyrillic_a"),        // а
+    ("g", "Cyrillic_pe"),       // п
+    ("h", "Cyrillic_er"),       // р
+    ("j", "Cyrillic_o"),        // о
+    ("k", "Cyrillic_el"),       // л
+    ("l", "Cyrillic_de"),       // д
+    ("z", "Cyrillic_ya"),       // я
+    ("x", "Cyrillic_che"),      // ч
+    ("c", "Cyrillic_es"),       // с
+    ("v", "Cyrillic_em"),       // м
+    ("b", "Cyrillic_i"),        // и
+    ("n", "Cyrillic_te"),       // т
+    ("m", "Cyrillic_softsign"), // ь
+    ("grave", "Cyrillic_io"),   // Ё (спец-клавиша, см. док выше)
+];
+
 #[cfg(target_os = "linux")]
 fn latin_to_cyrillic_keysym(key: &str) -> Option<&'static str> {
-    match key {
-        "q" => Some("Cyrillic_shorti"),   // й
-        "w" => Some("Cyrillic_tse"),      // ц
-        "e" => Some("Cyrillic_u"),        // у
-        "r" => Some("Cyrillic_ka"),       // к
-        "t" => Some("Cyrillic_ie"),       // е
-        "y" => Some("Cyrillic_en"),       // н
-        "u" => Some("Cyrillic_ghe"),      // г
-        "i" => Some("Cyrillic_sha"),      // ш
-        "o" => Some("Cyrillic_shcha"),    // щ
-        "p" => Some("Cyrillic_ze"),       // з
-        "a" => Some("Cyrillic_ef"),       // ф
-        "s" => Some("Cyrillic_yeru"),     // ы
-        "d" => Some("Cyrillic_ve"),       // в
-        "f" => Some("Cyrillic_a"),        // а
-        "g" => Some("Cyrillic_pe"),       // п
-        "h" => Some("Cyrillic_er"),       // р
-        "j" => Some("Cyrillic_o"),        // о
-        "k" => Some("Cyrillic_el"),       // л
-        "l" => Some("Cyrillic_de"),       // д
-        "z" => Some("Cyrillic_ya"),       // я
-        "x" => Some("Cyrillic_che"),      // ч
-        "c" => Some("Cyrillic_es"),       // с
-        "v" => Some("Cyrillic_em"),       // м
-        "b" => Some("Cyrillic_i"),        // и
-        "n" => Some("Cyrillic_te"),       // т
-        "m" => Some("Cyrillic_softsign"), // ь
-        // Спец-клавиша: на русской раскладке клавиша слева от 1 (`/~) даёт Ё.
-        // Без этого маппинга keybinding `<Control>grave` не срабатывает на ru-раскладке —
-        // GNOME ищет `<Control>Cyrillic_io` и не находит его.
-        "grave" => Some("Cyrillic_io"), // Ё
-        _ => None,
-    }
+    LATIN_TO_CYRILLIC_KEYSYMS
+        .iter()
+        .find_map(|&(k, v)| (k == key).then_some(v))
 }
 
 /// Кириллический дубль gsettings-binding'а: берёт keysym после последнего `>`,

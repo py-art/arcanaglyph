@@ -188,6 +188,71 @@ fn log_startup_diagnostics() {
     }
 }
 
+/// Определяет фактический STT-движок на старте с учётом двух runtime-ограничений
+/// и (если был fallback) пару `(original, fallback)` для единого toast'а в UI.
+///
+/// Случай 1 — сохранённый движок не включён в текущую сборку (например, в БД лежит
+/// Vosk, а собрано без feature `vosk`). Берём первый скомпилированный. В БД НЕ
+/// сохраняем: пользовательский выбор остаётся первичным и снова станет активным
+/// после пересборки с нужным feature-set'ом.
+///
+/// Случай 2 — ONNX-движок (GigaAM/Qwen3-ASR) на CPU без AVX. Эмпирически: Microsoft
+/// pre-built ONNX Runtime (его тянет `ort` через `download-binaries`) на CPU без AVX
+/// крашит SIGILL ещё до первого вывода. Мягко переключаемся на первый не-ONNX движок
+/// (Whisper/Vosk). Если таких в сборке нет — оставляем как есть (engine упадёт SIGILL,
+/// редкий кейс явной ошибки сборки) и логируем. `ort_needs_avx` передаётся параметром
+/// (= `cfg!(feature="gigaam") && !cfg!(feature="gigaam-system-ort")`) ради тестируемости.
+///
+/// Чистая функция (детерминирована по входам, без I/O) — тестируема.
+fn resolve_startup_engine(
+    configured: TranscriberType,
+    avx_ok: bool,
+    ort_needs_avx: bool,
+) -> (TranscriberType, Option<(String, String)>) {
+    let mut transcriber = configured;
+    let mut engine_fallback: Option<(String, String)> = None;
+
+    // Случай 1: движок не включён в текущую сборку.
+    if !transcriber.is_compiled_in() {
+        let original = transcriber.as_str().to_string();
+        transcriber = TranscriberType::compiled_engines()
+            .into_iter()
+            .next()
+            .unwrap_or_default();
+        let fallback = transcriber.as_str().to_string();
+        tracing::warn!(
+            "Движок '{}' не включён в эту сборку — используется '{}' (runtime-fallback, БД не меняется)",
+            original,
+            fallback
+        );
+        engine_fallback = Some((original, fallback));
+    }
+
+    // Случай 2: ONNX-based движок на CPU без AVX.
+    let needs_avx = matches!(transcriber, TranscriberType::GigaAm | TranscriberType::Qwen3Asr) && ort_needs_avx;
+    if !avx_ok && needs_avx {
+        let original = transcriber.as_str().to_string();
+        // Первый не-ONNX движок среди скомпилированных (Whisper, потом Vosk).
+        let alt = TranscriberType::compiled_engines()
+            .into_iter()
+            .find(|t| !matches!(t, TranscriberType::GigaAm | TranscriberType::Qwen3Asr));
+        if let Some(new_engine) = alt {
+            transcriber = new_engine;
+            let fallback = transcriber.as_str().to_string();
+            tracing::warn!(
+                "CPU без AVX: '{}' требует ONNX Runtime с AVX — runtime-переключение на '{}' (БД не меняется)",
+                original,
+                fallback
+            );
+            engine_fallback = Some((original, fallback));
+        } else {
+            tracing::error!("CPU без AVX и нет не-ONNX движков в сборке — engine может крашить");
+        }
+    }
+
+    (transcriber, engine_fallback)
+}
+
 fn main() {
     // Раннее: --grant-portal subcommand. Должен сработать ДО Tauri-инициализации
     // (нам не нужны окна / трей / engine — только portal warmup).
@@ -238,79 +303,16 @@ fn main() {
         CoreConfig::default()
     });
 
-    // Возможные причины авто-fallback'а на старте (показываются единым toast'ом в UI):
-    //   1. В SQLite сохранён движок, не включённый в текущую сборку
-    //      (например, ранее был Vosk, а сейчас собрано без feature `vosk`).
-    //   2. Активный движок ONNX-based (GigaAM/Qwen3-ASR), а CPU без AVX.
-    //      Эмпирически проверено: pre-built ONNX Runtime от Microsoft (тот, что качает
-    //      `ort` крейт через `download-binaries`) на CPU без AVX крашит SIGILL ещё
-    //      до первого `println!`. Поэтому, если у пользователя выбран ONNX-движок и
-    //      нет AVX — мягко переключаемся на не-ONNX (Whisper или Vosk) и сохраняем
-    //      выбор в БД, чтобы UI показал реальное состояние.
-    let mut engine_fallback: Option<(String, String)> = None;
-
-    // Случай 1: движок не включён в текущую сборку.
-    // ВАЖНО: НЕ сохраняем fallback в БД — пользовательский выбор (например, GigaAM)
-    // остаётся в конфиге как первичный. Если пользователь пересоберёт с другой
-    // feature-set'ом или установит более производительный CPU — выбор GigaAM сразу
-    // станет активным без необходимости восстанавливать настройку. Toast в UI
-    // объяснит, какой именно движок реально использовался в этой сессии.
-    if !config.transcriber.is_compiled_in() {
-        let original = config.transcriber.as_str().to_string();
-        let new_engine = TranscriberType::compiled_engines()
-            .into_iter()
-            .next()
-            .unwrap_or_default();
-        config.transcriber = new_engine;
-        let fallback = config.transcriber.as_str().to_string();
-        tracing::warn!(
-            "Движок '{}' не включён в эту сборку — используется '{}' (runtime-fallback, БД не меняется)",
-            original,
-            fallback
-        );
-        engine_fallback = Some((original, fallback));
-    }
-
-    // Случай 2: ONNX-based движок на CPU без AVX. На не-x86_64 (aarch64 и т.д.)
-    // считаем, что AVX-проблем нет — там используются другие SIMD-наборы.
+    // Авто-fallback движка на старте (единый toast в UI): движок не включён в сборку,
+    // либо ONNX-движок на CPU без AVX. Полная логика и обоснования — в doc
+    // `resolve_startup_engine`. На не-x86_64 AVX-проблем нет (другие SIMD-наборы).
     #[cfg(target_arch = "x86_64")]
     let avx_ok = std::is_x86_feature_detected!("avx");
     #[cfg(not(target_arch = "x86_64"))]
     let avx_ok = true;
-    // ORT-фича `download-binaries` тянет Microsoft pre-built ORT — требует AVX.
-    // `load-dynamic` (через `gigaam-system-ort`) использует локальную libonnxruntime.so
-    // (см. `setup_ort_dylib_path()` выше). На наших .deb-сборках выбирается no-AVX-вариант,
-    // поэтому AVX не нужен.
-    // qwen3asr использует тот же ORT-крейт что и gigaam (после унификации feature'ов),
-    // поэтому условие AVX-требования совпадает.
     let ort_needs_avx = cfg!(feature = "gigaam") && !cfg!(feature = "gigaam-system-ort");
-    let needs_avx = match config.transcriber {
-        TranscriberType::GigaAm | TranscriberType::Qwen3Asr => ort_needs_avx,
-        _ => false,
-    };
-    if !avx_ok && needs_avx {
-        let original = config.transcriber.as_str().to_string();
-        // Ищем первый не-ONNX движок среди скомпилированных (Whisper, потом Vosk).
-        let alt = TranscriberType::compiled_engines()
-            .into_iter()
-            .find(|t| !matches!(t, TranscriberType::GigaAm | TranscriberType::Qwen3Asr));
-        if let Some(new_engine) = alt {
-            config.transcriber = new_engine;
-            let fallback = config.transcriber.as_str().to_string();
-            // НЕ сохраняем в БД — пользовательский выбор (GigaAM) остаётся первичным.
-            tracing::warn!(
-                "CPU без AVX: '{}' требует ONNX Runtime с AVX — runtime-переключение на '{}' (БД не меняется)",
-                original,
-                fallback
-            );
-            engine_fallback = Some((original, fallback));
-        } else {
-            // Все скомпилированные движки требуют AVX (только gigaam/qwen3asr).
-            // Engine всё равно создастся и упадёт SIGILL'ом — это редкий кейс
-            // явной пользовательской ошибки при сборке.
-            tracing::error!("CPU без AVX и нет не-ONNX движков в сборке — engine может крашить");
-        }
-    }
+    let (transcriber, engine_fallback) = resolve_startup_engine(config.transcriber, avx_ok, ort_needs_avx);
+    config.transcriber = transcriber;
 
     let hotkey = config.hotkey.clone();
     let hotkey_pause = config.hotkey_pause.clone();
@@ -425,4 +427,27 @@ fn main() {
         tracing::error!("Ошибка запуска/работы Tauri: {e}");
     }
     flush_logs();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_startup_engine_keeps_compiled_engine_when_avx_ok() {
+        // GigaAM включён по умолчанию во всех наших сборках; AVX есть → ни случай 1,
+        // ни случай 2 не срабатывают: движок не меняется, fallback отсутствует.
+        let (engine, fallback) = resolve_startup_engine(TranscriberType::GigaAm, true, true);
+        assert_eq!(engine, TranscriberType::GigaAm);
+        assert!(fallback.is_none());
+    }
+
+    #[test]
+    fn test_resolve_startup_engine_skips_avx_switch_when_ort_not_avx_bound() {
+        // system-ort сборка (ort_needs_avx=false): даже на CPU без AVX случай 2 не
+        // применяется — ONNX-движок работает через локальную libonnxruntime.so.
+        let (engine, fallback) = resolve_startup_engine(TranscriberType::GigaAm, false, false);
+        assert_eq!(engine, TranscriberType::GigaAm);
+        assert!(fallback.is_none());
+    }
 }

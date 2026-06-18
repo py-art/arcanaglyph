@@ -100,20 +100,24 @@ pub fn save_config(
     Ok(())
 }
 
+/// Загружает конфиг, применяет мутацию одного поля и сохраняет. Общий путь для
+/// команд вида «сохранить настройку» (load → mutate → save).
+fn update_config(mutate: impl FnOnce(&mut CoreConfig)) -> Result<(), String> {
+    let mut cfg = CoreConfig::load().map_err(|e| e.to_string())?;
+    mutate(&mut cfg);
+    cfg.save().map_err(|e| e.to_string())
+}
+
 /// Tauri-команда: сохранить выбранный период фильтра истории (без применения к движку)
 #[tauri::command]
 pub fn set_history_filter(secs: u64) -> Result<(), String> {
-    let mut cfg = CoreConfig::load().map_err(|e| e.to_string())?;
-    cfg.history_filter_secs = secs;
-    cfg.save().map_err(|e| e.to_string())
+    update_config(|cfg| cfg.history_filter_secs = secs)
 }
 
 /// Tauri-команда: сохранить выбранный язык интерфейса (без применения к движку)
 #[tauri::command]
 pub fn set_language(lang: String) -> Result<(), String> {
-    let mut cfg = CoreConfig::load().map_err(|e| e.to_string())?;
-    cfg.language = lang;
-    cfg.save().map_err(|e| e.to_string())
+    update_config(|cfg| cfg.language = lang)
 }
 
 /// Tauri-команда: получить историю транскрибаций
@@ -202,7 +206,9 @@ pub async fn retranscribe(
     let config = arcanaglyph_core::CoreConfig::load().map_err(|e| e.to_string())?;
 
     // Загружаем аудио (PCM s16le mono)
-    let raw_bytes = std::fs::read(audio_path).map_err(|e| format!("Не удалось прочитать аудио: {}", e))?;
+    let raw_bytes = tokio::fs::read(audio_path)
+        .await
+        .map_err(|e| format!("Не удалось прочитать аудио: {}", e))?;
     let samples = decode_pcm_i16le(&raw_bytes);
 
     // Имя модели — через единый резолвер в core (без дубля match по типам).

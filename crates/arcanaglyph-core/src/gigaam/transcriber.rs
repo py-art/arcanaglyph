@@ -150,10 +150,6 @@ impl Transcriber for GigaAmTranscriber {
 
         Ok(text)
     }
-
-    fn supports_streaming(&self) -> bool {
-        false
-    }
 }
 
 /// CTC greedy decode: argmax по кадрам, удаление дубликатов и blank-токенов.

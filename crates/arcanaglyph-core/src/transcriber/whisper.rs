@@ -171,8 +171,4 @@ impl Transcriber for WhisperTranscriber {
 
         Ok(result)
     }
-
-    fn supports_streaming(&self) -> bool {
-        false
-    }
 }
