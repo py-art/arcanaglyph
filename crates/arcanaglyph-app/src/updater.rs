@@ -113,8 +113,13 @@ pub async fn fetch_installable_asset_url() -> Result<Option<String>, ArcanaError
 
     let text = client
         .get(RELEASES_API)
+        // Cache-buster: см. fetch_latest_release — GitHub-CDN/прокси иногда
+        // отдают залипший снимок релиза без готового asset'а.
+        .query(&[("_", unix_now().to_string())])
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("Cache-Control", "no-cache")
+        .header("Pragma", "no-cache")
         .send()
         .await
         .map_err(|e| ArcanaError::Internal(format!("release fetch: {}", e)))?
@@ -206,8 +211,17 @@ pub async fn fetch_latest_release(etag: Option<&str>) -> Result<ReleaseFetch, Ar
 
     let mut req = client
         .get(RELEASES_API)
+        // Cache-buster: GitHub-CDN edge и промежуточные прокси иногда залипают
+        // на старом снимке релиза (поймали на ноутбуке без AVX: релиз уже с
+        // готовым .deb, а API отдавал версию без него → баннер молчал, install.sh
+        // падал на «.deb asset not found»). Уникальный query-параметр + no-cache
+        // заголовки форсируют свежий ответ в обход кэшей. ETag (If-None-Match)
+        // продолжает работать: GitHub считает ETag по ресурсу, query `_` игнорит.
+        .query(&[("_", unix_now().to_string())])
         .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28");
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("Cache-Control", "no-cache")
+        .header("Pragma", "no-cache");
 
     if let Some(etag) = etag {
         req = req.header("If-None-Match", etag);
@@ -281,10 +295,18 @@ pub async fn fetch_latest_release(etag: Option<&str>) -> Result<ReleaseFetch, Ar
 
 /// Полный цикл проверки: GitHub fetch → state update → возврат
 /// `UpdateInfo` если есть newer и не dismissed. Используется и фоновым
-/// checker'ом, и manual-кнопкой «Проверить обновления».
-pub async fn check_for_update(db: &HistoryDB) -> Result<Option<UpdateInfo>, ArcanaError> {
+/// checker'ом (`force == false`), и manual-кнопкой «Проверить обновления»
+/// (`force == true`).
+///
+/// `force` пропускает ETag-кэш: ручная проверка всегда запрашивает полный
+/// 200 со свежим состоянием релиза вместо 304. Это лечит залипание на старом
+/// ETag, когда GitHub однажды отдал снимок без готового `.deb` (CI ещё заливал
+/// пакеты / залипший CDN edge) — иначе последующие 304 держали бы баннер
+/// молчащим, пока релиз давно установим.
+pub async fn check_for_update(db: &HistoryDB, force: bool) -> Result<Option<UpdateInfo>, ArcanaError> {
     let mut state = read_state(db);
-    let fetch = fetch_latest_release(state.etag.as_deref()).await?;
+    let etag = if force { None } else { state.etag.as_deref() };
+    let fetch = fetch_latest_release(etag).await?;
 
     state.last_check_at = Some(unix_now());
 

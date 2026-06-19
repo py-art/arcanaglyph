@@ -102,7 +102,7 @@ dependencies = [
 
 [[package]]
 name = "arcanaglyph-app"
-version = "1.10.4"
+version = "1.10.5"
 dependencies = [
  "arcanaglyph-core",
  "base64 0.22.1",
@@ -129,7 +129,7 @@ dependencies = [
 
 [[package]]
 name = "arcanaglyph-core"
-version = "1.10.4"
+version = "1.10.5"
 dependencies = [
  "arboard",
  "ashpd",

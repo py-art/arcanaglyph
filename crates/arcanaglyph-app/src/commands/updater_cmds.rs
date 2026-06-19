@@ -16,7 +16,8 @@ pub async fn check_updates_now(
     history_db: tauri::State<'_, Arc<HistoryDB>>,
 ) -> Result<Option<updater::UpdateInfo>, String> {
     let db = history_db.inner().clone();
-    updater::check_for_update(&db).await.map_err(|e| e.to_string())
+    // force=true: ручная проверка идёт в обход ETag-кэша — всегда свежий релиз.
+    updater::check_for_update(&db, true).await.map_err(|e| e.to_string())
 }
 
 /// Tauri-команда: записать `version` в `dismissed_version`. Баннер

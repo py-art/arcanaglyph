@@ -1,6 +1,6 @@
 {
   "name": "arcanaglyph-frontend",
-  "version": "1.10.4",
+  "version": "1.10.5",
   "private": true,
   "type": "module",
   "description": "ArcanaGlyph UI (Tauri webview). Vite + TypeScript build pipeline. FSD-структура — на следующих итерациях.",

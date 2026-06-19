@@ -144,7 +144,7 @@ pub fn spawn_update_checker(app_handle: AppHandle, history_db: Arc<HistoryDB>) {
                 // (нормальный путь был на DEBUG, лог пишется на INFO) — нельзя
                 // было понять, ходил ли чекер вообще. Раз в сутки — не спам.
                 tracing::info!("Проверка обновлений: запрос к GitHub Releases");
-                match updater::check_for_update(&history_db).await {
+                match updater::check_for_update(&history_db, false).await {
                     Ok(Some(info)) => {
                         tracing::info!("Update available: {}", info.latest_version);
                         let _ = app_handle.emit("update://available", info);
