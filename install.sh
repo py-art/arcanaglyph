@@ -3,7 +3,7 @@
 #
 # Usage:
 #   curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | bash
-#   curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | VERSION=1.10.4 bash
+#   curl -fsSL https://github.com/py-art/arcanaglyph/raw/main/install.sh | VERSION=1.10.5 bash
 #
 # Что делает:
 #   1. Узнаёт URL последнего (или указанного через VERSION) релиза из GitHub API.
@@ -71,11 +71,17 @@ else
 fi
 
 # Без jq — простой парсинг "browser_download_url": "..." из JSON.
+# Cache-buster: за фаерволом/через прокси (и на залипшем GitHub-CDN edge)
+# api.github.com иногда отдаёт устаревший снимок релиза — без только что
+# залитого .deb, из-за чего падали на «.deb asset not found». Уникальный
+# query-параметр + no-cache заголовки форсируют свежий ответ мимо кэшей.
 fetch_assets() {
     curl -fsSL \
         -H 'Accept: application/vnd.github+json' \
         -H 'X-GitHub-Api-Version: 2022-11-28' \
-        "${API_URL}" \
+        -H 'Cache-Control: no-cache' \
+        -H 'Pragma: no-cache' \
+        "${API_URL}?_=$(date +%s)" \
         | sed -n 's/.*"browser_download_url": *"\([^"]*\)".*/\1/p'
 }
 
