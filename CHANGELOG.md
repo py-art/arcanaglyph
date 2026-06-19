@@ -6,7 +6,6 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование следует [Semantic Versioning](https://semver.org/lang/ru/).
 
-## [Unreleased]
 
 ## [1.10.5] - 2026-06-19
 
