@@ -4,6 +4,10 @@
 // подписывается на нужные tray-команды, инициализирует custom-selects /
 // hotkey-композеры / model-cards. Идемпотентен — должен зваться один раз
 // при загрузке приложения (из app/init.ts).
+//
+// mountSettings — тонкий оркестратор: guard + общие замыкания (checkChanges/
+// reloadSettings) + последовательный вызов init-хелперов, каждый из которых
+// вешает одну группу обработчиков. Тела групп — module-private функции ниже.
 
 import { invoke, listen } from '../../shared/lib/tauri';
 import { i18n } from '../../shared/lib/i18n';
@@ -56,77 +60,63 @@ const fieldMap: Record<string, { el: string; type: 'group' | 'row' }> = {
   // (модель «один ключ → один элемент» этого fieldMap для него не подходит).
 };
 
-export function mountSettings(): void {
-  const saveBtn = document.getElementById('save-btn') as HTMLButtonElement | null;
-  const cancelBtn = document.getElementById('cancel-btn') as HTMLButtonElement | null;
-  const saveNotice = document.getElementById('save-notice');
-  if (!saveBtn || !cancelBtn || !saveNotice) return;
+// Три save-related элемента формы, разделяемые между checkChanges / cancel / save.
+interface SaveUi {
+  saveBtn: HTMLButtonElement;
+  cancelBtn: HTMLButtonElement;
+  saveNotice: HTMLElement;
+}
 
-  const resetSaveButtons = (): void => {
-    saveBtn.disabled = true;
-    saveNotice.classList.remove('visible');
-  };
+// Подсветка одного fieldMap-поля: сравнивает current/orig по ключу, вешает/снимает
+// .changed на .setting-group|.setting-row контейнере. Возвращает: изменилось ли поле.
+function highlightField(
+  key: string,
+  info: { el: string; type: 'group' | 'row' },
+  current: unknown,
+  orig: unknown,
+): boolean {
+  const changed = JSON.stringify((current as any)[key]) !== JSON.stringify((orig as any)[key]);
+  const el = document.getElementById(info.el);
+  if (!el) return false;
+  const container = info.type === 'group'
+    ? el.closest('.setting-group')
+    : el.closest('.setting-row');
+  if (container) container.classList.toggle('changed', changed);
+  return changed;
+}
 
-  // Проверка изменений + подсветка изменённых полей
-  function checkChanges(): void {
-    const orig = settingsState.getOriginal();
-    if (!orig) return;
-    const current = getFormConfig();
-    let anyChanged = false;
+// Проверка изменений + подсветка изменённых полей. Включает/выключает save/cancel
+// по факту наличия расхождений между текущей формой и оригиналом.
+function highlightChanges(ui: SaveUi): void {
+  const orig = settingsState.getOriginal();
+  if (!orig) return;
+  const current = getFormConfig();
+  let anyChanged = false;
 
-    for (const [key, info] of Object.entries(fieldMap)) {
-      const changed = JSON.stringify((current as any)[key]) !== JSON.stringify((orig as any)[key]);
-      const el = document.getElementById(info.el);
-      if (!el) continue;
-      const container = info.type === 'group'
-        ? el.closest('.setting-group')
-        : el.closest('.setting-row');
-      if (container) container.classList.toggle('changed', changed);
-      if (changed) anyChanged = true;
-    }
-
-    // preload_models — один логический ключ, но 4 отдельных тумблера-строки.
-    // Подсвечиваем КАЖДУЮ строку независимо (изменилось ли членство именно этого
-    // движка), иначе .changed всегда вешалась бы на первую строку (s-preload-vosk).
-    const curPreload: string[] = (current as any).preload_models || [];
-    const origPreload: string[] = (orig as any).preload_models || [];
-    const changedEngines = preloadChangedEngines(curPreload, origPreload, PRELOAD_ENGINES);
-    for (const eng of PRELOAD_ENGINES) {
-      const row = document.getElementById(`s-preload-${eng}`)?.closest('.setting-row');
-      if (row) row.classList.toggle('changed', changedEngines.includes(eng));
-    }
-    if (changedEngines.length) anyChanged = true;
-
-    saveBtn!.disabled = !anyChanged;
-    cancelBtn!.disabled = !anyChanged;
-    saveNotice!.classList.remove('visible');
+  for (const [key, info] of Object.entries(fieldMap)) {
+    if (highlightField(key, info, current, orig)) anyChanged = true;
   }
 
-  const reloadSettings = async (): Promise<void> => {
-    await loadSettings({ resetSaveButtons });
-  };
+  // preload_models — один логический ключ, но 4 отдельных тумблера-строки.
+  // Подсвечиваем КАЖДУЮ строку независимо (изменилось ли членство именно этого
+  // движка), иначе .changed всегда вешалась бы на первую строку (s-preload-vosk).
+  const curPreload: string[] = (current as any).preload_models || [];
+  const origPreload: string[] = (orig as any).preload_models || [];
+  const changedEngines = preloadChangedEngines(curPreload, origPreload, PRELOAD_ENGINES);
+  for (const eng of PRELOAD_ENGINES) {
+    const row = document.getElementById(`s-preload-${eng}`)?.closest('.setting-row');
+    if (row) row.classList.toggle('changed', changedEngines.includes(eng));
+  }
+  if (changedEngines.length) anyChanged = true;
 
-  // Inject зависимости в model-cards (handlers download/delete + listen).
-  initModelCardsHandlers({
-    onChange: checkChanges,
-    reloadSettings,
-  });
+  ui.saveBtn.disabled = !anyChanged;
+  ui.cancelBtn.disabled = !anyChanged;
+  ui.saveNotice.classList.remove('visible');
+}
 
-  // Tray → settings + меню → settings
-  void listen('tray://open-settings', async () => {
-    showPage('settings');
-    await reloadSettings();
-  });
-
-  document.getElementById('menu-settings')?.addEventListener('click', async () => {
-    showPage('settings');
-    await reloadSettings();
-  });
-
-  // === Custom-selects ===
-  ensureGlobalCloseOnClick();
-  initCustomSelects();
-
+// Input/select change-detection + вспомогательные кнопки (mic-refresh, number-input
+// стрелки, выбор базовой директории моделей).
+function initInputHandlers(checkChanges: () => void): void {
   // === Input/select handlers (change-detection) ===
   ['s-models-base-dir', 's-max-record', 's-vad-silence', 's-mic-gain']
     .forEach(id => document.getElementById(id)?.addEventListener('input', checkChanges));
@@ -167,8 +157,11 @@ export function mountSettings(): void {
   });
   ['s-transcriber', 's-sample-rate', 's-retention']
     .forEach(id => document.getElementById(id)?.addEventListener('change', checkChanges));
-  // При смене модели по умолчанию — обновить блокировки предзагрузки + предупредить
-  // если выбрана тяжёлая модель и у CPU нет AVX2 (Whisper Large без AVX2 крайне медленный).
+}
+
+// Смена модели по умолчанию: обновить блокировки предзагрузки + предупредить если
+// выбрана тяжёлая модель и у CPU нет AVX2 (Whisper Large без AVX2 крайне медленный).
+function initTranscriberChange(): void {
   document.getElementById('s-transcriber')?.addEventListener('change', () => {
     const v = (document.getElementById('s-transcriber') as HTMLElement).dataset.value || '';
     updatePreloadLocks(v);
@@ -180,8 +173,10 @@ export function mountSettings(): void {
       showToast(i18n.t('settings.slow_model_warning'), 'warning', 7000);
     }
   });
+}
 
-  // Смена языка — применяется сразу и сохраняется автоматически
+// Смена языка — применяется сразу и сохраняется автоматически.
+function initLanguageSelect(): void {
   bindCustomSelect('s-language', {
     onChange: async lang => {
       i18n.setLanguage(lang as any);
@@ -193,12 +188,10 @@ export function mountSettings(): void {
       }
     },
   });
+}
 
-  // === Hotkey composers ===
-  initHotkeyComposer('hk-trigger', checkChanges);
-  initHotkeyComposer('hk-pause', checkChanges);
-
-  // Проверяем Wayland и показываем предупреждение
+// Проверяем Wayland и показываем предупреждение + хинт под widget-position picker'ом.
+function initWaylandHints(): void {
   void invoke<boolean>('is_wayland').then(wayland => {
     if (wayland) {
       const w = document.getElementById('wayland-warning');
@@ -208,9 +201,11 @@ export function mountSettings(): void {
       if (hint) hint.hidden = false;
     }
   });
+}
 
-  // GNOME-Wayland: показываем toggle GNOME-расширения для точного позиционирования.
-  // На X11 / KDE / sway / Cinnamon — расширение не применимо, ряд скрыт.
+// GNOME-Wayland: показываем toggle GNOME-расширения для точного позиционирования.
+// На X11 / KDE / sway / Cinnamon — расширение не применимо, ряд скрыт.
+function initWidgetExtRow(): void {
   Promise.all([
     invoke<boolean>('is_wayland'),
     invoke<boolean>('is_gnome'),
@@ -227,8 +222,10 @@ export function mountSettings(): void {
       // Если установлено но не enabled — toggle off (пользователь выключил вручную).
       if (ext) ext.classList.toggle('on', status.enabled);
     }).catch(() => { /* gsettings/non-GNOME — игнорируем */ });
+}
 
-  // Click-handler на toggle расширения: install + enable + предложить logout, либо disable.
+// Click-handler на toggle расширения: install + enable + предложить logout, либо disable.
+function bindWidgetExtToggle(): void {
   document.getElementById('s-widget-ext')?.addEventListener('click', async () => {
     const toggle = document.getElementById('s-widget-ext')!;
     const wantOn = !toggle.classList.contains('on');
@@ -261,16 +258,20 @@ export function mountSettings(): void {
       showToast(`${i18n.t('toast.error')}: ${e}`, 'error', 5000);
     }
   });
+}
 
-  // Picker позиции виджета: клик по точке выставляет её активной + триггерит changed
+// Picker позиции виджета: клик по точке выставляет её активной + триггерит changed.
+function initWidgetPositionPicker(checkChanges: () => void): void {
   document.querySelectorAll<HTMLElement>('#s-widget-position .position-picker-dot').forEach(dot => {
     dot.addEventListener('click', () => {
       setWidgetPositionPicker(dot.dataset.pos || 'bottom-center');
       checkChanges();
     });
   });
+}
 
-  // Переключение табов настроек
+// Переключение табов настроек.
+function initSettingsTabs(): void {
   document.querySelectorAll<HTMLElement>('.settings-tab').forEach(tab => {
     tab.addEventListener('click', () => {
       document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
@@ -280,8 +281,10 @@ export function mountSettings(): void {
       closeAllCustomSelects();
     });
   });
+}
 
-  // Toggle-переключатели
+// Toggle-переключатели (bool-настройки + preload-тумблеры).
+function initToggleSwitches(checkChanges: () => void): void {
   ['s-auto-type', 's-debug', 's-vad-enabled', 's-remove-fillers',
    's-autostart', 's-start-minimized', 's-show-tray', 's-show-widget',
    's-preload-vosk', 's-preload-whisper', 's-preload-gigaam', 's-preload-qwen3asr',
@@ -293,12 +296,14 @@ export function mountSettings(): void {
       checkChanges();
     });
   });
+}
 
-  // Отмена изменений — восстанавливаем оригинальные значения.
-  // Async чтобы дождаться refreshMicDevice (он делает invoke get_default_input_device_name).
-  // Без await checkChanges() видел старое значение ползунка и не сбрасывал dirty-state
-  // с первого клика — приходилось жать дважды.
-  cancelBtn.addEventListener('click', async () => {
+// Отмена изменений — восстанавливаем оригинальные значения.
+// Async чтобы дождаться refreshMicDevice (он делает invoke get_default_input_device_name).
+// Без await checkChanges() видел старое значение ползунка и не сбрасывал dirty-state
+// с первого клика — приходилось жать дважды.
+function bindCancelButton(ui: SaveUi, checkChanges: () => void): void {
+  ui.cancelBtn.addEventListener('click', async () => {
     const orig = settingsState.getOriginal();
     if (!orig) return;
     setCustomSelectValue('s-transcriber', orig.transcriber);
@@ -329,16 +334,71 @@ export function mountSettings(): void {
     document.getElementById('s-preload-qwen3asr')!.classList.toggle('on', preloadOrig.includes('qwen3asr'));
     checkChanges();
   });
+}
 
-  // Сохранение
-  saveBtn.addEventListener('click', async () => {
+// Сохранение конфига + показ notice + обновление model-badge.
+function bindSaveButton(ui: SaveUi, checkChanges: () => void): void {
+  ui.saveBtn.addEventListener('click', async () => {
     const cfg = getFormConfig();
     await saveConfig(cfg);
     settingsState.setOriginal(JSON.parse(JSON.stringify(cfg)));
     checkChanges();
-    saveNotice.classList.add('visible');
+    ui.saveNotice.classList.add('visible');
     void updateModelBadge();
   });
+}
+
+export function mountSettings(): void {
+  const saveBtn = document.getElementById('save-btn') as HTMLButtonElement | null;
+  const cancelBtn = document.getElementById('cancel-btn') as HTMLButtonElement | null;
+  const saveNotice = document.getElementById('save-notice');
+  if (!saveBtn || !cancelBtn || !saveNotice) return;
+
+  const ui: SaveUi = { saveBtn, cancelBtn, saveNotice };
+  const checkChanges = (): void => highlightChanges(ui);
+  const resetSaveButtons = (): void => {
+    saveBtn.disabled = true;
+    saveNotice.classList.remove('visible');
+  };
+  const reloadSettings = (): Promise<void> => loadSettings({ resetSaveButtons });
+
+  // Inject зависимости в model-cards (handlers download/delete + listen).
+  initModelCardsHandlers({
+    onChange: checkChanges,
+    reloadSettings,
+  });
+
+  // Tray → settings + меню → settings
+  void listen('tray://open-settings', async () => {
+    showPage('settings');
+    await reloadSettings();
+  });
+
+  document.getElementById('menu-settings')?.addEventListener('click', async () => {
+    showPage('settings');
+    await reloadSettings();
+  });
+
+  // === Custom-selects ===
+  ensureGlobalCloseOnClick();
+  initCustomSelects();
+
+  initInputHandlers(checkChanges);
+  initTranscriberChange();
+  initLanguageSelect();
+
+  // === Hotkey composers ===
+  initHotkeyComposer('hk-trigger', checkChanges);
+  initHotkeyComposer('hk-pause', checkChanges);
+
+  initWaylandHints();
+  initWidgetExtRow();
+  bindWidgetExtToggle();
+  initWidgetPositionPicker(checkChanges);
+  initSettingsTabs();
+  initToggleSwitches(checkChanges);
+  bindCancelButton(ui, checkChanges);
+  bindSaveButton(ui, checkChanges);
 }
 
 // Re-export для использования в init.ts (запрос availability при старте)

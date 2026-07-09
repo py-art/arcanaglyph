@@ -8,6 +8,10 @@
 #[cfg(target_os = "linux")]
 use arcanaglyph_core::CoreConfig;
 
+/// Имя env-переменной, которой `ort` указывают путь к libonnxruntime/onnxruntime.dll.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+const ORT_DYLIB_PATH_ENV: &str = "ORT_DYLIB_PATH";
+
 /// Путь к бинарю для строки `Exec=` в autostart .desktop. Установленная `.deb`:
 /// стабильный wrapper `/usr/bin/arcanaglyph` (сам выбирает avx/noavx по CPU).
 /// Dev (`make run`): `current_exe()` (target/debug/...). Через один лишь
@@ -233,10 +237,10 @@ pub(crate) fn send_trigger_and_exit(command: &str) -> ! {
 pub fn setup_ort_dylib_path() {
     use std::path::Path;
 
-    if std::env::var_os("ORT_DYLIB_PATH").is_some() {
+    if std::env::var_os(ORT_DYLIB_PATH_ENV).is_some() {
         tracing::info!(
             "ORT_DYLIB_PATH = {} (взят из env)",
-            std::env::var("ORT_DYLIB_PATH").unwrap_or_default()
+            std::env::var(ORT_DYLIB_PATH_ENV).unwrap_or_default()
         );
         return;
     }
@@ -244,7 +248,7 @@ pub fn setup_ort_dylib_path() {
     let local_lib = Path::new("/usr/local/lib/libonnxruntime.so");
     if local_lib.exists() {
         // SAFETY: вызывается в main() до спавна тредов, до загрузки ort.
-        unsafe { std::env::set_var("ORT_DYLIB_PATH", local_lib) };
+        unsafe { std::env::set_var(ORT_DYLIB_PATH_ENV, local_lib) };
         tracing::info!("ORT_DYLIB_PATH = {} (self-build override)", local_lib.display());
         return;
     }
@@ -261,7 +265,7 @@ pub fn setup_ort_dylib_path() {
     let bundled_path = Path::new(bundled);
     if bundled_path.exists() {
         // SAFETY: вызывается в main() до спавна тредов, до загрузки ort.
-        unsafe { std::env::set_var("ORT_DYLIB_PATH", bundled_path) };
+        unsafe { std::env::set_var(ORT_DYLIB_PATH_ENV, bundled_path) };
         tracing::info!("ORT_DYLIB_PATH = {} (bundled .deb)", bundled_path.display());
         return;
     }
@@ -291,10 +295,10 @@ pub fn setup_ort_dylib_path() {
 pub fn setup_ort_dylib_path() {
     use std::path::PathBuf;
 
-    if std::env::var_os("ORT_DYLIB_PATH").is_some() {
+    if std::env::var_os(ORT_DYLIB_PATH_ENV).is_some() {
         tracing::info!(
             "ORT_DYLIB_PATH = {} (взят из env)",
-            std::env::var("ORT_DYLIB_PATH").unwrap_or_default()
+            std::env::var(ORT_DYLIB_PATH_ENV).unwrap_or_default()
         );
         return;
     }
@@ -316,7 +320,7 @@ pub fn setup_ort_dylib_path() {
     for path in &candidates {
         if path.exists() {
             // SAFETY: вызывается в main() до спавна тредов, до загрузки ort.
-            unsafe { std::env::set_var("ORT_DYLIB_PATH", path) };
+            unsafe { std::env::set_var(ORT_DYLIB_PATH_ENV, path) };
             tracing::info!("ORT_DYLIB_PATH = {} (bundled рядом с exe)", path.display());
             return;
         }

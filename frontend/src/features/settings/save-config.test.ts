@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { saveConfig, getFormConfig } from './save-config';
+import { saveConfig, getFormConfig, resolveWhisperSelection } from './save-config';
 import { settingsState, type SettingsConfigSnapshot } from './state';
 
 const invokeMock = (globalThis as Record<string, unknown>).__invokeMock as {
@@ -37,6 +37,34 @@ describe('save-config', () => {
       });
       await saveConfig(baseConfig({ hotkey: 'Super+G', hotkey_pause: 'Super+P' }));
       expect(invokeMock.mock.calls.some(c => c[0] === 'register_gnome_hotkeys')).toBe(true);
+    });
+  });
+
+  describe('resolveWhisperSelection', () => {
+    it('whisper-tiny → transcriber=whisper + ggml-tiny.bin', () => {
+      expect(resolveWhisperSelection('whisper-tiny', '/models')).toEqual({
+        transcriber: 'whisper',
+        whisperPathOverride: '/models/ggml-tiny.bin',
+      });
+    });
+
+    it('whisper-large → transcriber=whisper + ggml-large-v3-turbo.bin', () => {
+      expect(resolveWhisperSelection('whisper-large', '/models')).toEqual({
+        transcriber: 'whisper',
+        whisperPathOverride: '/models/ggml-large-v3-turbo.bin',
+      });
+    });
+
+    it('не удваивает слэш если baseDir оканчивается на /', () => {
+      expect(resolveWhisperSelection('whisper-tiny', '/models/').whisperPathOverride)
+        .toBe('/models/ggml-tiny.bin');
+    });
+
+    it('не-whisper движок возвращается как есть, без override', () => {
+      expect(resolveWhisperSelection('gigaam', '/models')).toEqual({
+        transcriber: 'gigaam',
+        whisperPathOverride: null,
+      });
     });
   });
 

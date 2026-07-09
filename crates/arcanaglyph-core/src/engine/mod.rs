@@ -3,7 +3,7 @@
 mod lru;
 mod record_session;
 
-use record_session::{RecordSession, resolve_reloaded_transcriber, run_record_session};
+use record_session::{ModelPool, RecordSession, resolve_reloaded_transcriber, run_record_session};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -200,12 +200,16 @@ impl ArcanaEngine {
         Ok(name)
     }
 
+    /// Прочитать значение из `RwLock` c graceful-fallback на `Default` при
+    /// отравлении (poisoned) lock. Единая идиома для read-only геттеров
+    /// (`loaded_models` / `active_model_name` / `active_transcriber_type`).
+    fn read_or_default<T, R: Default>(lock: &std::sync::RwLock<T>, f: impl FnOnce(&T) -> R) -> R {
+        lock.read().map(|g| f(&g)).unwrap_or_default()
+    }
+
     /// Список загруженных моделей
     pub fn loaded_models(&self) -> Vec<String> {
-        self.transcribers
-            .read()
-            .map(|pool| pool.keys().cloned().collect())
-            .unwrap_or_default()
+        Self::read_or_default(&self.transcribers, |pool| pool.keys().cloned().collect())
     }
 
     /// Сколько секунд каждая загруженная модель не использовалась — для UI
@@ -227,12 +231,12 @@ impl ArcanaEngine {
     /// Используется снаружи (Tauri save_config) чтобы понять, нужна ли eager-preload
     /// после смены движка.
     pub fn active_transcriber_type(&self) -> crate::config::TranscriberType {
-        self.config.read().map(|c| c.transcriber.clone()).unwrap_or_default()
+        Self::read_or_default(&self.config, |c| c.transcriber.clone())
     }
 
     /// Имя активной модели
     pub fn active_model_name(&self) -> String {
-        self.active_model.read().map(|m| m.clone()).unwrap_or_default()
+        Self::read_or_default(&self.active_model, |m| m.clone())
     }
 
     /// Обновить конфигурацию — если модель уже в пуле, мгновенное переключение
@@ -399,9 +403,11 @@ impl ArcanaEngine {
                 need_reload,
                 transcriber,
                 &config,
-                &transcribers_rw,
-                &active_model_rw,
-                &last_used_arc,
+                &ModelPool {
+                    transcribers: &transcribers_rw,
+                    active_model: &active_model_rw,
+                    last_used: &last_used_arc,
+                },
                 &event_tx,
             )
             .await
@@ -617,5 +623,49 @@ mod tests {
         // DummyTranscriber не поддерживает отмену → оба метода возвращают false.
         assert!(!engine.active_supports_cancel());
         assert!(!engine.cancel_transcription());
+    }
+
+    /// Свежий engine (запись не начиналась) — оба флага состояния сброшены.
+    #[tokio::test]
+    async fn test_is_recording_and_paused_false_on_idle() {
+        let config = CoreConfig::default();
+        let name = config.model_name_for(&TranscriberType::GigaAm);
+        let engine = make_engine(config, &name, &[&name], "idle_flags");
+
+        assert!(!engine.is_recording().await);
+        assert!(!engine.is_paused().await);
+    }
+
+    /// `preload_model` для модели, уже лежащей в пуле, — ранний `Ok(name)` без
+    /// загрузки с диска и без emit'ов (не дёргаем UI зря). `subscribe` даёт
+    /// рабочий receiver, который при этой ветке остаётся пустым.
+    #[tokio::test]
+    async fn test_preload_already_loaded_returns_without_events() {
+        let config = CoreConfig {
+            transcriber: TranscriberType::GigaAm,
+            ..CoreConfig::default()
+        };
+        let name = config.model_name_for(&TranscriberType::GigaAm);
+        let engine = make_engine(config, &name, &[&name], "preload_loaded");
+
+        let mut rx = engine.subscribe();
+        let got = engine.preload_model(&TranscriberType::GigaAm).expect("уже в пуле → Ok");
+        assert_eq!(got, name);
+        // Ранняя ветка не шлёт ModelLoading/ModelLoaded — receiver пуст.
+        assert!(rx.try_recv().is_err(), "preload уже загруженной не эмитит событий");
+    }
+
+    /// `pause` при отсутствии активной записи — no-op: спавн-таск видит
+    /// `is_busy == false` и выходит, не трогая `is_paused`.
+    #[tokio::test]
+    async fn test_pause_ignored_when_not_recording() {
+        let config = CoreConfig::default();
+        let name = config.model_name_for(&TranscriberType::GigaAm);
+        let engine = make_engine(config, &name, &[&name], "pause_idle");
+
+        engine.pause();
+        // Даём спавн-таске (rt_handle.spawn) шанс отработать до проверки.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(!engine.is_paused().await, "пауза без записи не переводит в paused");
     }
 }

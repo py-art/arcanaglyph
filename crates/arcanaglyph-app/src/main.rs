@@ -253,17 +253,18 @@ fn resolve_startup_engine(
     (transcriber, engine_fallback)
 }
 
-fn main() {
-    // Раннее: --grant-portal subcommand. Должен сработать ДО Tauri-инициализации
-    // (нам не нужны окна / трей / engine — только portal warmup).
+/// Обрабатывает ранние CLI-подкоманды, которые должны сработать ДО Tauri-инициализации
+/// (окна / трей / engine / ORT НЕ поднимаются) и завершают процесс:
+/// - `--grant-portal` — portal warmup (нужен только XDG RemoteDesktop-грант);
+/// - `--trigger` / `--pause` (только Linux) — короткоживущий клиент IPC-триггера,
+///   который запускает нативный GNOME-хоткей вместо прежних bash-скриптов с `nc`:
+///   шлёт одну датаграмму в Unix-сокет основного процесса и сразу выходит. На
+///   Win/macOS хоткей ловится in-process, поэтому ветка под `cfg(target_os = "linux")`.
+fn handle_early_exit_args() {
     if std::env::args().any(|a| a == "--grant-portal") {
         setup::run_grant_portal_and_exit();
     }
 
-    // Раннее: --trigger / --pause — короткоживущий клиент IPC-триггера, который
-    // запускает нативный GNOME-хоткей вместо прежних bash-скриптов с `nc`. Шлём
-    // одну датаграмму в Unix-сокет основного процесса и сразу выходим, НЕ поднимая
-    // Tauri/трей/engine/ORT. Только Linux: на Win/macOS хоткей ловится in-process.
     #[cfg(target_os = "linux")]
     if let Some(cmd) = std::env::args().find_map(|a| match a.as_str() {
         "--trigger" => Some("trigger"),
@@ -272,14 +273,17 @@ fn main() {
     }) {
         setup::bootstrap::send_trigger_and_exit(cmd);
     }
+}
 
-    // Инициализируем логирование: stdout (для `make run`) + файл с ротацией по дням.
-    // Файловый лог критичен для Windows-сборки (windows_subsystem = "windows" → нет
-    // консоли, stdout теряется) — это единственный канал диагностики от пользователя
-    // без dev-окружения. `_log_guard` держим живым до конца main(): при его drop'е
-    // non-blocking appender дописывает буфер на диск.
-    // Guard храним в глобале (а не в локальной переменной): обработчик сигналов
-    // флашит его перед exit, иначе причина kill-по-сигналу теряется в буфере.
+/// Инициализирует диагностику как можно раньше: логирование (stdout + файл с ротацией),
+/// panic-hook, логгер терминирующих сигналов (Unix) и стартовые диагностические строки.
+///
+/// Guard файлового лога кладём в глобал `LOG_GUARD` (а не в локальную переменную):
+/// обработчик сигналов флашит его перед exit, иначе причина kill-по-сигналу теряется
+/// в буфере non-blocking аппендера. Файловый лог критичен для Windows-сборки
+/// (`windows_subsystem = "windows"` → нет консоли, stdout теряется) — это единственный
+/// канал диагностики от пользователя без dev-окружения.
+fn init_diagnostics() {
     if let Ok(mut g) = LOG_GUARD.lock() {
         *g = init_logging();
     }
@@ -289,6 +293,98 @@ fn main() {
     #[cfg(unix)]
     install_signal_logger();
     log_startup_diagnostics();
+}
+
+/// Загружает конфиг и применяет авто-fallback STT-движка на старте: движок не включён
+/// в текущую сборку, либо ONNX-движок (GigaAM/Qwen3-ASR) на CPU без AVX. Возвращает
+/// готовый конфиг и (если был fallback) пару `(original, fallback)` для единого toast'а
+/// в UI. Полная логика и обоснования — в doc [`resolve_startup_engine`]. На не-x86_64
+/// AVX-проблем нет (другие SIMD-наборы), поэтому `avx_ok = true`.
+fn load_startup_config() -> (CoreConfig, Option<(String, String)>) {
+    let mut config = CoreConfig::load().unwrap_or_else(|e| {
+        tracing::warn!("Не удалось загрузить конфиг: {}, используем дефолтные настройки", e);
+        CoreConfig::default()
+    });
+
+    #[cfg(target_arch = "x86_64")]
+    let avx_ok = std::is_x86_feature_detected!("avx");
+    #[cfg(not(target_arch = "x86_64"))]
+    let avx_ok = true;
+    let ort_needs_avx = cfg!(feature = "gigaam") && !cfg!(feature = "gigaam-system-ort");
+    let (transcriber, engine_fallback) = resolve_startup_engine(config.transcriber, avx_ok, ort_needs_avx);
+    config.transcriber = transcriber;
+    (config, engine_fallback)
+}
+
+/// Парсит строки-хоткеи из конфига в `Shortcut` для сравнения в handler'е. ВАЖНО:
+/// сравнивать строки нельзя — Display плагина канонизирует регистр и имя клавиши
+/// ("Control+`" → "control+Backquote"), поэтому raw-конфиг никогда не совпал бы с
+/// Display пришедшего события. Сравнение распарсенных `Shortcut`'ов (mods+key) — это и
+/// рекомендованный плагином паттерн, и ЕДИНСТВЕННЫЙ рабочий путь на Windows (там нет
+/// GNOME-gsettings fallback'а, плагин — единственный источник событий). Пустой
+/// `hotkey_pause` → пауза не назначена (`None`).
+fn parse_shortcuts(
+    hotkey: &str,
+    hotkey_pause: &str,
+) -> (
+    Arc<Option<tauri_plugin_global_shortcut::Shortcut>>,
+    Arc<Option<tauri_plugin_global_shortcut::Shortcut>>,
+) {
+    let trigger_shortcut = Arc::new(hotkey.parse().ok());
+    let pause_shortcut = Arc::new(if hotkey_pause.is_empty() {
+        None
+    } else {
+        hotkey_pause.parse().ok()
+    });
+    (trigger_shortcut, pause_shortcut)
+}
+
+/// Обработчик глобального хоткея (плагин `tauri-plugin-global-shortcut`): на `Pressed`
+/// сравнивает пришедший `shortcut` с распарсенными паузой/триггером и дёргает engine.
+/// Вынесен из инлайн-замыкания `main` ради снижения сложности; вызывается из замыкания,
+/// которое держит `Arc`-клоны шорткатов.
+fn handle_global_shortcut(
+    app: &tauri::AppHandle,
+    shortcut: &tauri_plugin_global_shortcut::Shortcut,
+    event: tauri_plugin_global_shortcut::ShortcutEvent,
+    trigger_shortcut: &Option<tauri_plugin_global_shortcut::Shortcut>,
+    pause_shortcut: &Option<tauri_plugin_global_shortcut::Shortcut>,
+) {
+    if event.state() == ShortcutState::Pressed
+        && let Some(engine_state) = app.try_state::<EngineState>()
+        && let Some(engine) = engine_state.get()
+    {
+        if pause_shortcut.as_ref() == Some(shortcut) {
+            tracing::info!(source = "tauri-shortcut", "Горячая клавиша паузы: {shortcut}");
+            engine.pause();
+        } else if trigger_shortcut.as_ref() == Some(shortcut) {
+            tracing::info!(source = "tauri-shortcut", "Горячая клавиша триггера: {shortcut}");
+            engine.trigger();
+        }
+    }
+}
+
+/// Обработчик оконных событий: перехватывает закрытие главного окна — прячет его
+/// вместо закрытия и сбрасывает флаг видимости. Вынесен из инлайн-замыкания `main`.
+fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
+    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        api.prevent_close();
+        let _ = window.hide();
+        // Обновляем флаг видимости только для главного окна
+        if window.label() == "main"
+            && let Some(vis) = window.app_handle().try_state::<Arc<AtomicBool>>()
+        {
+            vis.store(false, Ordering::Relaxed);
+        }
+    }
+}
+
+fn main() {
+    // Ранние CLI-подкоманды, завершающие процесс ДО Tauri-инициализации.
+    handle_early_exit_args();
+
+    // Логирование + panic-hook + логгер сигналов (Unix) + стартовая диагностика.
+    init_diagnostics();
 
     // Выбираем libonnxruntime.so для GigaAM/Qwen3-ASR. Делаем сразу после init трейсинга,
     // чтобы все последующие сообщения о выборе ORT попали в лог; и сильно ДО первого
@@ -298,37 +394,12 @@ fn main() {
     // Принудительно ставим WM_CLASS=arcanaglyph (для группировки в GNOME Dash).
     setup::setup_program_name();
 
-    let mut config = CoreConfig::load().unwrap_or_else(|e| {
-        tracing::warn!("Не удалось загрузить конфиг: {}, используем дефолтные настройки", e);
-        CoreConfig::default()
-    });
-
-    // Авто-fallback движка на старте (единый toast в UI): движок не включён в сборку,
-    // либо ONNX-движок на CPU без AVX. Полная логика и обоснования — в doc
-    // `resolve_startup_engine`. На не-x86_64 AVX-проблем нет (другие SIMD-наборы).
-    #[cfg(target_arch = "x86_64")]
-    let avx_ok = std::is_x86_feature_detected!("avx");
-    #[cfg(not(target_arch = "x86_64"))]
-    let avx_ok = true;
-    let ort_needs_avx = cfg!(feature = "gigaam") && !cfg!(feature = "gigaam-system-ort");
-    let (transcriber, engine_fallback) = resolve_startup_engine(config.transcriber, avx_ok, ort_needs_avx);
-    config.transcriber = transcriber;
+    // Конфиг + авто-fallback STT-движка на старте (единый toast в UI при fallback'е).
+    let (config, engine_fallback) = load_startup_config();
 
     let hotkey = config.hotkey.clone();
     let hotkey_pause = config.hotkey_pause.clone();
-
-    // Парсим хоткеи в Shortcut для сравнения в handler. ВАЖНО: сравнивать строки
-    // нельзя — Display плагина канонизирует регистр и имя клавиши ("Control+`" →
-    // "control+Backquote"), поэтому raw-конфиг никогда не совпал бы с Display
-    // пришедшего события. Сравнение распарсенных Shortcut'ов (mods+key) — это и
-    // рекомендованный плагином паттерн, и ЕДИНСТВЕННЫЙ рабочий путь на Windows
-    // (там нет GNOME-gsettings fallback'а, плагин — единственный источник событий).
-    let trigger_shortcut: Arc<Option<tauri_plugin_global_shortcut::Shortcut>> = Arc::new(hotkey.parse().ok());
-    let pause_shortcut: Arc<Option<tauri_plugin_global_shortcut::Shortcut>> = Arc::new(if hotkey_pause.is_empty() {
-        None
-    } else {
-        hotkey_pause.parse().ok()
-    });
+    let (trigger_shortcut, pause_shortcut) = parse_shortcuts(&hotkey, &hotkey_pause);
 
     let run_result = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -342,18 +413,7 @@ fn main() {
                     let trigger_shortcut = Arc::clone(&trigger_shortcut);
                     let pause_shortcut = Arc::clone(&pause_shortcut);
                     move |app, shortcut, event| {
-                        if event.state() == ShortcutState::Pressed
-                            && let Some(engine_state) = app.try_state::<EngineState>()
-                            && let Some(engine) = engine_state.get()
-                        {
-                            if pause_shortcut.as_ref().as_ref() == Some(shortcut) {
-                                tracing::info!(source = "tauri-shortcut", "Горячая клавиша паузы: {shortcut}");
-                                engine.pause();
-                            } else if trigger_shortcut.as_ref().as_ref() == Some(shortcut) {
-                                tracing::info!(source = "tauri-shortcut", "Горячая клавиша триггера: {shortcut}");
-                                engine.trigger();
-                            }
-                        }
+                        handle_global_shortcut(app, shortcut, event, &trigger_shortcut, &pause_shortcut);
                     }
                 })
                 .build(),
@@ -406,19 +466,7 @@ fn main() {
             commands::retranscribe,
             commands::get_audio_data,
         ])
-        .on_window_event(|window, event| {
-            // Перехватываем закрытие окна — скрываем вместо закрытия
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
-                // Обновляем флаг видимости только для главного окна
-                if window.label() == "main"
-                    && let Some(vis) = window.app_handle().try_state::<Arc<AtomicBool>>()
-                {
-                    vis.store(false, Ordering::Relaxed);
-                }
-            }
-        })
+        .on_window_event(handle_window_event)
         .run(tauri::generate_context!());
     // Штатный выход из event-loop (трей «Выход», апдейтер): флашим лог перед концом
     // процесса. При ошибке запуска — логируем её (panic-hook бы тоже поймал, но так
@@ -449,5 +497,14 @@ mod tests {
         let (engine, fallback) = resolve_startup_engine(TranscriberType::GigaAm, false, false);
         assert_eq!(engine, TranscriberType::GigaAm);
         assert!(fallback.is_none());
+    }
+
+    #[test]
+    fn test_parse_shortcuts_empty_pause_is_none() {
+        // Наша ветка is_empty: пустой hotkey_pause → пауза не назначена (None),
+        // независимо от того, как плагин распарсил trigger. Триггер здесь не проверяем —
+        // FromStr на Shortcut принадлежит плагину, а не нашей логике.
+        let (_trigger, pause) = parse_shortcuts("Control+grave", "");
+        assert!(pause.is_none());
     }
 }

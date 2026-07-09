@@ -1,0 +1,21 @@
+[meta]
+name = "changelog-version-bump"
+schema_version = 1
+description = "Advisory: правишь CHANGELOG → подними версию во всех 6 точках + 2 lock-файла"
+
+[scope]
+path_globs = ["CHANGELOG.md"]
+
+[rule]
+type = "advisory"
+on_event = "before_edit"
+severity = "info"
+message = """
+📝 Пишешь CHANGELOG — значит есть релизное изменение. Версию легко забыть поднять
+не везде: в проекте ПОСЛЕ FSD-миграции она живёт в 6 точках + 2 lock-файла.
+Полный список и готовый sed-шаблон — memory version-bump.
+
+Не забудь также: released-секции CHANGELOG = одна короткая user-facing запись на
+изменение (dev-детали — в Unreleased); «Удалено», а не «Убрано». Номер версии
+в commit message НЕ ставить.
+"""

@@ -117,13 +117,24 @@ fn update_tray_and_widget(app_handle: &AppHandle, engine_state: &EngineState, ev
     }
 }
 
+/// Секунд в сутках — базовый интервал фонового чекера обновлений и старт backoff.
+const SECONDS_PER_DAY: u64 = 86_400;
+/// Порог throttle сетевой проверки (23ч < 24ч: «закрыл-открыл» вскоре после суточного
+/// прогона всё же проверит, не жгя GitHub rate-limit).
+const UPDATE_CHECK_THROTTLE_SECS: i64 = 23 * 3_600;
+/// Потолок exponential backoff чекера при сетевых ошибках (7 суток).
+const MAX_UPDATE_BACKOFF: std::time::Duration = std::time::Duration::from_secs(7 * SECONDS_PER_DAY);
+
 /// Решает, пора ли делать сетевую проверку обновлений.
 /// `force` (первый прогон после старта приложения) обходит 23-часовой throttle:
 /// иначе «закрыл-открыл» вскоре после релиза не покажет баннер до истечения
 /// суток с прошлой проверки. Периодические прогоны в loop'е остаются под гейтом
 /// (раз в ~24ч), чтобы не жечь GitHub rate-limit (ETag → 304 на неизменном релизе).
 fn update_check_due(last_check_at: Option<i64>, now: i64, force: bool) -> bool {
-    force || last_check_at.map(|t| now - t >= 23 * 3600).unwrap_or(true)
+    force
+        || last_check_at
+            .map(|t| now - t >= UPDATE_CHECK_THROTTLE_SECS)
+            .unwrap_or(true)
 }
 
 /// Запускает фоновый чекер обновлений: первый запрос через 60с (даём engine
@@ -133,7 +144,7 @@ fn update_check_due(last_check_at: Option<i64>, now: i64, force: bool) -> bool {
 pub fn spawn_update_checker(app_handle: AppHandle, history_db: Arc<HistoryDB>) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-        let mut backoff = std::time::Duration::from_secs(86400);
+        let mut backoff = std::time::Duration::from_secs(SECONDS_PER_DAY);
         // Первый прогон после старта обходит throttle (см. update_check_due).
         let mut force_check = true;
         loop {
@@ -148,15 +159,15 @@ pub fn spawn_update_checker(app_handle: AppHandle, history_db: Arc<HistoryDB>) {
                     Ok(Some(info)) => {
                         tracing::info!("Update available: {}", info.latest_version);
                         let _ = app_handle.emit("update://available", info);
-                        backoff = std::time::Duration::from_secs(86400);
+                        backoff = std::time::Duration::from_secs(SECONDS_PER_DAY);
                     }
                     Ok(None) => {
                         tracing::info!("Проверка обновлений: новых релизов нет");
-                        backoff = std::time::Duration::from_secs(86400);
+                        backoff = std::time::Duration::from_secs(SECONDS_PER_DAY);
                     }
                     Err(e) => {
                         tracing::warn!("Update check failed: {}", e);
-                        backoff = (backoff * 2).min(std::time::Duration::from_secs(7 * 86400));
+                        backoff = (backoff * 2).min(MAX_UPDATE_BACKOFF);
                     }
                 }
             } else {

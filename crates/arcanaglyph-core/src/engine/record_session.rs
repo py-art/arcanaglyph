@@ -44,24 +44,31 @@ fn build_history_entry(rec_text: &str, remove_fillers: bool) -> String {
     }
 }
 
+/// Три RwLock-хранилища пула моделей движка, кочующие вместе: сам пул транскрайберов
+/// (по имени модели), имя активной модели и таблица `last_used` (для sweeper'а).
+/// Собраны в borrow-обёртку, чтобы не таскать их россыпью по функциям reload-пути.
+pub(super) struct ModelPool<'a> {
+    pub(super) transcribers: &'a Arc<std::sync::RwLock<HashMap<String, Arc<dyn Transcriber>>>>,
+    pub(super) active_model: &'a Arc<std::sync::RwLock<String>>,
+    pub(super) last_used: &'a Arc<std::sync::RwLock<HashMap<String, Instant>>>,
+}
+
 /// Регистрирует только что созданную модель: кладёт в пул, делает активной,
 /// засекает `last_used` (иначе sweeper мог бы выгрузить её на следующем тике) и
 /// возвращает UI в «готов»-состояние. Вынесено из `resolve_reloaded_transcriber`.
 fn register_reloaded_model(
     name: &str,
     t: &Arc<dyn Transcriber>,
-    transcribers_pool: &Arc<std::sync::RwLock<HashMap<String, Arc<dyn Transcriber>>>>,
-    active_model_rw: &Arc<std::sync::RwLock<String>>,
-    last_used_arc: &Arc<std::sync::RwLock<HashMap<String, Instant>>>,
+    pool: &ModelPool<'_>,
     event_tx: &broadcast::Sender<EngineEvent>,
 ) {
-    if let Ok(mut pool) = transcribers_pool.write() {
-        pool.insert(name.to_string(), t.clone());
+    if let Ok(mut p) = pool.transcribers.write() {
+        p.insert(name.to_string(), t.clone());
     }
-    if let Ok(mut active) = active_model_rw.write() {
+    if let Ok(mut active) = pool.active_model.write() {
         *active = name.to_string();
     }
-    if let Ok(mut last) = last_used_arc.write() {
+    if let Ok(mut last) = pool.last_used.write() {
         last.insert(name.to_string(), Instant::now());
     }
     info!("Модель '{}' загружена и добавлена в пул", name);
@@ -73,14 +80,11 @@ fn register_reloaded_model(
 /// loading-событиями, что и `preload_model`). Возвращает `None`, если загрузка
 /// провалилась (Error уже эмитнут) — вызывающий должен прервать запись.
 /// Вынесено из `trigger` дословно — поведение не меняется.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn resolve_reloaded_transcriber(
     need_reload: bool,
     current: Arc<dyn Transcriber>,
     config: &CoreConfig,
-    transcribers_rw: &Arc<std::sync::RwLock<HashMap<String, Arc<dyn Transcriber>>>>,
-    active_model_rw: &Arc<std::sync::RwLock<String>>,
-    last_used_arc: &Arc<std::sync::RwLock<HashMap<String, Instant>>>,
+    pool: &ModelPool<'_>,
     event_tx: &broadcast::Sender<EngineEvent>,
 ) -> Option<Arc<dyn Transcriber>> {
     if !need_reload {
@@ -89,13 +93,14 @@ pub(super) async fn resolve_reloaded_transcriber(
 
     // Проверяем, может модель уже в пуле (предзагружена)
     let target_name = config.transcriber_model_name();
-    let already_in_pool = transcribers_rw
+    let already_in_pool = pool
+        .transcribers
         .read()
-        .map(|pool| pool.get(&target_name).cloned())
+        .map(|p| p.get(&target_name).cloned())
         .unwrap_or(None);
 
     if let Some(t) = already_in_pool {
-        if let Ok(mut active) = active_model_rw.write() {
+        if let Ok(mut active) = pool.active_model.write() {
             *active = target_name.clone();
         }
         info!("Модель '{}' взята из пула (была предзагружена)", target_name);
@@ -107,13 +112,18 @@ pub(super) async fn resolve_reloaded_transcriber(
     // preload_model — UI отработает одинаково.
     let _ = event_tx.send(EngineEvent::ModelLoading(target_name.clone()));
     let cfg = config.clone();
-    let transcribers_pool = Arc::clone(transcribers_rw);
+    let transcribers_pool = Arc::clone(pool.transcribers);
     let reload_result =
         tokio::task::spawn_blocking(move || ArcanaEngine::create_transcriber(&cfg, &cfg.transcriber)).await;
 
     match reload_result {
         Ok(Ok((name, t))) => {
-            register_reloaded_model(&name, &t, &transcribers_pool, active_model_rw, last_used_arc, event_tx);
+            let reg_pool = ModelPool {
+                transcribers: &transcribers_pool,
+                active_model: pool.active_model,
+                last_used: pool.last_used,
+            };
+            register_reloaded_model(&name, &t, &reg_pool, event_tx);
             Some(t)
         }
         Ok(Err(e)) => {
@@ -175,15 +185,25 @@ async fn finalize_recording(
         return;
     }
 
-    // Сохраняем в историю
+    // Сохраняем в историю. add_recording/add_transcription — синхронный
+    // rusqlite (blocking disk-I/O); уводим его с async-executor в blocking-пул,
+    // чтобы короткая SQLite-транзакция не стоплила рантайм движка.
     let model_name = config.transcriber_model_name();
     let transcriber_type_str = config.transcriber_type_str();
-    if let Err(e) = (|| -> Result<(), crate::error::ArcanaError> {
-        let rec_id = history_db.add_recording(&rec.audio_path, rec.duration_secs)?;
-        history_db.add_transcription(rec_id, &text, &model_name, &transcriber_type_str)?;
+    let db = Arc::clone(history_db);
+    let audio_path = rec.audio_path.clone();
+    let duration_secs = rec.duration_secs;
+    let text_for_db = text.clone();
+    let save_result = tokio::task::spawn_blocking(move || -> Result<(), crate::error::ArcanaError> {
+        let rec_id = db.add_recording(&audio_path, duration_secs)?;
+        db.add_transcription(rec_id, &text_for_db, &model_name, &transcriber_type_str)?;
         Ok(())
-    })() {
-        tracing::warn!("Не удалось сохранить в историю: {}", e);
+    })
+    .await;
+    match save_result {
+        Ok(Err(e)) => tracing::warn!("Не удалось сохранить в историю: {}", e),
+        Err(e) => tracing::warn!("Задача сохранения истории завершилась с ошибкой: {:?}", e),
+        Ok(Ok(())) => {}
     }
 
     let is_visible = window_visible.load(Ordering::Relaxed);

@@ -8,6 +8,13 @@
 /// UUID нашего GNOME-расширения для виджета записи.
 pub(crate) const WIDGET_EXT_UUID: &str = "arcanaglyph-widget@arfi.tech";
 
+/// Бинарь gsettings — единый источник имени вызываемой команды.
+const GSETTINGS: &str = "gsettings";
+/// Схема gnome-shell (для чтения/записи списка `enabled-extensions`).
+const GNOME_SHELL_SCHEMA: &str = "org.gnome.shell";
+/// Ключ со списком включённых расширений в схеме gnome-shell.
+const ENABLED_EXTENSIONS_KEY: &str = "enabled-extensions";
+
 /// Источник файлов расширения (production: /usr/share/arcanaglyph/extension/...,
 /// dev: <repo_root>/extension/...). Возвращаем первый существующий путь.
 fn widget_ext_source_dir() -> Option<std::path::PathBuf> {
@@ -78,8 +85,8 @@ fn widget_extension_status_linux() -> WidgetExtensionStatus {
         .unwrap_or(false);
     // Читаем enabled-extensions через gsettings — самый надёжный способ.
     // Если gsettings нет (не GNOME) — enabled=false.
-    let enabled = std::process::Command::new("gsettings")
-        .args(["get", "org.gnome.shell", "enabled-extensions"])
+    let enabled = std::process::Command::new(GSETTINGS)
+        .args(["get", GNOME_SHELL_SCHEMA, ENABLED_EXTENSIONS_KEY])
         .output()
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
@@ -162,8 +169,8 @@ fn ext_version_matches(src: &std::path::Path, dst: &std::path::Path) -> bool {
 
 /// Проверяет, есть ли UUID в enabled-extensions через gsettings.
 fn is_extension_enabled(uuid: &str) -> Result<bool, String> {
-    let out = std::process::Command::new("gsettings")
-        .args(["get", "org.gnome.shell", "enabled-extensions"])
+    let out = std::process::Command::new(GSETTINGS)
+        .args(["get", GNOME_SHELL_SCHEMA, ENABLED_EXTENSIONS_KEY])
         .output()
         .map_err(|e| format!("gsettings get: {}", e))?;
     if !out.status.success() {
@@ -204,8 +211,8 @@ fn format_gvariant_strings(list: &[String]) -> String {
 /// Atomic-ish modify: читает gsettings enabled-extensions, добавляет/убирает
 /// UUID, пишет обратно. Если состояние уже правильное — no-op.
 fn set_extension_enabled(uuid: &str, enable: bool) -> Result<(), String> {
-    let out = std::process::Command::new("gsettings")
-        .args(["get", "org.gnome.shell", "enabled-extensions"])
+    let out = std::process::Command::new(GSETTINGS)
+        .args(["get", GNOME_SHELL_SCHEMA, ENABLED_EXTENSIONS_KEY])
         .output()
         .map_err(|e| format!("gsettings get: {}", e))?;
     if !out.status.success() {
@@ -225,8 +232,8 @@ fn set_extension_enabled(uuid: &str, enable: bool) -> Result<(), String> {
         return Ok(());
     }
     let new_val = format_gvariant_strings(&list);
-    let out = std::process::Command::new("gsettings")
-        .args(["set", "org.gnome.shell", "enabled-extensions", &new_val])
+    let out = std::process::Command::new(GSETTINGS)
+        .args(["set", GNOME_SHELL_SCHEMA, ENABLED_EXTENSIONS_KEY, &new_val])
         .output()
         .map_err(|e| format!("gsettings set: {}", e))?;
     if !out.status.success() {

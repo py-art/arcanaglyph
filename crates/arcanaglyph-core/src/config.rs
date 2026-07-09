@@ -196,20 +196,28 @@ fn default_models_dir() -> PathBuf {
     })
 }
 
+/// Имена директорий/файлов моделей по умолчанию — единый источник, чтобы
+/// `default_*_model_path()` и `CoreConfig::default()` не разъезжались.
+const VOSK_MODEL_DIR: &str = "vosk-model-ru-0.42";
+const WHISPER_MODEL_FILE: &str = "ggml-large-v3-turbo.bin";
+const QWEN3ASR_MODEL_DIR: &str = "qwen3-asr-0.6b";
+const GIGAAM_CTC_MODEL_DIR: &str = "gigaam-v3-e2e-ctc";
+const GIGAAM_RNNT_MODEL_DIR: &str = "gigaam-v3-e2e-rnnt";
+
 fn default_whisper_model_path() -> PathBuf {
-    default_models_dir().join("ggml-large-v3-turbo.bin")
+    default_models_dir().join(WHISPER_MODEL_FILE)
 }
 
 fn default_qwen3asr_model_path() -> PathBuf {
-    default_models_dir().join("qwen3-asr-0.6b")
+    default_models_dir().join(QWEN3ASR_MODEL_DIR)
 }
 
 fn default_gigaam_model_path() -> PathBuf {
-    default_models_dir().join("gigaam-v3-e2e-ctc")
+    default_models_dir().join(GIGAAM_CTC_MODEL_DIR)
 }
 
 fn default_gigaam_rnnt_model_path() -> PathBuf {
-    default_models_dir().join("gigaam-v3-e2e-rnnt")
+    default_models_dir().join(GIGAAM_RNNT_MODEL_DIR)
 }
 
 fn default_true() -> bool {
@@ -217,15 +225,28 @@ fn default_true() -> bool {
 }
 
 fn default_vad_silence_secs() -> u64 {
-    15
+    DEFAULT_VAD_SILENCE_SECS
 }
 
+/// Дефолт позиции виджета записи (используется и в serde-default, и в `Default`).
+const DEFAULT_WIDGET_POSITION: &str = "bottom-center";
+/// Дефолтная частота дискретизации аудио, Гц.
+const DEFAULT_SAMPLE_RATE: u32 = 48_000;
+/// Дефолтный максимум длительности одной записи, секунды.
+const DEFAULT_MAX_RECORD_SECS: u64 = 20;
+/// Дефолт VAD: авто-стоп после стольких секунд тишины (после обнаруженной речи).
+const DEFAULT_VAD_SILENCE_SECS: u64 = 15;
+/// Дефолт retention истории записей, часы (0 = хранить вечно).
+const DEFAULT_RETENTION_HOURS: u64 = 24;
+/// Дефолт окна дедупа записей в истории, секунды (86400 = сутки).
+const DEFAULT_HISTORY_FILTER_SECS: u64 = 86_400;
+
 fn default_retention_hours() -> u64 {
-    24
+    DEFAULT_RETENTION_HOURS
 }
 
 fn default_history_filter_secs() -> u64 {
-    86400
+    DEFAULT_HISTORY_FILTER_SECS
 }
 
 fn default_mic_gain() -> f32 {
@@ -233,8 +254,14 @@ fn default_mic_gain() -> f32 {
 }
 
 fn default_widget_position() -> String {
-    "bottom-center".to_string()
+    DEFAULT_WIDGET_POSITION.to_string()
 }
+
+/// Размеры окна виджета записи в логических пикселях. Единый источник: создание окна
+/// (`app_setup::build_recording_widget`) и расчёт его позиции (`widget_position_xy`) —
+/// значения ОБЯЗАНЫ совпадать, иначе позиция разъедется с реальным окном.
+pub const WIDGET_WIDTH: f64 = 220.0;
+pub const WIDGET_HEIGHT: f64 = 40.0;
 
 /// Вычисляет (x, y) позиции виджета записи на экране по логическому имени.
 ///
@@ -269,11 +296,11 @@ pub fn widget_position_xy(pos: &str, screen_w: f64, screen_h: f64, widget_w: f64
 impl Default for CoreConfig {
     fn default() -> Self {
         let models = default_models_dir();
-        let model_path = models.join("vosk-model-ru-0.42");
-        let whisper_model_path = models.join("ggml-large-v3-turbo.bin");
-        let qwen3asr_model_path = models.join("qwen3-asr-0.6b");
-        let gigaam_model_path = models.join("gigaam-v3-e2e-ctc");
-        let gigaam_rnnt_model_path = models.join("gigaam-v3-e2e-rnnt");
+        let model_path = models.join(VOSK_MODEL_DIR);
+        let whisper_model_path = models.join(WHISPER_MODEL_FILE);
+        let qwen3asr_model_path = models.join(QWEN3ASR_MODEL_DIR);
+        let gigaam_model_path = models.join(GIGAAM_CTC_MODEL_DIR);
+        let gigaam_rnnt_model_path = models.join(GIGAAM_RNNT_MODEL_DIR);
 
         Self {
             transcriber: TranscriberType::Vosk,
@@ -282,26 +309,26 @@ impl Default for CoreConfig {
             gigaam_model_path,
             gigaam_rnnt_model_path,
             qwen3asr_model_path,
-            sample_rate: 48000,
-            max_record_secs: 20,
+            sample_rate: DEFAULT_SAMPLE_RATE,
+            max_record_secs: DEFAULT_MAX_RECORD_SECS,
             auto_type: true,
             hotkey: "Control+`".to_string(),
             hotkey_pause: "Control+Shift+`".to_string(),
             debug: false,
             vad_enabled: true,
-            vad_silence_secs: 15,
+            vad_silence_secs: DEFAULT_VAD_SILENCE_SECS,
             remove_fillers: true,
             mic_gain: 1.0,
             mic_gain_per_device: HashMap::new(),
-            retention_hours: 24,
+            retention_hours: DEFAULT_RETENTION_HOURS,
             autostart: false,
             start_minimized: false,
             preload_models: vec![],
             show_widget: true,
-            widget_position: "bottom-center".to_string(),
+            widget_position: DEFAULT_WIDGET_POSITION.to_string(),
             show_tray: true,
             models_base_dir: models,
-            history_filter_secs: 86400,
+            history_filter_secs: DEFAULT_HISTORY_FILTER_SECS,
             language: String::new(),
             model_unload_after_minutes: 0,
         }
@@ -384,16 +411,17 @@ impl CoreConfig {
     /// маппинга `TranscriberType → имя модели`: раньше этот `match` дублировался
     /// в `engine.rs` (preload_model / update_config / create_transcriber).
     pub fn model_name_for(&self, t_type: &TranscriberType) -> String {
-        let (path, fallback) = match t_type {
-            TranscriberType::Vosk => (&self.model_path, "vosk"),
-            TranscriberType::Whisper => (&self.whisper_model_path, "whisper"),
-            TranscriberType::GigaAm => (&self.gigaam_model_path, "gigaam"),
-            TranscriberType::GigaAmRnnt => (&self.gigaam_rnnt_model_path, "gigaam-rnnt"),
-            TranscriberType::Qwen3Asr => (&self.qwen3asr_model_path, "qwen3asr"),
+        let path = match t_type {
+            TranscriberType::Vosk => &self.model_path,
+            TranscriberType::Whisper => &self.whisper_model_path,
+            TranscriberType::GigaAm => &self.gigaam_model_path,
+            TranscriberType::GigaAmRnnt => &self.gigaam_rnnt_model_path,
+            TranscriberType::Qwen3Asr => &self.qwen3asr_model_path,
         };
         path.file_name()
             .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| fallback.to_string())
+            // fallback на строковый id движка — единый источник TranscriberType::as_str()
+            .unwrap_or_else(|| t_type.as_str().to_string())
     }
 
     /// Название текущей модели (для записи в историю)
@@ -401,15 +429,9 @@ impl CoreConfig {
         self.model_name_for(&self.transcriber)
     }
 
-    /// Тип транскрайбера как строка
+    /// Тип транскрайбера как строка (единый источник — `TranscriberType::as_str()`).
     pub fn transcriber_type_str(&self) -> String {
-        match self.transcriber {
-            TranscriberType::Vosk => "vosk".to_string(),
-            TranscriberType::Whisper => "whisper".to_string(),
-            TranscriberType::GigaAm => "gigaam".to_string(),
-            TranscriberType::GigaAmRnnt => "gigaam-rnnt".to_string(),
-            TranscriberType::Qwen3Asr => "qwen3asr".to_string(),
-        }
+        self.transcriber.as_str().to_string()
     }
 
     /// Загружает конфигурацию из SQLite БД. При первом запуске импортирует из config.toml если есть.
@@ -583,11 +605,11 @@ auto_type = false
             hotkey_pause: String::new(),
             debug: false,
             vad_enabled: true,
-            vad_silence_secs: 15,
+            vad_silence_secs: DEFAULT_VAD_SILENCE_SECS,
             remove_fillers: true,
             mic_gain: 1.0,
             mic_gain_per_device: HashMap::new(),
-            retention_hours: 24,
+            retention_hours: DEFAULT_RETENTION_HOURS,
             autostart: false,
             start_minimized: false,
             preload_models: vec![],
@@ -595,7 +617,7 @@ auto_type = false
             widget_position: "bottom-center".to_string(),
             show_tray: true,
             models_base_dir: PathBuf::from("/tmp/test-models"),
-            history_filter_secs: 86400,
+            history_filter_secs: DEFAULT_HISTORY_FILTER_SECS,
             language: String::new(),
             model_unload_after_minutes: 0,
         };
@@ -632,6 +654,25 @@ auto_type = false
         let dir = CoreConfig::logs_dir();
         assert!(dir.is_some());
         assert!(dir.unwrap().ends_with("logs"));
+    }
+
+    #[test]
+    fn test_scripts_dir_ends_with_scripts() {
+        // scripts_dir лежит под config_dir (~/.config/arcanaglyph/scripts).
+        let dir = CoreConfig::scripts_dir();
+        assert!(dir.is_some());
+        let dir = dir.unwrap();
+        assert!(dir.ends_with("scripts"));
+        assert!(dir.parent().is_some());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_trigger_socket_path_ends_with_sock() {
+        // Unix-сокет IPC-триггера — ~/.config/arcanaglyph/trigger.sock (только Linux).
+        let path = CoreConfig::trigger_socket_path();
+        assert!(path.is_some());
+        assert!(path.unwrap().ends_with("trigger.sock"));
     }
 
     #[test]

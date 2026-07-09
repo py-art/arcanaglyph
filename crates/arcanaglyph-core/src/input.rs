@@ -134,65 +134,77 @@ pub fn is_wayland() -> bool {
 #[cfg(target_os = "linux")]
 static X11_CLIPBOARD: OnceLock<std::sync::Mutex<Option<arboard::Clipboard>>> = OnceLock::new();
 
+/// Копирует текст в X11 CLIPBOARD и PRIMARY selections через arboard. Блокирующая
+/// (arboard sync) — вызывать внутри `spawn_blocking`. Вынесено из `type_text_x11`.
+/// ⛔ X11-механизм: arboard + Shift+Insert (плагин input-platform-insertion), НЕ `enigo.text()`.
+#[cfg(target_os = "linux")]
+fn copy_to_x11_clipboards(text: String) -> Result<(), ArcanaError> {
+    use arboard::{LinuxClipboardKind, SetExtLinux};
+
+    let mutex = X11_CLIPBOARD.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = mutex
+        .lock()
+        .map_err(|e| ArcanaError::InputSimulation(format!("X11 clipboard mutex poisoned: {}", e)))?;
+
+    if guard.is_none() {
+        *guard = Some(
+            arboard::Clipboard::new()
+                .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось инициализировать clipboard: {}", e)))?,
+        );
+    }
+    let cb = guard.as_mut().expect("clipboard initialized above");
+
+    // CLIPBOARD selection — Ctrl+V и Shift+Insert в GTK/Qt/WebKit GUI.
+    cb.set_text(text.clone())
+        .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось скопировать в clipboard: {}", e)))?;
+    // PRIMARY selection — Shift+Insert в xterm/urxvt/некоторых терминалах
+    // вставляет именно из PRIMARY, не из CLIPBOARD.
+    cb.set()
+        .clipboard(LinuxClipboardKind::Primary)
+        .text(text)
+        .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось скопировать в primary: {}", e)))?;
+    Ok(())
+}
+
+/// Отправляет Shift+Insert через enigo — вставка из selection в активное окно.
+/// В отличие от `.text()` здесь только 2 стабильных keysym'а: никакого XKB-ремаппинга,
+/// мгновенно даже на N5095. Блокирующая — вызывать внутри `spawn_blocking`. Вынесено
+/// из `type_text_x11`.
+#[cfg(target_os = "linux")]
+fn send_shift_insert() -> Result<(), ArcanaError> {
+    use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+
+    let mut enigo = Enigo::new(&Settings::default())
+        .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось создать Enigo: {}", e)))?;
+    enigo
+        .key(Key::Shift, Direction::Press)
+        .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка нажатия Shift: {}", e)))?;
+    enigo
+        .key(Key::Insert, Direction::Click)
+        .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка Insert: {}", e)))?;
+    enigo
+        .key(Key::Shift, Direction::Release)
+        .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка отпускания Shift: {}", e)))?;
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 async fn type_text_x11(text: &str) -> Result<(), ArcanaError> {
     let text_owned = text.to_string();
     let len = text_owned.len();
 
-    // arboard блокирующий — выполняем в spawn_blocking.
-    tokio::task::spawn_blocking(move || -> Result<(), ArcanaError> {
-        use arboard::{LinuxClipboardKind, SetExtLinux};
-
-        let mutex = X11_CLIPBOARD.get_or_init(|| std::sync::Mutex::new(None));
-        let mut guard = mutex
-            .lock()
-            .map_err(|e| ArcanaError::InputSimulation(format!("X11 clipboard mutex poisoned: {}", e)))?;
-
-        if guard.is_none() {
-            *guard =
-                Some(arboard::Clipboard::new().map_err(|e| {
-                    ArcanaError::InputSimulation(format!("Не удалось инициализировать clipboard: {}", e))
-                })?);
-        }
-        let cb = guard.as_mut().expect("clipboard initialized above");
-
-        // CLIPBOARD selection — Ctrl+V и Shift+Insert в GTK/Qt/WebKit GUI.
-        cb.set_text(text_owned.clone())
-            .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось скопировать в clipboard: {}", e)))?;
-        // PRIMARY selection — Shift+Insert в xterm/urxvt/некоторых терминалах
-        // вставляет именно из PRIMARY, не из CLIPBOARD.
-        cb.set()
-            .clipboard(LinuxClipboardKind::Primary)
-            .text(text_owned)
-            .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось скопировать в primary: {}", e)))?;
-        Ok(())
-    })
-    .await
-    .map_err(|e| ArcanaError::InputSimulation(format!("spawn_blocking (clipboard): {}", e)))??;
+    // arboard блокирующий — копируем selections в spawn_blocking.
+    tokio::task::spawn_blocking(move || copy_to_x11_clipboards(text_owned))
+        .await
+        .map_err(|e| ArcanaError::InputSimulation(format!("spawn_blocking (clipboard): {}", e)))??;
 
     // Небольшая пауза, чтобы X-сервер успел зарегистрировать смену владельца selection.
     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
 
-    // Shift+Insert через enigo. В отличие от .text() здесь только 2 стабильных
-    // keysym'а — никакого XKB-ремаппинга, выполняется мгновенно даже на N5095.
-    tokio::task::spawn_blocking(|| -> Result<(), ArcanaError> {
-        use enigo::{Direction, Enigo, Key, Keyboard, Settings};
-
-        let mut enigo = Enigo::new(&Settings::default())
-            .map_err(|e| ArcanaError::InputSimulation(format!("Не удалось создать Enigo: {}", e)))?;
-        enigo
-            .key(Key::Shift, Direction::Press)
-            .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка нажатия Shift: {}", e)))?;
-        enigo
-            .key(Key::Insert, Direction::Click)
-            .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка Insert: {}", e)))?;
-        enigo
-            .key(Key::Shift, Direction::Release)
-            .map_err(|e| ArcanaError::InputSimulation(format!("Ошибка отпускания Shift: {}", e)))?;
-        Ok(())
-    })
-    .await
-    .map_err(|e| ArcanaError::InputSimulation(format!("spawn_blocking (paste): {}", e)))??;
+    // Shift+Insert через enigo (блокирующий) — вставка из selection.
+    tokio::task::spawn_blocking(send_shift_insert)
+        .await
+        .map_err(|e| ArcanaError::InputSimulation(format!("spawn_blocking (paste): {}", e)))??;
 
     tracing::info!(
         "Текст вставлен в активное окно через clipboard + Shift+Insert ({} символов)",

@@ -12,7 +12,6 @@ use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::value::TensorRef;
 
-use crate::dsp::preprocess_to_f32_16k;
 use crate::error::ArcanaError;
 use crate::transcriber::Transcriber;
 
@@ -102,20 +101,11 @@ impl GigaAmTranscriber {
 
 impl Transcriber for GigaAmTranscriber {
     fn transcribe(&self, samples: &[i16], sample_rate: u32) -> Result<String, ArcanaError> {
-        // Общий препроцессинг: обрезка тишины + i16→f32 + resample до 16 кГц.
-        let audio_f32 = preprocess_to_f32_16k(samples, sample_rate);
-
-        if audio_f32.len() < 320 {
+        // Общий вход GigaAM (препроцессинг + mel); None → пустой результат.
+        let Some(mel_spec) = mel::prepare_mel_input(samples, sample_rate) else {
             return Ok(String::new());
-        }
-
-        // Вычисляем mel-спектрограмму [1, 64, T_frames]
-        let mel_spec = mel::compute_mel_spectrogram(&audio_f32);
+        };
         let n_frames = mel_spec.shape()[2];
-
-        if n_frames == 0 {
-            return Ok(String::new());
-        }
 
         // Подготовка входных тензоров для ONNX Runtime
         let mel_contiguous = mel_spec.as_standard_layout();
@@ -163,13 +153,8 @@ fn ctc_greedy_decode(logits_data: &[f32], t_out: usize, vocab_size: usize, vocab
     for t in 0..t_out {
         let frame = &logits_data[t * vocab_size..(t + 1) * vocab_size];
 
-        // argmax
-        let tok = frame
-            .iter()
-            .enumerate()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(idx, _)| idx)
-            .unwrap_or(blank_id);
+        // argmax по кадру; пустой/вырожденный кадр → blank
+        let tok = crate::decode::argmax_index(frame).unwrap_or(blank_id);
 
         if tok != blank_id && (tok != prev_tok || prev_tok == blank_id) {
             token_ids.push(tok);

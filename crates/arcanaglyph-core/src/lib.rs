@@ -3,6 +3,10 @@
 pub mod audio;
 pub mod config;
 pub mod db;
+// Примитивы декодирования выхода нейросетевых STT (argmax по логитам). Нужны
+// только mel/rnnt-бэкендам — тот же гейт, что у спектрального ядра dsp.
+#[cfg(any(feature = "gigaam", feature = "gigaam-system-ort", feature = "qwen3asr"))]
+mod decode;
 // Общие DSP-примитивы: спектральное ядро (оконо Ханна + STFT) для mel-бэкендов
 // и входной препроцессинг (trim/resample) для whisper+mel. Подключается при
 // любом «тяжёлом» движке — поэтому в гейте есть и whisper.

@@ -319,8 +319,8 @@ fn init_tray(app: &tauri::App) {
 /// Создаёт виджет записи программно (для точного контроля размера) и позиционирует
 /// его по `widget_position`.
 fn build_recording_widget(app: &tauri::App, widget_position: &str) {
-    let widget_width = 220.0;
-    let widget_height = 40.0;
+    let widget_width = arcanaglyph_core::config::WIDGET_WIDTH;
+    let widget_height = arcanaglyph_core::config::WIDGET_HEIGHT;
     let mut builder = tauri::WebviewWindowBuilder::new(app, "widget", tauri::WebviewUrl::App("widget.html".into()))
         // Title используется GNOME-расширением arcanaglyph-widget@arfi.tech
         // для идентификации именно этого окна (wm_class общий с главным).
@@ -398,7 +398,7 @@ fn register_app_hotkeys(app: &tauri::App, hotkey: &str, hotkey_pause: &str) {
 #[cfg(target_os = "linux")]
 fn ensure_gnome_hotkeys(hotkey: &str, hotkey_pause: &str) {
     use crate::commands::hotkeys::{
-        binding_is_empty, build_setxkbmap_args, command_is_legacy, parse_setxkbmap_query, register_gnome_hotkeys,
+        binding_is_empty, command_is_legacy, gsettings_get_keybinding, kick_xkb_on_x11, register_gnome_hotkeys,
     };
 
     if hotkey.is_empty() {
@@ -408,42 +408,14 @@ fn ensure_gnome_hotkeys(hotkey: &str, hotkey_pause: &str) {
     // Проверяем, зарегистрированы ли уже наши хоткеи. Перерегистрируем если
     // отсутствует ЛЮБОЙ из четырёх slots — особенно cyr-варианты, которые
     // могли не быть созданы старой версией кода без mapping для grave.
-    let probe = |slot: &str| -> bool {
-        let check = std::process::Command::new("gsettings")
-            .args([
-                "get",
-                &format!(
-                    "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/{}/",
-                    slot
-                ),
-                "binding",
-            ])
-            .output();
-        match check {
-            Ok(out) => binding_is_empty(String::from_utf8_lossy(&out.stdout).trim()),
-            Err(_) => true,
-        }
-    };
+    let probe =
+        |slot: &str| -> bool { gsettings_get_keybinding(slot, "binding").is_none_or(|v| binding_is_empty(v.trim())) };
     // Миграция со старого механизма: до перехода на Unix-сокет command хоткея
     // указывал на bash-скрипт ag-trigger (UDP :9002). Теперь это `<exe> --trigger`.
     // Если в slot осталась старая форма — принудительно перерегистрируем, иначе
     // обновившийся пользователь продолжил бы дёргать удалённый скрипт.
-    let cmd_outdated = |slot: &str| -> bool {
-        let check = std::process::Command::new("gsettings")
-            .args([
-                "get",
-                &format!(
-                    "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/{}/",
-                    slot
-                ),
-                "command",
-            ])
-            .output();
-        match check {
-            Ok(out) => command_is_legacy(&String::from_utf8_lossy(&out.stdout)),
-            Err(_) => false,
-        }
-    };
+    let cmd_outdated =
+        |slot: &str| -> bool { gsettings_get_keybinding(slot, "command").is_some_and(|v| command_is_legacy(&v)) };
     let needs_register = probe("arcanaglyph-trigger")
         || probe("arcanaglyph-trigger-cyr")
         || probe("arcanaglyph-pause")
@@ -457,23 +429,7 @@ fn ensure_gnome_hotkeys(hotkey: &str, hotkey_pause: &str) {
         }
     }
 
-    // Пинок XKB на X11+GNOME: заставляем mutter пере-grab'ить keysym'ы.
-    // Без этого на свежезагруженной системе кириллические keybindings
-    // (`<Control>Cyrillic_io` для Ё) НЕ срабатывают пока пользователь
-    // не переключит раскладку хотя бы раз вручную (Super+Space).
-    // setxkbmap с теми же параметрами триггерит XKB-reload и mutter
-    // пересоздаёт grabs, включая Cyrillic_io.
-    let is_x11 = std::env::var("XDG_SESSION_TYPE").map(|v| v == "x11").unwrap_or(false);
-    if is_x11 && let Ok(query) = std::process::Command::new("setxkbmap").arg("-query").output() {
-        let (layout, variant) = parse_setxkbmap_query(&String::from_utf8_lossy(&query.stdout));
-        if !layout.is_empty() {
-            let args = build_setxkbmap_args(&layout, &variant);
-            let _ = std::process::Command::new("setxkbmap").args(&args).output();
-            tracing::info!(
-                "XKB пнут (layout={}, variant={}) — mutter пере-grab'ит cyr keysym'ы",
-                layout,
-                variant
-            );
-        }
-    }
+    // Пинок XKB на X11+GNOME: без него кириллические keybindings не срабатывают
+    // до ручного переключения раскладки (детали — в `kick_xkb_on_x11`).
+    kick_xkb_on_x11();
 }

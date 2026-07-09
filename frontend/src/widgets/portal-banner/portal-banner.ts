@@ -16,7 +16,7 @@ export async function mountPortalBanner(): Promise<void> {
   let needed = false;
   try {
     needed = await invoke<boolean>('check_portal_grant_needed');
-  } catch (_) {
+  } catch {
     return;
   }
   if (!needed) return;

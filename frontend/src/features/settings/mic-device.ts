@@ -24,7 +24,7 @@ export async function refreshMicDevice(cfg: CfgWithMicFields | null): Promise<vo
   let device = '';
   try {
     device = (await invoke<string>('get_default_input_device_name')) || '';
-  } catch (_) { device = ''; }
+  } catch { device = ''; }
   settingsState.setActiveMicDevice(device);
 
   const labelEl = document.getElementById('s-mic-active-device');

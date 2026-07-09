@@ -22,5 +22,14 @@ NOTE.md
 
 .gemini/
 
-# arcanacodex (auto-managed)
-.arcanacodex/
+# arcanacodex (auto-managed): кэши игнорим, но plugins/ трекаем (dev-инструменты
+# команды; в публичный GitHub-mirror не уходят — вырезаются job'ом mirror-to-github)
+.arcanacodex/*
+!.arcanacodex/plugins/
+
+# .claude/ игнорится глобально (~/.config/git/ignore). В этом репо трекаем ТОЛЬКО
+# наши слэш-команды; локальные настройки (settings*.json) остаются скрытыми.
+# В публичный GitHub-mirror не уходят — вырезаются job'ом mirror-to-github.
+!.claude/
+.claude/*
+!.claude/commands/

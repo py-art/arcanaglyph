@@ -6,7 +6,7 @@
 // Проверка «модель установлена» живёт в нейтральном `installed` (разрыв цикла
 // `download ↔ registry`).
 
-use super::download::{download_file, extract_zip_into_model_dir};
+use super::download::{DownloadCtx, ModelDownloadSpec, download_model_files};
 use super::installed::is_model_installed;
 use arcanaglyph_core::CoreConfig;
 
@@ -244,6 +244,11 @@ pub async fn download_model(
         .unwrap_or_default();
 
     let total_files = 1 + extra_files.len();
+    let ctx = DownloadCtx {
+        app: &app,
+        model_id: &model_id,
+        total_files,
+    };
 
     // Скачиваем основной файл
     let main_filename = url.rsplit('/').next().unwrap_or("model");
@@ -268,37 +273,16 @@ pub async fn download_model(
             dest_path.display()
         );
     } else {
-        // Если zip-архив уже скачан и не повреждён по размеру — пропускаем download_file,
-        // сразу распаковываем. Это нужно когда прошлая попытка распаковки упала
-        // (extract_zip_into_model_dir на ошибке оставляет zip нетронутым), и пользователь
-        // повторно нажал «Скачать» — перекачивать 1.8 ГБ не нужно.
-        let zip_meta = tokio::fs::metadata(&main_dest).await;
-        let zip_already_downloaded = main_dest.extension().and_then(|s| s.to_str()) == Some("zip")
-            && match (min_size, zip_meta) {
-                (Some(min), Ok(m)) if m.is_file() => m.len() >= min,
-                _ => false,
-            };
-        if zip_already_downloaded {
-            tracing::info!(
-                "zip-архив {} уже на диске и валидного размера — пропускаем загрузку, иду в распаковку",
-                main_dest.display()
-            );
-        } else {
-            download_file(&url, &main_dest, &model_id, 0, total_files, min_size, &app).await?;
-        }
-
-        // Если основной файл — .zip-архив, распаковываем сразу после скачивания.
-        // Сейчас касается только Vosk; для будущих архивных моделей сработает автоматом.
-        if main_dest.extension().and_then(|s| s.to_str()) == Some("zip") {
-            extract_zip_into_model_dir(&main_dest, &dest_path, &model_id, &app).await?;
-        }
-
-        // Скачиваем дополнительные файлы (внутри else — если модель уже установлена,
-        // is_model_installed проверил extras тоже, перекачивать их не нужно).
-        for (idx, (extra_url, rel_path)) in extra_files.iter().enumerate() {
-            let extra_dest = dest_path.join(rel_path);
-            download_file(extra_url, &extra_dest, &model_id, idx + 1, total_files, None, &app).await?;
-        }
+        // Скачивание главного файла + zip-распаковка + extra-файлы — общий helper
+        // `download_model_files` (тот же путь, что и `ensure_active_model`).
+        let spec = ModelDownloadSpec {
+            url: &url,
+            main_dest: &main_dest,
+            model_dir: &dest_path,
+            extras: &extra_files,
+            min_size,
+        };
+        download_model_files(&ctx, &spec).await?;
     }
 
     // Авто-обновление config-пути для скачанной модели (детали — в doc хелпера).

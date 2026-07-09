@@ -4,6 +4,11 @@
 // обрезка тишины по RMS → i16→f32 нормализация → resample до 16 кГц.
 // Vosk это НЕ использует (работает с i16 напрямую).
 
+/// Целевая частота дискретизации STT-движков (whisper/gigaam/qwen), Гц.
+const TARGET_SAMPLE_RATE: u32 = 16_000;
+/// Делитель нормализации i16 → f32 в [-1.0, 1.0] (полный размах = 2^15).
+const I16_MAX: f32 = 32_768.0;
+
 /// Обрезает тишину с обеих сторон аудио.
 /// Whisper/GigaAM галлюцинируют на тихих участках, а короткое аудио = быстрее транскрибация.
 fn trim_silence(samples: &[i16], sample_rate: u32) -> &[i16] {
@@ -99,9 +104,9 @@ fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
 /// (`< 320`/`< 400`) проверяет caller — он зависит от n_fft конкретного движка.
 pub(crate) fn preprocess_to_f32_16k(samples: &[i16], sample_rate: u32) -> Vec<f32> {
     let trimmed = trim_silence(samples, sample_rate);
-    let audio_f32: Vec<f32> = trimmed.iter().map(|&s| s as f32 / 32768.0).collect();
-    if sample_rate != 16000 {
-        resample(&audio_f32, sample_rate, 16000)
+    let audio_f32: Vec<f32> = trimmed.iter().map(|&s| s as f32 / I16_MAX).collect();
+    if sample_rate != TARGET_SAMPLE_RATE {
+        resample(&audio_f32, sample_rate, TARGET_SAMPLE_RATE)
     } else {
         audio_f32
     }
