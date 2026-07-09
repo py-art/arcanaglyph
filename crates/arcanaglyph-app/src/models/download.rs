@@ -9,6 +9,19 @@
 use super::installed::is_model_installed;
 use arcanaglyph_core::CoreConfig;
 
+/// Контекст пакетной загрузки одной модели: инварианты, общие для главного файла
+/// и всех extra-файлов (одинаковы во всех вызовах `download_file` в пределах модели).
+/// Собирается один раз перед скачиванием и прокидывается в каждый вызов —
+/// снимает повторную передачу `model_id`/`total_files`/`app` на каждом файле.
+pub(crate) struct DownloadCtx<'a> {
+    /// Хендл приложения для эмита `download://progress`.
+    pub app: &'a tauri::AppHandle,
+    /// Идентификатор модели (в payload прогресса).
+    pub model_id: &'a str,
+    /// Всего файлов в загрузке модели (для индикатора `[idx/total]`).
+    pub total_files: usize,
+}
+
 /// Скачивание одного файла с прогрессом.
 ///
 /// Атомарность: пишем в `<dest>.partial` и переименовываем по успеху. Если процесс
@@ -18,18 +31,59 @@ use arcanaglyph_core::CoreConfig;
 ///
 /// `min_size` — необязательный минимальный размер в байтах. Если задан и фактический
 /// размер меньше — возвращаем ошибку, файл `.partial` остаётся (перекачается заново).
-pub(crate) async fn download_file(
-    url: &str,
-    dest: &std::path::Path,
-    model_id: &str,
+/// Стримит тело `response` в открытый `file`, эмитя `download://progress` на каждом
+/// изменении процента. Возвращает число фактически скачанных байт (для последующей
+/// валидации размера). Вынесено из `download_file` — держит его цикл-скачивание отдельно
+/// от setup/flush/rename.
+async fn stream_to_file(
+    ctx: &DownloadCtx<'_>,
+    response: reqwest::Response,
+    file: &mut tokio::fs::File,
+    filename: &str,
     file_idx: usize,
-    total_files: usize,
-    min_size: Option<u64>,
-    app: &tauri::AppHandle,
-) -> Result<(), String> {
+) -> Result<u64, String> {
     use futures_util::StreamExt;
     use tauri::Emitter;
 
+    let total_size = response.content_length().unwrap_or(0);
+    let mut stream = response.bytes_stream();
+    let mut downloaded: u64 = 0;
+    let mut last_progress: u64 = 0;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Ошибка скачивания {}: {}", filename, e))?;
+        tokio::io::AsyncWriteExt::write_all(file, &chunk)
+            .await
+            .map_err(|e| format!("Ошибка записи {}: {}", filename, e))?;
+
+        downloaded += chunk.len() as u64;
+        let progress_pct = (downloaded * 100).checked_div(total_size).unwrap_or(0);
+        if progress_pct != last_progress {
+            last_progress = progress_pct;
+            let _ = ctx.app.emit(
+                "download://progress",
+                serde_json::json!({
+                    "model_id": ctx.model_id,
+                    "file": filename,
+                    "file_idx": file_idx,
+                    "total_files": ctx.total_files,
+                    "downloaded": downloaded,
+                    "total": total_size,
+                    "percent": progress_pct,
+                }),
+            );
+        }
+    }
+    Ok(downloaded)
+}
+
+pub(crate) async fn download_file(
+    ctx: &DownloadCtx<'_>,
+    url: &str,
+    dest: &std::path::Path,
+    file_idx: usize,
+    min_size: Option<u64>,
+) -> Result<(), String> {
     if let Some(parent) = dest.parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
@@ -44,7 +98,7 @@ pub(crate) async fn download_file(
     tracing::info!(
         "Скачивание [{}/{}] {} → {}",
         file_idx + 1,
-        total_files,
+        ctx.total_files,
         filename,
         dest.display()
     );
@@ -52,40 +106,13 @@ pub(crate) async fn download_file(
     let response = reqwest::get(url)
         .await
         .map_err(|e| format!("Ошибка запроса {}: {}", filename, e))?;
-    let total_size = response.content_length().unwrap_or(0);
 
-    let mut stream = response.bytes_stream();
     let mut file = tokio::fs::File::create(&partial)
         .await
         .map_err(|e| format!("Не удалось создать {}: {}", partial.display(), e))?;
 
-    let mut downloaded: u64 = 0;
-    let mut last_progress: u64 = 0;
+    let downloaded = stream_to_file(ctx, response, &mut file, filename, file_idx).await?;
 
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("Ошибка скачивания {}: {}", filename, e))?;
-        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
-            .await
-            .map_err(|e| format!("Ошибка записи {}: {}", filename, e))?;
-
-        downloaded += chunk.len() as u64;
-        let progress_pct = (downloaded * 100).checked_div(total_size).unwrap_or(0);
-        if progress_pct != last_progress {
-            last_progress = progress_pct;
-            let _ = app.emit(
-                "download://progress",
-                serde_json::json!({
-                    "model_id": model_id,
-                    "file": filename,
-                    "file_idx": file_idx,
-                    "total_files": total_files,
-                    "downloaded": downloaded,
-                    "total": total_size,
-                    "percent": progress_pct,
-                }),
-            );
-        }
-    }
     // Гарантируем, что данные сброшены на диск перед rename
     if let Err(e) = tokio::io::AsyncWriteExt::flush(&mut file).await {
         return Err(format!("Ошибка flush {}: {}", filename, e));
@@ -219,6 +246,125 @@ fn cleanup_extraction_artifacts(zip_path: &std::path::Path, model_dir: &std::pat
     }
 }
 
+/// Резолвит путь к модели активного движка из конфига. `None` — неизвестный тип
+/// движка: вызывающий код тогда просто выходит (engine create вернёт нормальную ошибку).
+/// Чистая функция — тестируема без диска.
+fn resolve_active_model_path(cfg: &CoreConfig, transcriber_type: &str) -> Option<std::path::PathBuf> {
+    let path = match transcriber_type {
+        "vosk" => &cfg.model_path,
+        "whisper" => &cfg.whisper_model_path,
+        "gigaam" => &cfg.gigaam_model_path,
+        "gigaam-rnnt" => &cfg.gigaam_rnnt_model_path,
+        "qwen3asr" => &cfg.qwen3asr_model_path,
+        _ => return None,
+    };
+    Some(path.clone())
+}
+
+/// Выбирает запись реестра для движка. Для Whisper в реестре несколько моделей
+/// (Tiny/Small/Large) с разными размерами — выбираем ту, чей `default_filename`
+/// совпадает с именем файла в config-пути, иначе валидация может ошибочно посчитать
+/// Tiny-файл (~75 МБ) повреждённым по порогу Small (~400 МБ) или наоборот. Для
+/// остальных движков — одна модель на тип. Чистая функция — тестируема без диска.
+fn select_registry_model(
+    transcriber_type: &str,
+    filename: &str,
+) -> Option<&'static arcanaglyph_core::transcription_models::SpeechModelInfo> {
+    use arcanaglyph_core::transcription_models;
+    if transcriber_type == "whisper" && !filename.is_empty() {
+        transcription_models::find_by_type_and_filename(transcriber_type, filename)
+    } else {
+        transcription_models::find_by_transcriber_type(transcriber_type)
+    }
+}
+
+/// Вычисляет путь к главному файлу модели и (для не-Whisper движков) создаёт
+/// директорию модели. Whisper: путь — это сам файл (`whisper_model_path` указывает
+/// прямо на .bin). Остальные движки: путь — это директория; имя главного файла берём
+/// из последнего сегмента URL (а не из `default_filename` — это имя ДИРЕКТОРИИ, не
+/// файла; смешение сломало бы сохранение скачанной модели).
+async fn prepare_main_dest(
+    transcriber_type: &str,
+    model_dir: &std::path::Path,
+    model: &arcanaglyph_core::transcription_models::SpeechModelInfo,
+) -> std::path::PathBuf {
+    if transcriber_type == "whisper" {
+        model_dir.to_path_buf()
+    } else {
+        let _ = tokio::fs::create_dir_all(model_dir).await;
+        let main_filename = model.download_url.rsplit('/').next().unwrap_or("model.bin");
+        model_dir.join(main_filename)
+    }
+}
+
+/// Чистит повреждённый главный файл (меньше порога `min_size`), чтобы не путать
+/// atomic-rename при перекачке.
+async fn remove_corrupted_main_file(main_dest: &std::path::Path, min_size: Option<u64>) {
+    let main_meta = tokio::fs::metadata(main_dest).await;
+    if let (Some(min), Ok(meta)) = (min_size, main_meta)
+        && meta.is_file()
+        && meta.len() < min
+    {
+        tracing::warn!(
+            "Файл модели повреждён (размер {} байт, минимум {}) — будет перекачан: {}",
+            meta.len(),
+            min,
+            main_dest.display()
+        );
+        let _ = tokio::fs::remove_file(main_dest).await;
+    }
+}
+
+/// Что и куда скачивать в рамках одной модели — группирует параметры `download_model_files`
+/// (Introduce Parameter Object). `model_id` намеренно не дублируется: он берётся из `DownloadCtx`.
+pub(crate) struct ModelDownloadSpec<'a> {
+    /// URL главного файла модели.
+    pub url: &'a str,
+    /// Куда сохранить главный файл.
+    pub main_dest: &'a std::path::Path,
+    /// Директория модели (цель распаковки zip и база для extra-файлов).
+    pub model_dir: &'a std::path::Path,
+    /// Дополнительные файлы: `(url, относительный путь внутри model_dir)`.
+    pub extras: &'a [(&'a str, &'a str)],
+    /// Минимальный размер главного файла (валидация + skip уже скачанного zip).
+    pub min_size: Option<u64>,
+}
+
+/// Скачивает главный файл модели (со skip'ом уже валидного zip), при необходимости
+/// распаковывает zip и докачивает extra-файлы. Прогресс/распаковка эмитятся внутри
+/// `download_file` / `extract_zip_into_model_dir`. Единый источник для `ensure_active_model`
+/// (типовой путь: url/id/extras берутся из реестра) и `registry::download_model` (ручная
+/// загрузка из UI, где url приходит параметром и модели может не быть в реестре).
+pub(crate) async fn download_model_files(ctx: &DownloadCtx<'_>, spec: &ModelDownloadSpec<'_>) -> Result<(), String> {
+    // Тот же skip как в download_model: если zip уже скачан и валиден по размеру,
+    // не перекачиваем 1.8 ГБ ради повторной попытки распаковки.
+    let zip_meta = tokio::fs::metadata(spec.main_dest).await;
+    let zip_already_downloaded = spec.main_dest.extension().and_then(|s| s.to_str()) == Some("zip")
+        && match (spec.min_size, zip_meta) {
+            (Some(min), Ok(m)) if m.is_file() => m.len() >= min,
+            _ => false,
+        };
+    if zip_already_downloaded {
+        tracing::info!(
+            "zip-архив {} уже на диске и валидного размера — пропускаем загрузку",
+            spec.main_dest.display()
+        );
+    } else {
+        download_file(ctx, spec.url, spec.main_dest, 0, spec.min_size).await?;
+    }
+    // Если основной файл — .zip-архив, распаковываем сразу после скачивания.
+    // Сейчас касается только Vosk; для будущих архивных моделей сработает автоматом.
+    if spec.main_dest.extension().and_then(|s| s.to_str()) == Some("zip") {
+        extract_zip_into_model_dir(spec.main_dest, spec.model_dir, ctx.model_id, ctx.app).await?;
+    }
+    for (idx, (extra_url, rel)) in spec.extras.iter().enumerate() {
+        let extra_dest = spec.model_dir.join(rel);
+        // Для extra-файлов size-проверка не задаётся: размеры варьируются и порог в реестре пока один общий.
+        download_file(ctx, extra_url, &extra_dest, idx + 1, None).await?;
+    }
+    Ok(())
+}
+
 /// Проверяет наличие модели для активного транскрайбера и при необходимости
 /// скачивает её через `download_file()`. Прогресс эмитится через `download://progress`,
 /// после завершения — `download://complete`. Возвращает Ok(()) когда модель установлена
@@ -229,29 +375,15 @@ fn cleanup_extraction_artifacts(zip_path: &std::path::Path, model_dir: &std::pat
 /// перед перекачиванием. Это лечит ситуацию, когда `make run` был оборван и
 /// `whisper_model_load` падает с «expected N tensors, got 5».
 pub async fn ensure_active_model(transcriber_type: &str, app: &tauri::AppHandle) -> Result<(), String> {
-    use arcanaglyph_core::transcription_models;
     use tauri::Emitter;
 
     let cfg = CoreConfig::load().map_err(|e| e.to_string())?;
-    let path = match transcriber_type {
-        "vosk" => cfg.model_path.clone(),
-        "whisper" => cfg.whisper_model_path.clone(),
-        "gigaam" => cfg.gigaam_model_path.clone(),
-        "gigaam-rnnt" => cfg.gigaam_rnnt_model_path.clone(),
-        "qwen3asr" => cfg.qwen3asr_model_path.clone(),
-        _ => return Ok(()), // unknown тип — пусть engine create вернёт нормальную ошибку
+    let Some(path) = resolve_active_model_path(&cfg, transcriber_type) else {
+        return Ok(()); // unknown тип — пусть engine create вернёт нормальную ошибку
     };
 
-    // Для Whisper в реестре несколько моделей (Tiny/Small/Large) с разными размерами.
-    // Выбираем ту, чей `default_filename` совпадает с именем файла в `whisper_model_path` —
-    // иначе валидация может ошибочно посчитать Tiny-файл (~75 МБ) повреждённым по порогу
-    // Small (~400 МБ) или наоборот. Для остальных движков — одна модель на тип.
     let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    let model = if transcriber_type == "whisper" && !filename.is_empty() {
-        transcription_models::find_by_type_and_filename(transcriber_type, filename)
-    } else {
-        transcription_models::find_by_transcriber_type(transcriber_type)
-    };
+    let model = select_registry_model(transcriber_type, filename);
     let min_size = model.and_then(|m| m.expected_min_size_bytes);
 
     if is_model_installed(&path, transcriber_type, min_size) {
@@ -266,63 +398,98 @@ pub async fn ensure_active_model(transcriber_type: &str, app: &tauri::AppHandle)
         model.size
     );
 
-    // Whisper: путь — это файл (whisper_model_path указывает прямо на .bin).
-    // Остальные движки: путь — это директория с файлами модели; имя главного файла
-    // берём из последнего сегмента URL (а не из `default_filename` — это имя ДИРЕКТОРИИ,
-    // не файла; смешение сломало бы сохранение скачанной модели).
-    let main_dest: std::path::PathBuf = if transcriber_type == "whisper" {
-        path.clone()
-    } else {
-        let _ = tokio::fs::create_dir_all(&path).await;
-        let main_filename = model.download_url.rsplit('/').next().unwrap_or("model.bin");
-        path.join(main_filename)
+    let main_dest = prepare_main_dest(transcriber_type, &path, model).await;
+    remove_corrupted_main_file(&main_dest, min_size).await;
+
+    let ctx = DownloadCtx {
+        app,
+        model_id: model.id,
+        total_files: 1 + model.extra_files.unwrap_or(&[]).len(),
     };
-
-    // Чистим повреждённый главный файл (меньше порога), чтобы не путать atomic-rename.
-    let main_meta = tokio::fs::metadata(&main_dest).await;
-    if let (Some(min), Ok(meta)) = (min_size, main_meta)
-        && meta.is_file()
-        && meta.len() < min
-    {
-        tracing::warn!(
-            "Файл модели повреждён (размер {} байт, минимум {}) — будет перекачан: {}",
-            meta.len(),
-            min,
-            main_dest.display()
-        );
-        let _ = tokio::fs::remove_file(&main_dest).await;
-    }
-
-    let extras = model.extra_files.unwrap_or(&[]);
-    let total_files = 1 + extras.len();
-    // Тот же skip как в download_model: если zip уже скачан и валиден по размеру,
-    // не перекачиваем 1.8 ГБ ради повторной попытки распаковки.
-    let zip_meta = tokio::fs::metadata(&main_dest).await;
-    let zip_already_downloaded = main_dest.extension().and_then(|s| s.to_str()) == Some("zip")
-        && match (min_size, zip_meta) {
-            (Some(min), Ok(m)) if m.is_file() => m.len() >= min,
-            _ => false,
-        };
-    if zip_already_downloaded {
-        tracing::info!(
-            "zip-архив {} уже на диске и валидного размера — пропускаем загрузку",
-            main_dest.display()
-        );
-    } else {
-        download_file(model.download_url, &main_dest, model.id, 0, total_files, min_size, app).await?;
-    }
-    // Если основной файл — .zip-архив, распаковываем сразу после скачивания.
-    // Сейчас касается только Vosk; для будущих архивных моделей сработает автоматом.
-    if main_dest.extension().and_then(|s| s.to_str()) == Some("zip") {
-        extract_zip_into_model_dir(&main_dest, &path, model.id, app).await?;
-    }
-    for (idx, (url, rel)) in extras.iter().enumerate() {
-        let extra_dest = path.join(rel);
-        // Для extra-файлов size-проверка не задаётся: размеры варьируются и порог в реестре пока один общий.
-        download_file(url, &extra_dest, model.id, idx + 1, total_files, None, app).await?;
-    }
+    let spec = ModelDownloadSpec {
+        url: model.download_url,
+        main_dest: &main_dest,
+        model_dir: &path,
+        extras: model.extra_files.unwrap_or(&[]),
+        min_size,
+    };
+    download_model_files(&ctx, &spec).await?;
 
     let _ = app.emit("download://complete", serde_json::json!({ "model_id": model.id }));
     tracing::info!("Модель '{}' успешно установлена", model.display_name);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arcanaglyph_core::transcription_models;
+    use std::path::PathBuf;
+
+    #[test]
+    fn resolve_active_model_path_maps_each_engine() {
+        let cfg = CoreConfig {
+            model_path: PathBuf::from("/m/vosk"),
+            whisper_model_path: PathBuf::from("/m/whisper.bin"),
+            gigaam_model_path: PathBuf::from("/m/gigaam"),
+            gigaam_rnnt_model_path: PathBuf::from("/m/rnnt"),
+            qwen3asr_model_path: PathBuf::from("/m/qwen"),
+            ..Default::default()
+        };
+        assert_eq!(resolve_active_model_path(&cfg, "vosk"), Some(PathBuf::from("/m/vosk")));
+        assert_eq!(
+            resolve_active_model_path(&cfg, "whisper"),
+            Some(PathBuf::from("/m/whisper.bin"))
+        );
+        assert_eq!(
+            resolve_active_model_path(&cfg, "gigaam"),
+            Some(PathBuf::from("/m/gigaam"))
+        );
+        assert_eq!(
+            resolve_active_model_path(&cfg, "gigaam-rnnt"),
+            Some(PathBuf::from("/m/rnnt"))
+        );
+        assert_eq!(
+            resolve_active_model_path(&cfg, "qwen3asr"),
+            Some(PathBuf::from("/m/qwen"))
+        );
+    }
+
+    #[test]
+    fn resolve_active_model_path_unknown_is_none() {
+        assert_eq!(
+            resolve_active_model_path(&CoreConfig::default(), "totally-unknown"),
+            None
+        );
+    }
+
+    #[test]
+    fn select_registry_model_non_whisper_by_type() {
+        // Не-Whisper: одна модель на тип, filename игнорируется.
+        let m = select_registry_model("gigaam", "");
+        assert!(m.is_some(), "gigaam модель должна быть в реестре");
+        assert_eq!(m.unwrap().transcriber_type, "gigaam");
+    }
+
+    // Whisper-модели за cargo-feature — в тестовой сборке их может не быть в реестре,
+    // поэтому проверяем не наличие модели, а КОРРЕКТНОСТЬ ДЕЛЕГАЦИИ (какую ветку выбирает
+    // select_registry_model). Инвариант держится и когда обе стороны дают None.
+    #[test]
+    fn select_registry_model_whisper_with_filename_delegates_by_file() {
+        let expected = transcription_models::find_by_type_and_filename("whisper", "ggml-large-v3-turbo.bin");
+        let got = select_registry_model("whisper", "ggml-large-v3-turbo.bin");
+        assert_eq!(got.map(|m| m.id), expected.map(|m| m.id));
+    }
+
+    #[test]
+    fn select_registry_model_whisper_empty_filename_delegates_by_type() {
+        let expected = transcription_models::find_by_transcriber_type("whisper");
+        let got = select_registry_model("whisper", "");
+        assert_eq!(got.map(|m| m.id), expected.map(|m| m.id));
+    }
+
+    #[test]
+    fn select_registry_model_unknown_is_none() {
+        assert!(select_registry_model("totally-unknown", "").is_none());
+    }
 }

@@ -30,7 +30,7 @@ export async function updateModelBadge(): Promise<void> {
     if (modelName) {
       badgeEl.textContent = MODEL_SHORT_NAMES[modelName] || modelName;
     }
-  } catch (_) {
+  } catch {
     // тихо — нет engine ещё или конфиг не загрузился
   }
 }

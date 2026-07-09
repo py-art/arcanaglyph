@@ -1,0 +1,24 @@
+[meta]
+name = "whisper-abort-callback-ub"
+schema_version = 1
+description = "Advisory: whisper.rs — НЕ ставить set_abort_callback_safe (UB на Tremont), флаги через CMAKE_C_FLAGS_RELEASE"
+
+[scope]
+path_globs = ["crates/arcanaglyph-core/src/transcriber/whisper.rs"]
+
+[rule]
+type = "advisory"
+on_event = "before_edit"
+severity = "warn"
+message = """
+🔊 whisper.rs — интеграция whisper.cpp. Два выстраданных инварианта (каждый стоил отладки):
+
+- ⛔ НЕ вызывать `set_abort_callback_safe` (и не ставить abort-callback вручную) —
+  на CPU семейства Tremont (N5095 и др. без AVX) это даёт UB / краш.
+  См. memory whisper-abort-callback-bug.
+- ⚙️ Флаги компиляции whisper.cpp пробрасывать ТОЛЬКО через `CMAKE_C_FLAGS_RELEASE`,
+  а НЕ через env `WHISPER_*` / `GGML_*` — последние молча игнорируются.
+  См. memory whisper-cpp-compile-flags.
+
+Меняешь тут что-то около инференса/сборки — сверься с обоими memory перед правкой.
+"""

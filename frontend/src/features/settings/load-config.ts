@@ -28,23 +28,10 @@ interface ResetUiCallbacks {
   resetSaveButtons: () => void;
 }
 
-/** Загрузка настроек из бэкенда. */
-export async function loadSettings(callbacks: ResetUiCallbacks): Promise<void> {
-  const cfg = await invoke<any>('load_config');
-  const lang = cfg.language || i18n.getLanguage();
-  setCustomSelectValue('s-language', lang);
-  await applyEngineAvailability();
-  // CPU-фичи нужны для warning-toast'а при выборе тяжёлой модели; берём один раз.
-  if (!settingsState.getCpuFeatures()) {
-    try {
-      const f = await invoke<CpuFeatures>('get_cpu_features');
-      settingsState.setCpuFeatures(f);
-    } catch (_) {
-      settingsState.setCpuFeatures({ avx: true, avx2: true, fma: true });
-    }
-  }
-  // Нормализуем типы чтобы совпадали с getFormConfig()
-  const snapshot: SettingsConfigSnapshot = {
+/** Нормализует ответ backend в snapshot формы (типы/дефолты совпадают с getFormConfig()).
+ *  Чистая функция — тестируема без DOM. */
+export function buildSnapshot(cfg: any): SettingsConfigSnapshot {
+  return {
     transcriber: cfg.transcriber,
     model_path: cfg.model_path,
     whisper_model_path: cfg.whisper_model_path,
@@ -73,17 +60,31 @@ export async function loadSettings(callbacks: ResetUiCallbacks): Promise<void> {
     models_base_dir: cfg.models_base_dir || '',
     preload_models: normalizePreload(cfg.preload_models || [], cfg.transcriber),
   };
-  settingsState.setOriginal(snapshot);
+}
 
-  // Whisper расщеплён в dropdown'e на Tiny / Large V3 Turbo. Конфиг хранит
-  // обобщённый transcriber="whisper" + whisper_model_path, поэтому при загрузке
-  // определяем нужный пункт по имени файла модели.
-  let dropdownValue = cfg.transcriber;
-  if (cfg.transcriber === 'whisper') {
-    const path = (cfg.whisper_model_path || '').toLowerCase();
-    dropdownValue = path.includes('tiny') ? 'whisper-tiny' : 'whisper-large';
+/** Пункт dropdown'а транскрайбера. Whisper расщеплён в UI на Tiny / Large V3 Turbo —
+ *  конфиг хранит обобщённый transcriber="whisper" + whisper_model_path, поэтому нужный
+ *  пункт определяем по имени файла модели. Чистая функция — тестируема без DOM. */
+export function resolveTranscriberDropdown(cfg: any): string {
+  if (cfg.transcriber !== 'whisper') return cfg.transcriber;
+  const path = (cfg.whisper_model_path || '').toLowerCase();
+  return path.includes('tiny') ? 'whisper-tiny' : 'whisper-large';
+}
+
+/** Разовая загрузка CPU-фич (нужны для warning-toast'а при выборе тяжёлой модели). */
+async function loadCpuFeaturesOnce(): Promise<void> {
+  if (settingsState.getCpuFeatures()) return;
+  try {
+    const f = await invoke<CpuFeatures>('get_cpu_features');
+    settingsState.setCpuFeatures(f);
+  } catch {
+    settingsState.setCpuFeatures({ avx: true, avx2: true, fma: true });
   }
-  setCustomSelectValue('s-transcriber', dropdownValue);
+}
+
+/** Заполняет основные поля формы: движок, аудио, хоткеи, VAD, флаги. */
+function fillGeneralFields(cfg: any): void {
+  setCustomSelectValue('s-transcriber', resolveTranscriberDropdown(cfg));
   (document.getElementById('s-models-base-dir') as HTMLInputElement).value = cfg.models_base_dir || '';
   setCustomSelectValue('s-sample-rate', String(cfg.sample_rate));
   (document.getElementById('s-max-record') as HTMLInputElement).value = String(cfg.max_record_secs);
@@ -94,14 +95,20 @@ export async function loadSettings(callbacks: ResetUiCallbacks): Promise<void> {
   document.getElementById('s-vad-enabled')!.classList.toggle('on', cfg.vad_enabled !== false);
   (document.getElementById('s-vad-silence') as HTMLInputElement).value = String(cfg.vad_silence_secs || 15);
   document.getElementById('s-remove-fillers')!.classList.toggle('on', cfg.remove_fillers !== false);
-  // Заполнение mic_gain через async refresh (берёт активное устройство и его override)
-  await refreshMicDevice(cfg);
+}
+
+/** Заполняет поля приватности, автозапуска, виджета и трея. */
+function fillPrivacyAndWidgetFields(cfg: any): void {
   setCustomSelectValue('s-retention', String(cfg.retention_hours || 0));
   document.getElementById('s-autostart')!.classList.toggle('on', cfg.autostart || false);
   document.getElementById('s-start-minimized')!.classList.toggle('on', cfg.start_minimized || false);
   document.getElementById('s-show-widget')!.classList.toggle('on', cfg.show_widget !== false);
   setWidgetPositionPicker(cfg.widget_position || 'bottom-center');
   document.getElementById('s-show-tray')!.classList.toggle('on', cfg.show_tray !== false);
+}
+
+/** Заполняет preload-тумблеры движков (активный движок всегда включён). */
+function fillPreloadToggles(cfg: any): void {
   const preload: string[] = cfg.preload_models || [];
   document.getElementById('s-preload-vosk')!.classList.toggle('on', preload.includes('vosk') || cfg.transcriber === 'vosk');
   document.getElementById('s-preload-whisper')!.classList.toggle('on', preload.includes('whisper') || cfg.transcriber === 'whisper');
@@ -109,6 +116,22 @@ export async function loadSettings(callbacks: ResetUiCallbacks): Promise<void> {
   document.getElementById('s-preload-gigaam-rnnt')!.classList.toggle('on', preload.includes('gigaam-rnnt') || cfg.transcriber === 'gigaam-rnnt');
   document.getElementById('s-preload-qwen3asr')!.classList.toggle('on', preload.includes('qwen3asr') || cfg.transcriber === 'qwen3asr');
   updatePreloadLocks(cfg.transcriber);
+}
+
+/** Загрузка настроек из бэкенда. */
+export async function loadSettings(callbacks: ResetUiCallbacks): Promise<void> {
+  const cfg = await invoke<any>('load_config');
+  setCustomSelectValue('s-language', cfg.language || i18n.getLanguage());
+  await applyEngineAvailability();
+  await loadCpuFeaturesOnce();
+
+  settingsState.setOriginal(buildSnapshot(cfg));
+
+  fillGeneralFields(cfg);
+  // Заполнение mic_gain через async refresh (берёт активное устройство и его override)
+  await refreshMicDevice(cfg);
+  fillPrivacyAndWidgetFields(cfg);
+  fillPreloadToggles(cfg);
 
   callbacks.resetSaveButtons();
 

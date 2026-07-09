@@ -116,14 +116,24 @@ impl HistoryDB {
         .ok()
     }
 
+    /// Выполняет INSERT/REPLACE под блокировкой соединения, маппя ошибку в
+    /// `Database` с контекстом `err_ctx`. Возвращает rowid последней вставленной
+    /// строки (для upsert-настроек не используется — вызывающий игнорирует).
+    /// Единый путь вместо повторения `lock_conn + execute + map_err` в каждом методе.
+    fn execute_write(&self, sql: &str, params: &[&dyn rusqlite::ToSql], err_ctx: &str) -> Result<i64, ArcanaError> {
+        let conn = self.lock_conn()?;
+        conn.execute(sql, params)
+            .map_err(|e| ArcanaError::Database(format!("{}: {}", err_ctx, e)))?;
+        Ok(conn.last_insert_rowid())
+    }
+
     /// Установить настройку
     pub fn set_setting(&self, key: &str, value: &str) -> Result<(), ArcanaError> {
-        let conn = self.lock_conn()?;
-        conn.execute(
+        self.execute_write(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
             rusqlite::params![key, value],
-        )
-        .map_err(|e| ArcanaError::Database(format!("Ошибка записи настройки: {}", e)))?;
+            "Ошибка записи настройки",
+        )?;
         Ok(())
     }
 
@@ -141,15 +151,16 @@ impl HistoryDB {
         Ok(result)
     }
 
+    /// Вставляет новую запись (recording) в историю: путь к аудиофайлу, метку времени
+    /// (текущий Unix-timestamp) и длительность в секундах. Возвращает `id` (rowid) созданной
+    /// строки — для последующей привязки транскрибаций через `add_transcription`.
     pub fn add_recording(&self, audio_path: &str, duration_secs: u32) -> Result<i64, ArcanaError> {
-        let conn = self.lock_conn()?;
         let timestamp = chrono::Utc::now().timestamp();
-        conn.execute(
+        self.execute_write(
             "INSERT INTO recordings (audio_path, timestamp, duration_secs) VALUES (?1, ?2, ?3)",
             rusqlite::params![audio_path, timestamp, duration_secs],
+            "Ошибка добавления записи",
         )
-        .map_err(|e| ArcanaError::Database(format!("Ошибка добавления записи: {}", e)))?;
-        Ok(conn.last_insert_rowid())
     }
 
     /// Добавляет результат транскрибации
@@ -160,14 +171,12 @@ impl HistoryDB {
         model_name: &str,
         transcriber_type: &str,
     ) -> Result<i64, ArcanaError> {
-        let conn = self.lock_conn()?;
         let created_at = chrono::Utc::now().timestamp();
-        conn.execute(
+        self.execute_write(
             "INSERT INTO transcriptions (recording_id, text, model_name, transcriber_type, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
             rusqlite::params![recording_id, text, model_name, transcriber_type, created_at],
+            "Ошибка добавления транскрибации",
         )
-        .map_err(|e| ArcanaError::Database(format!("Ошибка добавления транскрибации: {}", e)))?;
-        Ok(conn.last_insert_rowid())
     }
 
     /// Запрос истории с пагинацией и фильтром по времени
@@ -392,6 +401,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let db = HistoryDB::new(&dir.join("history.db"), dir.join("audio")).expect("создание БД истории");
         (db, dir)
+    }
+
+    #[test]
+    fn test_audio_cache_path_returns_configured_dir() {
+        // audio_cache_path() отдаёт директорию, переданную в HistoryDB::new.
+        let (db, dir) = temp_db("audio_cache_path");
+        assert_eq!(db.audio_cache_path(), dir.join("audio"));
     }
 
     #[test]

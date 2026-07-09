@@ -9,7 +9,7 @@ use crate::setup::bootstrap::set_autostart;
 use crate::tray;
 use arcanaglyph_core::CoreConfig;
 use arcanaglyph_core::config::TranscriberType;
-use arcanaglyph_core::history::HistoryDB;
+use arcanaglyph_core::history::{HistoryDB, HistoryEntry};
 use std::sync::Arc;
 use tauri::Manager;
 
@@ -17,6 +17,27 @@ use tauri::Manager;
 /// байт игнорируется (`chunks_exact`). Чистая функция — вынесена для тестируемости.
 fn decode_pcm_i16le(raw: &[u8]) -> Vec<i16> {
     raw.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect()
+}
+
+/// Находит запись истории по `recording_id` (среди первых `limit`) и проверяет
+/// наличие аудиофайла на диске. `missing_msg` — текст ошибки, если аудио удалён.
+/// Общий пролог `retranscribe` / `get_audio_data`; возвращает owned-запись
+/// (`into_iter` без клона).
+fn find_recording_with_audio(
+    db: &HistoryDB,
+    recording_id: i64,
+    limit: u32,
+    missing_msg: &str,
+) -> Result<HistoryEntry, String> {
+    let entries = db.query(0, limit, 0).map_err(|e| e.to_string())?.0;
+    let entry = entries
+        .into_iter()
+        .find(|e| e.recording.id == recording_id)
+        .ok_or("Запись не найдена")?;
+    if !entry.audio_exists {
+        return Err(missing_msg.to_string());
+    }
+    Ok(entry)
 }
 
 /// Tauri-команда: загрузить текущую конфигурацию
@@ -54,8 +75,8 @@ pub fn save_config(
             &config.widget_position,
             screen.width as f64 / scale,
             screen.height as f64 / scale,
-            220.0,
-            40.0,
+            arcanaglyph_core::config::WIDGET_WIDTH,
+            arcanaglyph_core::config::WIDGET_HEIGHT,
         );
         let _ = w.set_position(tauri::LogicalPosition::new(x, y));
     }
@@ -167,6 +188,31 @@ pub fn export_history(format: String, db: tauri::State<'_, Arc<HistoryDB>>) -> R
     Ok(path.to_string_lossy().to_string())
 }
 
+/// Загружает PCM-семплы записи с диска: находит запись (с проверкой наличия аудио
+/// на диске), читает файл и декодирует s16le mono. Вынесено из `retranscribe`.
+async fn load_recording_samples(db: &HistoryDB, recording_id: i64) -> Result<Vec<i16>, String> {
+    let entry = find_recording_with_audio(
+        db,
+        recording_id,
+        1000,
+        "Аудиофайл удалён — повторная транскрибация невозможна",
+    )?;
+    let raw_bytes = tokio::fs::read(&entry.recording.audio_path)
+        .await
+        .map_err(|e| format!("Не удалось прочитать аудио: {}", e))?;
+    Ok(decode_pcm_i16le(&raw_bytes))
+}
+
+/// Проверяет, что у записи ещё нет транскрибации моделью `model_name`. Вынесено
+/// из `retranscribe` — убирает ветвление get_transcriptions + any из оркестратора.
+fn ensure_not_duplicate(db: &HistoryDB, recording_id: i64, model_name: &str) -> Result<(), String> {
+    let existing = db.get_transcriptions(recording_id).map_err(|e| e.to_string())?;
+    if existing.iter().any(|t| t.model_name == model_name) {
+        return Err(format!("Запись уже распознана моделью {}", model_name));
+    }
+    Ok(())
+}
+
 /// Tauri-команда: повторно транскрибировать запись другой моделью.
 ///
 /// `allow`'ы нужны для сборок с уменьшенным набором features (например `--no-default-features`),
@@ -191,36 +237,17 @@ pub async fn retranscribe(
         ));
     }
 
-    // Получаем запись из БД
-    let entries = db.query(0, 1000, 0).map_err(|e| e.to_string())?.0;
-    let entry = entries
-        .iter()
-        .find(|e| e.recording.id == recording_id)
-        .ok_or("Запись не найдена")?;
-
-    if !entry.audio_exists {
-        return Err("Аудиофайл удалён — повторная транскрибация невозможна".to_string());
-    }
-
-    let audio_path = &entry.recording.audio_path;
+    // Загружаем PCM-семплы записи (find + read + decode вынесены в helper).
+    let samples = load_recording_samples(&db, recording_id).await?;
     let config = arcanaglyph_core::CoreConfig::load().map_err(|e| e.to_string())?;
-
-    // Загружаем аудио (PCM s16le mono)
-    let raw_bytes = tokio::fs::read(audio_path)
-        .await
-        .map_err(|e| format!("Не удалось прочитать аудио: {}", e))?;
-    let samples = decode_pcm_i16le(&raw_bytes);
 
     // Имя модели — через единый резолвер в core (без дубля match по типам).
     let t_type =
         TranscriberType::from_id(&transcriber_type).ok_or_else(|| "Неизвестный тип транскрайбера".to_string())?;
     let model_name = config.model_name_for(&t_type);
 
-    // Проверяем, нет ли уже транскрибации этой моделью
-    let existing = db.get_transcriptions(recording_id).map_err(|e| e.to_string())?;
-    if existing.iter().any(|t| t.model_name == model_name) {
-        return Err(format!("Запись уже распознана моделью {}", model_name));
-    }
+    // Проверяем, нет ли уже транскрибации этой моделью.
+    ensure_not_duplicate(&db, recording_id, &model_name)?;
 
     // Создаём транскрайбер через единую фабрику в core (без дубля cfg-match).
     // sr во всех движках = config.sample_rate.
@@ -249,15 +276,7 @@ pub async fn retranscribe(
 pub fn get_audio_data(recording_id: i64, db: tauri::State<'_, Arc<HistoryDB>>) -> Result<serde_json::Value, String> {
     use base64::Engine;
 
-    let entries = db.query(0, 100000, 0).map_err(|e| e.to_string())?.0;
-    let entry = entries
-        .iter()
-        .find(|e| e.recording.id == recording_id)
-        .ok_or("Запись не найдена")?;
-
-    if !entry.audio_exists {
-        return Err("Аудиофайл удалён".to_string());
-    }
+    let entry = find_recording_with_audio(&db, recording_id, 100000, "Аудиофайл удалён")?;
 
     let raw_bytes =
         std::fs::read(&entry.recording.audio_path).map_err(|e| format!("Не удалось прочитать аудио: {}", e))?;

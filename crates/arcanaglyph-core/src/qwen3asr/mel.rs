@@ -49,6 +49,56 @@ pub fn compute_mel_spectrogram(samples: &[f32]) -> Array2<f32> {
     mel_spec
 }
 
+// Slaney (non-HTK) mel scale: линейно до 1000 Гц, лог-шкала выше.
+const SLANEY_F_SP: f32 = 200.0 / 3.0;
+const SLANEY_MIN_LOG_HZ: f32 = 1000.0;
+
+/// Slaney mel scale: Hz → mel. Чистая функция (тестируется roundtrip'ом).
+fn slaney_hz_to_mel(hz: f32) -> f32 {
+    let min_log_mel = SLANEY_MIN_LOG_HZ / SLANEY_F_SP;
+    let logstep = (6.4f32).ln() / 27.0;
+    if hz < SLANEY_MIN_LOG_HZ {
+        hz / SLANEY_F_SP
+    } else {
+        min_log_mel + (hz / SLANEY_MIN_LOG_HZ).ln() / logstep
+    }
+}
+
+/// Обратное `slaney_hz_to_mel`: mel → Hz. Чистая функция.
+fn slaney_mel_to_hz(mel: f32) -> f32 {
+    let min_log_mel = SLANEY_MIN_LOG_HZ / SLANEY_F_SP;
+    let logstep = (6.4f32).ln() / 27.0;
+    if mel < min_log_mel {
+        mel * SLANEY_F_SP
+    } else {
+        SLANEY_MIN_LOG_HZ * ((mel - min_log_mel) * logstep).exp()
+    }
+}
+
+/// Заполняет одну mel-строку filterbank треугольным окном [left, center, right]
+/// с Slaney-нормализацией (деление на ширину полосы). Вынесено из цикла
+/// `mel_filterbank_slaney` — убирает вложенность и снижает сложность.
+fn fill_triangular_mel_filter(
+    mut row: ndarray::ArrayViewMut1<f32>,
+    fft_freqs: &Array1<f32>,
+    left: f32,
+    center: f32,
+    right: f32,
+) {
+    for (bin, &freq) in fft_freqs.iter().enumerate() {
+        if freq >= left && freq <= center && center > left {
+            row[bin] = (freq - left) / (center - left);
+        } else if freq > center && freq <= right && right > center {
+            row[bin] = (right - freq) / (right - center);
+        }
+    }
+    // Slaney normalization: делим на ширину полосы.
+    let enorm = 2.0 / (right - left);
+    for v in row.iter_mut() {
+        *v *= enorm;
+    }
+}
+
 /// Slaney mel filterbank: [128, 201]
 /// fmin=0, fmax=8000, norm="slaney", htk=false
 fn mel_filterbank_slaney() -> Array2<f32> {
@@ -56,37 +106,14 @@ fn mel_filterbank_slaney() -> Array2<f32> {
     let fmin = 0.0f32;
     let fmax = (SAMPLE_RATE / 2) as f32; // 8000
 
-    // Slaney (non-HTK) mel scale
-    let f_sp = 200.0 / 3.0;
-    let min_log_hz = 1000.0f32;
-    let min_log_mel = min_log_hz / f_sp;
-    let logstep = (6.4f32).ln() / 27.0;
-
-    let hz_to_mel = |hz: f32| -> f32 {
-        if hz < min_log_hz {
-            hz / f_sp
-        } else {
-            min_log_mel + (hz / min_log_hz).ln() / logstep
-        }
-    };
-
-    let mel_to_hz = |mel: f32| -> f32 {
-        if mel < min_log_mel {
-            mel * f_sp
-        } else {
-            min_log_hz * ((mel - min_log_mel) * logstep).exp()
-        }
-    };
-
-    let mel_min = hz_to_mel(fmin);
-    let mel_max = hz_to_mel(fmax);
+    let mel_min = slaney_hz_to_mel(fmin);
+    let mel_max = slaney_hz_to_mel(fmax);
 
     // n_mels + 2 точки
     let mel_points: Vec<f32> = (0..=N_MELS + 1)
         .map(|i| mel_min + (mel_max - mel_min) * i as f32 / (N_MELS + 1) as f32)
         .collect();
-
-    let hz_points: Vec<f32> = mel_points.iter().map(|&m| mel_to_hz(m)).collect();
+    let hz_points: Vec<f32> = mel_points.iter().map(|&m| slaney_mel_to_hz(m)).collect();
 
     // FFT bin frequencies
     let fft_freqs: Array1<f32> = Array1::from_vec(
@@ -96,28 +123,15 @@ fn mel_filterbank_slaney() -> Array2<f32> {
     );
 
     let mut filterbank = Array2::zeros((N_MELS, n_bins));
-
     for mel in 0..N_MELS {
-        let left = hz_points[mel];
-        let center = hz_points[mel + 1];
-        let right = hz_points[mel + 2];
-
-        for bin in 0..n_bins {
-            let freq = fft_freqs[bin];
-            if freq >= left && freq <= center && center > left {
-                filterbank[[mel, bin]] = (freq - left) / (center - left);
-            } else if freq > center && freq <= right && right > center {
-                filterbank[[mel, bin]] = (right - freq) / (right - center);
-            }
-        }
-
-        // Slaney normalization: divide by bandwidth
-        let enorm = 2.0 / (hz_points[mel + 2] - hz_points[mel]);
-        for bin in 0..n_bins {
-            filterbank[[mel, bin]] *= enorm;
-        }
+        fill_triangular_mel_filter(
+            filterbank.row_mut(mel),
+            &fft_freqs,
+            hz_points[mel],
+            hz_points[mel + 1],
+            hz_points[mel + 2],
+        );
     }
-
     filterbank
 }
 
@@ -156,5 +170,15 @@ mod tests {
         assert_eq!(fb.shape(), &[128, 201]);
         // Все значения >= 0
         assert!(fb.iter().all(|&v| v >= 0.0));
+    }
+
+    #[test]
+    fn test_slaney_mel_hz_roundtrip() {
+        // Hz → mel → Hz возвращает исходную частоту на обеих ветвях шкалы
+        // (линейной < 1000 Гц и логарифмической выше).
+        for &hz in &[0.0f32, 250.0, 999.0, 1000.0, 4000.0, 8000.0] {
+            let back = slaney_mel_to_hz(slaney_hz_to_mel(hz));
+            assert!((back - hz).abs() < 1.0, "roundtrip {hz} → {back}");
+        }
     }
 }

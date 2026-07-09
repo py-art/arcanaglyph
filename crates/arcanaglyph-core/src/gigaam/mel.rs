@@ -44,6 +44,23 @@ pub fn compute_mel_spectrogram(samples: &[f32]) -> Array3<f32> {
     mel_spec.insert_axis(ndarray::Axis(0))
 }
 
+/// Общий вход GigaAM для обоих backend'ов (CTC и RNN-T): обрезка тишины +
+/// i16→f32 + resample до 16 кГц + лог-mel `[1, 64, T]`. Возвращает `None`, если
+/// аудио короче одного окна STFT или mel вышел пустым — тогда `transcribe`
+/// отдаёт `Ok(String::new())`. Пролог у CTC и RNN-T идентичен; сам инференс
+/// (одна CTC-сессия vs encoder + авторегрессивный RNN-T декод) — намеренно разный.
+pub(crate) fn prepare_mel_input(samples: &[i16], sample_rate: u32) -> Option<Array3<f32>> {
+    let audio_f32 = dsp::preprocess_to_f32_16k(samples, sample_rate);
+    if audio_f32.len() < WIN_LENGTH {
+        return None;
+    }
+    let mel_spec = compute_mel_spectrogram(&audio_f32);
+    if mel_spec.shape()[2] == 0 {
+        return None;
+    }
+    Some(mel_spec)
+}
+
 /// HTK mel filterbank: [n_mels, n_fft/2 + 1]
 fn mel_filterbank() -> Array2<f32> {
     let n_bins = N_FFT / 2 + 1; // 161
@@ -139,6 +156,23 @@ mod tests {
         let samples = vec![0.0f32; 100];
         let spec = compute_mel_spectrogram(&samples);
         assert_eq!(spec.shape(), &[1, 64, 0]);
+    }
+
+    #[test]
+    fn test_prepare_mel_input_short_is_none() {
+        // Аудио короче одного окна STFT → None (transcribe вернёт пустую строку).
+        assert!(prepare_mel_input(&[0i16; 100], 16000).is_none());
+    }
+
+    #[test]
+    fn test_prepare_mel_input_voiced_produces_frames() {
+        // 1 с синусоиды 440 Гц при 16 кГц → Some([1, 64, T>0]).
+        let samples: Vec<i16> = (0..16000)
+            .map(|i| ((2.0 * std::f32::consts::PI * 440.0 * i as f32 / 16000.0).sin() * 8000.0) as i16)
+            .collect();
+        let mel = prepare_mel_input(&samples, 16000).expect("непустой mel для voiced-сигнала");
+        assert_eq!(mel.shape()[1], 64);
+        assert!(mel.shape()[2] > 0);
     }
 
     #[test]

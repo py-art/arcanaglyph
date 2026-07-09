@@ -49,7 +49,11 @@ pub fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(TrayToggleItem(toggle_item));
 
     let tray = TrayIconBuilder::new()
-        .icon(app.default_window_icon().unwrap().clone())
+        .icon(
+            app.default_window_icon()
+                .ok_or("default window icon not configured")?
+                .clone(),
+        )
         .tooltip("ArcanaGlyph")
         .menu(&menu)
         .on_menu_event(|app: &AppHandle, event: MenuEvent| match event.id().as_ref() {
@@ -81,11 +85,24 @@ pub fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Общий хелпер: выполнить действие над managed-состоянием трея, если оно
+/// зарегистрировано (иначе тихо пропустить). Убирает дублирование паттерна
+/// `try_state::<T>()` + действие в set_tray_text / set_tray_visible / set_tray_state.
+fn with_tray_state<T, F>(app: &AppHandle, f: F)
+where
+    T: Send + Sync + 'static,
+    F: FnOnce(tauri::State<'_, T>),
+{
+    if let Some(state) = app.try_state::<T>() {
+        f(state);
+    }
+}
+
 /// Обновляет текст toggle-пункта в меню трея
 pub fn set_tray_text(app: &AppHandle, text: &str) {
-    if let Some(item) = app.try_state::<TrayToggleItem>() {
+    with_tray_state::<TrayToggleItem, _>(app, |item| {
         let _ = item.0.set_text(text);
-    }
+    });
 }
 
 /// Состояние иконки трея
@@ -107,14 +124,16 @@ pub struct TrayCurrentState(pub std::sync::Mutex<TrayState>);
 pub fn set_tray_state(app: &AppHandle, state: TrayState) {
     // Проверяем, изменилось ли состояние
     if let Some(current) = app.try_state::<TrayCurrentState>() {
-        let mut guard = current.0.lock().unwrap();
+        // Кэш состояния трея (anti-flicker) — не критичен: при отравленном
+        // мьютексе восстанавливаем guard, а не паникуем в UI-потоке.
+        let mut guard = current.0.lock().unwrap_or_else(|e| e.into_inner());
         if *guard == state {
             return;
         }
         *guard = state;
     }
 
-    if let Some(tray) = app.try_state::<TrayIconHandle>() {
+    with_tray_state::<TrayIconHandle, _>(app, |tray| {
         let icon = match state {
             TrayState::Recording => tauri::image::Image::from_bytes(RECORDING_ICON).ok(),
             TrayState::Paused => tauri::image::Image::from_bytes(PAUSED_ICON).ok(),
@@ -123,7 +142,7 @@ pub fn set_tray_state(app: &AppHandle, state: TrayState) {
         if let Some(icon) = icon {
             let _ = tray.0.set_icon(Some(icon));
         }
-    }
+    });
 }
 
 /// Обратная совместимость: переключает запись/нет
@@ -140,7 +159,7 @@ pub fn set_tray_recording(app: &AppHandle, recording: bool) {
 
 /// Показать или скрыть иконку трея
 pub fn set_tray_visible(app: &AppHandle, visible: bool) {
-    if let Some(tray) = app.try_state::<TrayIconHandle>() {
+    with_tray_state::<TrayIconHandle, _>(app, |tray| {
         let _ = tray.0.set_visible(visible);
-    }
+    });
 }

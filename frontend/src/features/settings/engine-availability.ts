@@ -39,7 +39,7 @@ export async function applyEngineAvailability(): Promise<void> {
   try {
     compiled = await getCompiledEngines();
     models = await getModels();
-  } catch (_) { /* старая сборка без команды — все опции активны */ }
+  } catch { /* старая сборка без команды — все опции активны */ }
   if (!Array.isArray(compiled) || compiled.length === 0) return;
   const sel = document.getElementById('s-transcriber');
   if (!sel) return;

@@ -67,7 +67,7 @@ export function showPage(page: PageName): void {
   closeAllCustomSelects();
   currentPage = page;
   pageListeners.forEach(l => {
-    try { l(page); } catch (_) { /* listener errors не должны ломать nav */ }
+    try { l(page); } catch { /* listener errors не должны ломать nav */ }
   });
 }
 

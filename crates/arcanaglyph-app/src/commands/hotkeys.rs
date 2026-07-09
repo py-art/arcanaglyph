@@ -74,6 +74,29 @@ pub(crate) fn build_setxkbmap_args(layout: &str, variant: &str) -> Vec<String> {
     args
 }
 
+/// Пинок XKB на X11+GNOME: заставляем mutter пере-grab'ить keysym'ы.
+/// Без этого на свежезагруженной системе кириллические keybindings
+/// (`<Control>Cyrillic_io` для Ё) НЕ срабатывают пока пользователь
+/// не переключит раскладку хотя бы раз вручную (Super+Space).
+/// setxkbmap с теми же параметрами триггерит XKB-reload и mutter
+/// пересоздаёт grabs, включая Cyrillic_io. На не-X11 — no-op.
+#[cfg(target_os = "linux")]
+pub(crate) fn kick_xkb_on_x11() {
+    let is_x11 = std::env::var("XDG_SESSION_TYPE").map(|v| v == "x11").unwrap_or(false);
+    if is_x11 && let Ok(query) = std::process::Command::new("setxkbmap").arg("-query").output() {
+        let (layout, variant) = parse_setxkbmap_query(&String::from_utf8_lossy(&query.stdout));
+        if !layout.is_empty() {
+            let args = build_setxkbmap_args(&layout, &variant);
+            let _ = std::process::Command::new("setxkbmap").args(&args).output();
+            tracing::info!(
+                "XKB пнут (layout={}, variant={}) — mutter пере-grab'ит cyr keysym'ы",
+                layout,
+                variant
+            );
+        }
+    }
+}
+
 /// Таблица раскладочных дублей: латинская клавиша QWERTY → XKB keysym кириллицы
 /// (ЙЦУКЕН), для GNOME gsettings. Спец-клавиша `grave` (клавиша слева от 1, `/~)
 /// на русской раскладке даёт Ё; без неё keybinding `<Control>grave` не срабатывает
@@ -131,7 +154,7 @@ fn cyrillic_binding(binding: &str) -> Option<String> {
 /// Чистая функция — общий парсер для register и check_hotkey_conflict.
 #[cfg(target_os = "linux")]
 fn parse_gsettings_paths(raw: &str) -> Vec<String> {
-    if raw == "@as []" || raw.is_empty() {
+    if raw == EMPTY_GVARIANT_ARRAY || raw.is_empty() {
         return vec![];
     }
     raw.trim_matches(|c| c == '[' || c == ']')
@@ -144,17 +167,46 @@ fn parse_gsettings_paths(raw: &str) -> Vec<String> {
 /// Базовая schema custom-keybinding'а GNOME (per-path).
 #[cfg(target_os = "linux")]
 const KEYBINDING_SCHEMA: &str = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding";
+/// Бинарь gsettings — единый источник имени вызываемой команды.
+#[cfg(target_os = "linux")]
+const GSETTINGS: &str = "gsettings";
+/// Схема media-keys (для чтения/записи списка `custom-keybindings`).
+#[cfg(target_os = "linux")]
+const MEDIA_KEYS_SCHEMA: &str = "org.gnome.settings-daemon.plugins.media-keys";
+/// Ключ со списком путей пользовательских комбинаций в схеме media-keys.
+#[cfg(target_os = "linux")]
+const CUSTOM_KEYBINDINGS_KEY: &str = "custom-keybindings";
+/// Пустой GVariant-массив, который `gsettings get` печатает для пустого списка путей.
+#[cfg(target_os = "linux")]
+const EMPTY_GVARIANT_ARRAY: &str = "@as []";
 
 /// `gsettings set <schema>:<path> <key> <val>`. Ошибка только при сбое запуска
 /// процесса (не при non-zero exit) — как и было в исходном inline-замыкании.
 #[cfg(target_os = "linux")]
 fn gs_set(path: &str, key: &str, val: &str) -> Result<(), String> {
     let schema_path = format!("{}:{}", KEYBINDING_SCHEMA, path);
-    std::process::Command::new("gsettings")
+    std::process::Command::new(GSETTINGS)
         .args(["set", &schema_path, key, val])
         .output()
         .map_err(|e| format!("gsettings set {} {}: {}", key, val, e))?;
     Ok(())
+}
+
+/// `gsettings get <keybinding-schema>:/…/custom-keybindings/<slot>/ <key>`.
+/// Возвращает сырой stdout (без trim — вызыватель решает сам) или None при
+/// сбое запуска процесса. Убирает дублирование gsettings-get-блока между
+/// probe/cmd_outdated в `ensure_gnome_hotkeys`.
+#[cfg(target_os = "linux")]
+pub(crate) fn gsettings_get_keybinding(slot: &str, key: &str) -> Option<String> {
+    let schema_path = format!(
+        "{}:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/{}/",
+        KEYBINDING_SCHEMA, slot
+    );
+    std::process::Command::new(GSETTINGS)
+        .args(["get", &schema_path, key])
+        .output()
+        .ok()
+        .map(|out| String::from_utf8_lossy(&out.stdout).to_string())
 }
 
 /// Регистрирует пару слотов (латинский + кириллический дубль) одного хоткея.
@@ -261,7 +313,7 @@ fn builtin_conflict_name(text: &str, binding: &str) -> Option<String> {
 #[cfg(target_os = "linux")]
 fn scan_builtin_keybinding_schemas(binding: &str) -> Option<String> {
     for schema in &BUILTIN_KEYBINDING_SCHEMAS {
-        let Ok(out) = std::process::Command::new("gsettings")
+        let Ok(out) = std::process::Command::new(GSETTINGS)
             .args(["list-recursively", schema])
             .output()
         else {
@@ -279,16 +331,12 @@ fn scan_builtin_keybinding_schemas(binding: &str) -> Option<String> {
 /// `binding`. Ошибка только при сбое первичного `get custom-keybindings`.
 #[cfg(target_os = "linux")]
 fn scan_custom_keybinding_conflict(binding: &str) -> Result<Option<String>, String> {
-    let output = std::process::Command::new("gsettings")
-        .args([
-            "get",
-            "org.gnome.settings-daemon.plugins.media-keys",
-            "custom-keybindings",
-        ])
+    let output = std::process::Command::new(GSETTINGS)
+        .args(["get", MEDIA_KEYS_SCHEMA, CUSTOM_KEYBINDINGS_KEY])
         .output()
         .map_err(|e| e.to_string())?;
     let paths_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if paths_str == "@as []" || paths_str.is_empty() {
+    if paths_str == EMPTY_GVARIANT_ARRAY || paths_str.is_empty() {
         return Ok(None);
     }
     for path in parse_gsettings_paths(&paths_str) {
@@ -308,7 +356,7 @@ fn scan_custom_keybinding_conflict(binding: &str) -> Result<Option<String>, Stri
 #[cfg(target_os = "linux")]
 fn custom_path_conflict_name(path: &str, binding: &str) -> Option<String> {
     let schema_path = format!("{}:{}", KEYBINDING_SCHEMA, path);
-    let out = std::process::Command::new("gsettings")
+    let out = std::process::Command::new(GSETTINGS)
         .args(["get", &schema_path, "binding"])
         .output()
         .ok()?;
@@ -316,7 +364,7 @@ fn custom_path_conflict_name(path: &str, binding: &str) -> Option<String> {
     if existing != binding {
         return None;
     }
-    let name = std::process::Command::new("gsettings")
+    let name = std::process::Command::new(GSETTINGS)
         .args(["get", &schema_path, "name"])
         .output()
         .map(|o| unquote_gsettings_value(&String::from_utf8_lossy(&o.stdout)))
@@ -340,12 +388,8 @@ pub fn register_gnome_hotkeys(hotkey_trigger: String, hotkey_pause: String) -> R
 #[cfg(target_os = "linux")]
 fn register_gnome_hotkeys_linux(hotkey_trigger: String, hotkey_pause: String) -> Result<(), String> {
     // Получаем текущий список custom keybindings
-    let output = std::process::Command::new("gsettings")
-        .args([
-            "get",
-            "org.gnome.settings-daemon.plugins.media-keys",
-            "custom-keybindings",
-        ])
+    let output = std::process::Command::new(GSETTINGS)
+        .args(["get", MEDIA_KEYS_SCHEMA, CUSTOM_KEYBINDINGS_KEY])
         .output()
         .map_err(|e| format!("Не удалось вызвать gsettings: {}", e))?;
     let current = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -396,13 +440,8 @@ fn register_gnome_hotkeys_linux(hotkey_trigger: String, hotkey_pause: String) ->
         "[{}]",
         paths.iter().map(|p| format!("'{}'", p)).collect::<Vec<_>>().join(", ")
     );
-    std::process::Command::new("gsettings")
-        .args([
-            "set",
-            "org.gnome.settings-daemon.plugins.media-keys",
-            "custom-keybindings",
-            &paths_str,
-        ])
+    std::process::Command::new(GSETTINGS)
+        .args(["set", MEDIA_KEYS_SCHEMA, CUSTOM_KEYBINDINGS_KEY, &paths_str])
         .output()
         .map_err(|e| format!("Не удалось обновить список keybindings: {}", e))?;
 

@@ -114,7 +114,8 @@ Cargo workspace из двух крейтов:
 
 Текущий список исключений: `CLAUDE.md`, `.gitlab-ci.yml`, `.markdownlint.yaml`,
 `.taplo.toml`, `rustfmt.toml`, `Makefile`, `NOTE.md`, `Roadmap.md`, `README.public.md`,
-`.env.example`, `INBOX.md`, `.arcanacodex-arch.toml`, `scripts/`, `dev-notes/`.
+`.env.example`, `INBOX.md`, `.arcanacodex.toml`, `.arcanacodex/`, `scripts/`,
+`dev-notes/`, `docs/refactoring/`, `.claude/commands/`.
 
 ## Конвенции
 
@@ -186,10 +187,10 @@ sudo apt install wl-clipboard
 - Whisper: `models/ggml-large-v3-turbo.bin` (HuggingFace ggerganov/whisper.cpp)
 - GigaAM v3: `models/gigaam-v3-e2e-ctc/` (istupakov/gigaam-v3-onnx)
 
-<!-- arcanacodex:rules:begin v=0.278.6 -->
+<!-- arcanacodex:rules:begin v=0.454.0 -->
 ## ArcanaCodex MCP — highest-priority rule in this file
 
-> _Auto-managed by `arcanacodex project install` (v0.278.6, 2026-06-17T19:14:10Z)._
+> _Auto-managed by `arcanacodex project install` (v0.454.0, 2026-07-09T04:01:31Z)._
 > _Не редактировать руками — изменения затрутся при следующем
 > `arcanacodex project update`. Чтобы удалить — `arcanacodex project uninstall <path>`._
 
@@ -217,6 +218,11 @@ cheatsheet, escape hatches, hook behavior, scope guarantees) — в
 **Escape:** добавить `# arcana: allow` (с пробелом перед `#` в реальной
 команде) в конец `rg`/`grep` команды для one-off bypass.
 `export ARCANACODEX_BYPASS=1` отключает hooks на сессию.
+
+**FEEDBACK:** кривой / low-confidence / not_found результат MCP-тула →
+`mcp__arcana-codex__report_issue` (пишет в глобальный `issues.db` с
+дедупом по fingerprint), а **НЕ** в `INBOX.md` (файловый INBOX упразднён).
+Прочитать накопленное — `list_issues` / `issue_status`.
 
 **MUST READ:** прочитать `.arcanacodex/AGENT_RULES.md` ПЕРЕД первым
 ответом про код в этом репо — там полный anti-pattern checklist, scope

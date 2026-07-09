@@ -55,66 +55,92 @@ const MODEL_TYPES = [
   { type: 'qwen3asr', label: 'Qwen3-ASR' },
 ];
 
-export function renderHistoryEntries(opts: RenderOptions): void {
-  const {
-    entries, total, historyList, historyEmpty, histPagination,
-    histPrev, histNext, histPageInfo, perPage, currentPage, onReload,
-  } = opts;
-  historyList.innerHTML = '';
-  if (entries.length === 0) {
-    historyEmpty.style.display = 'block';
-    histPagination.classList.remove('visible');
-    return;
+// Одна опция dropdown'а «выбор модели» для записи
+interface ModelOption { label: string; text: string | null; type: string; hasText: boolean; isOriginal?: boolean }
+
+// Собираем модели: существующие транскрибации + по одной "нераспознано" для
+// каждого типа, которого ещё нет. Оригинал — самая ранняя (последняя в DESC-массиве).
+function buildModelOptions(trans: HistoryEntry['transcriptions']): ModelOption[] {
+  const firstTrans = trans.length > 0 ? trans[trans.length - 1] : null;
+  const originalModel = firstTrans ? firstTrans.model_name : null;
+  const modelOptions: ModelOption[] = [];
+  const seenTypes = new Set<string>();
+  for (const t of trans) {
+    modelOptions.push({
+      label: t.model_name,
+      text: t.text,
+      type: t.transcriber_type,
+      hasText: true,
+      isOriginal: t.model_name === originalModel,
+    });
+    seenTypes.add(t.transcriber_type);
   }
-  historyEmpty.style.display = 'none';
-
-  for (const entry of entries) {
-    const r = entry.recording;
-    const trans = entry.transcriptions;
-    // Самая ранняя транскрибация — последняя в массиве (DESC порядок)
-    const firstTrans = trans.length > 0 ? trans[trans.length - 1] : null;
-    const defaultModel = firstTrans ? firstTrans.model_name : MODEL_TYPES[0].label;
-
-    // Собираем модели: существующие транскрибации + одна "нераспознано" для другого типа
-    interface ModelOption { label: string; text: string | null; type: string; hasText: boolean; isOriginal?: boolean }
-    const modelOptions: ModelOption[] = [];
-    const seenTypes = new Set<string>();
-    const originalModel = firstTrans ? firstTrans.model_name : null;
-    for (const t of trans) {
+  for (const m of MODEL_TYPES) {
+    if (!seenTypes.has(m.type)) {
       modelOptions.push({
-        label: t.model_name,
-        text: t.text,
-        type: t.transcriber_type,
-        hasText: true,
-        isOriginal: t.model_name === originalModel,
+        label: m.label + ' ' + i18n.t('history.not_recognized'),
+        text: null,
+        type: m.type,
+        hasText: false,
       });
-      seenTypes.add(t.transcriber_type);
     }
-    // Добавляем вариант "нераспознано" для типов, которых ещё нет
-    for (const m of MODEL_TYPES) {
-      if (!seenTypes.has(m.type)) {
-        modelOptions.push({
-          label: m.label + ' ' + i18n.t('history.not_recognized'),
-          text: null,
-          type: m.type,
-          hasText: false,
-        });
-      }
-    }
+  }
+  return modelOptions;
+}
 
-    const div = document.createElement('div');
-    div.className = 'hist-entry';
+// Обработчик кнопки "Распознать" — запускает retranscribe, при ошибке откатывает подпись.
+async function doRetranscribe(e: Event, onReload: () => Promise<void>): Promise<void> {
+  const btn = e.target as HTMLButtonElement;
+  const rid = parseInt(btn.dataset.rid || '0');
+  const ttype = btn.dataset.type || '';
+  btn.textContent = i18n.t('history.recognizing');
+  btn.dataset.i18n = 'history.recognizing';
+  btn.disabled = true;
+  try {
+    await invoke('retranscribe', { recordingId: rid, transcriberType: ttype });
+    await onReload();
+  } catch (err) {
+    alert(i18n.t('toast.error') + ': ' + err);
+    btn.textContent = i18n.t('history.recognize_btn');
+    btn.dataset.i18n = 'history.recognize_btn';
+    btn.disabled = false;
+  }
+}
 
-    // Первая строка: дата, длительность, кнопки
-    const metaDiv = document.createElement('div');
-    metaDiv.className = 'hist-meta';
-    metaDiv.innerHTML = `
+// Заполняет contentDiv для выбранной модели: текст / кнопка «Распознать» / «аудио удалено».
+// Единая точка — используется и на первом рендере, и при переключении модели в dropdown'е.
+function fillContent(
+  contentDiv: HTMLElement,
+  opt: ModelOption | undefined,
+  entry: HistoryEntry,
+  onRetranscribe: (e: Event) => void,
+): void {
+  const r = entry.recording;
+  contentDiv.innerHTML = '';
+  contentDiv.className = '';
+  if (opt && opt.hasText) {
+    contentDiv.className = 'hist-text';
+    contentDiv.textContent = opt.text;
+  } else if (entry.audio_exists) {
+    contentDiv.innerHTML = `<button class="hist-retranscribe-btn" data-rid="${r.id}" data-type="${opt ? opt.type : 'whisper'}" data-i18n="history.recognize_btn">${i18n.t('history.recognize_btn')}</button>`;
+    contentDiv.querySelector('.hist-retranscribe-btn')?.addEventListener('click', onRetranscribe);
+  } else {
+    contentDiv.innerHTML = `<span style="color:#565f89;font-size:0.8rem;font-style:italic;" data-i18n="history.audio_deleted">${i18n.t('history.audio_deleted')}</span>`;
+  }
+}
+
+// Первая строка карточки: дата, длительность + кнопки действий (play/copy/delete).
+function buildMetaRow(entry: HistoryEntry): { metaDiv: HTMLElement; actionsDiv: HTMLElement } {
+  const r = entry.recording;
+  const metaDiv = document.createElement('div');
+  metaDiv.className = 'hist-meta';
+  metaDiv.innerHTML = `
       <span>${fmtDate(r.timestamp)}</span>
       <span>${fmtDuration(r.duration_secs)}</span>
     `;
-    const actionsDiv = document.createElement('div');
-    actionsDiv.className = 'hist-actions';
-    actionsDiv.innerHTML = `
+  const actionsDiv = document.createElement('div');
+  actionsDiv.className = 'hist-actions';
+  actionsDiv.innerHTML = `
       ${entry.audio_exists ? `<button class="hist-btn play" data-i18n-title="history.play" title="${i18n.t('history.play')}" data-rid="${r.id}">
         <svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
       </button>` : ''}
@@ -125,15 +151,21 @@ export function renderHistoryEntries(opts: RenderOptions): void {
         <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
       </button>
     `;
-    metaDiv.appendChild(actionsDiv);
-    div.appendChild(metaDiv);
+  metaDiv.appendChild(actionsDiv);
+  return { metaDiv, actionsDiv };
+}
 
-    // Вторая строка: кастомный dropdown с моделями
-    const selectWrap = document.createElement('div');
-    selectWrap.className = 'custom-select';
-    selectWrap.dataset.value = defaultModel;
-    selectWrap.style.margin = '0.4rem 0';
-    selectWrap.innerHTML = `
+// Вторая строка карточки: кастомный dropdown с моделями.
+function buildModelSelect(
+  modelOptions: ModelOption[],
+  defaultModel: string,
+  originalModel: string | null,
+): HTMLElement {
+  const selectWrap = document.createElement('div');
+  selectWrap.className = 'custom-select';
+  selectWrap.dataset.value = defaultModel;
+  selectWrap.style.margin = '0.4rem 0';
+  selectWrap.innerHTML = `
       <div class="custom-select-trigger${defaultModel === originalModel ? ' original' : ''}">${defaultModel}${defaultModel === originalModel ? ' ★' : ''}</div>
       <div class="custom-select-options">
         ${modelOptions.map(m =>
@@ -141,91 +173,68 @@ export function renderHistoryEntries(opts: RenderOptions): void {
         ).join('')}
       </div>
     `;
-    div.appendChild(selectWrap);
+  return selectWrap;
+}
 
-    // Третья строка: текст или кнопка "Распознать"
-    const contentDiv = document.createElement('div');
-    const defaultOpt = modelOptions.find(m => m.label === defaultModel);
-    if (defaultOpt && defaultOpt.hasText) {
-      contentDiv.className = 'hist-text';
-      contentDiv.textContent = defaultOpt.text;
-    } else if (entry.audio_exists) {
-      contentDiv.innerHTML = `<button class="hist-retranscribe-btn" data-rid="${r.id}" data-type="${defaultOpt ? defaultOpt.type : 'whisper'}" data-i18n="history.recognize_btn">${i18n.t('history.recognize_btn')}</button>`;
-    } else {
-      contentDiv.innerHTML = `<span style="color:#565f89;font-size:0.8rem;font-style:italic;" data-i18n="history.audio_deleted">${i18n.t('history.audio_deleted')}</span>`;
-    }
-    div.appendChild(contentDiv);
+// Сборка одной карточки записи + привязка всех обработчиков (dropdown/copy/delete/play).
+function renderEntryCard(entry: HistoryEntry, onReload: () => Promise<void>): HTMLElement {
+  const r = entry.recording;
+  const trans = entry.transcriptions;
+  // Самая ранняя транскрибация — последняя в массиве (DESC порядок)
+  const firstTrans = trans.length > 0 ? trans[trans.length - 1] : null;
+  const defaultModel = firstTrans ? firstTrans.model_name : MODEL_TYPES[0].label;
+  const originalModel = firstTrans ? firstTrans.model_name : null;
+  const modelOptions = buildModelOptions(trans);
 
-    async function doRetranscribe(e: Event): Promise<void> {
-      const btn = e.target as HTMLButtonElement;
-      const rid = parseInt(btn.dataset.rid || '0');
-      const ttype = btn.dataset.type || '';
-      btn.textContent = i18n.t('history.recognizing');
-      btn.dataset.i18n = 'history.recognizing';
-      btn.disabled = true;
-      try {
-        await invoke('retranscribe', { recordingId: rid, transcriberType: ttype });
-        await onReload();
-      } catch (err) {
-        alert(i18n.t('toast.error') + ': ' + err);
-        btn.textContent = i18n.t('history.recognize_btn');
-        btn.dataset.i18n = 'history.recognize_btn';
-        btn.disabled = false;
-      }
-    }
+  const div = document.createElement('div');
+  div.className = 'hist-entry';
 
-    // Переключение модели
-    selectWrap.addEventListener('change', () => {
-      const selectedLabel = selectWrap.dataset.value || '';
-      const opt = modelOptions.find(m => m.label === selectedLabel);
-      const trigger = selectWrap.querySelector('.custom-select-trigger') as HTMLElement;
-      trigger.classList.toggle('original', !!(opt && opt.isOriginal));
-      trigger.textContent = selectedLabel + (opt && opt.isOriginal ? ' ★' : '');
-      contentDiv.innerHTML = '';
-      contentDiv.className = '';
-      if (opt && opt.hasText) {
-        contentDiv.className = 'hist-text';
-        contentDiv.textContent = opt.text;
-      } else if (entry.audio_exists) {
-        contentDiv.innerHTML = `<button class="hist-retranscribe-btn" data-rid="${r.id}" data-type="${opt ? opt.type : 'whisper'}" data-i18n="history.recognize_btn">${i18n.t('history.recognize_btn')}</button>`;
-        contentDiv.querySelector('.hist-retranscribe-btn')?.addEventListener('click', doRetranscribe);
-      } else {
-        contentDiv.innerHTML = `<span style="color:#565f89;font-size:0.8rem;font-style:italic;" data-i18n="history.audio_deleted">${i18n.t('history.audio_deleted')}</span>`;
-      }
-    });
+  const { metaDiv, actionsDiv } = buildMetaRow(entry);
+  div.appendChild(metaDiv);
 
-    // Кнопка распознать (если сразу видна)
-    const retBtn = contentDiv.querySelector('.hist-retranscribe-btn');
-    if (retBtn) retBtn.addEventListener('click', doRetranscribe);
+  const selectWrap = buildModelSelect(modelOptions, defaultModel, originalModel);
+  div.appendChild(selectWrap);
 
-    // Копировать
-    actionsDiv.querySelector('.hist-btn.copy')?.addEventListener('click', async () => {
-      const textEl = div.querySelector('.hist-text');
-      if (textEl) await navigator.clipboard.writeText(textEl.textContent || '');
-    });
+  // Третья строка: текст или кнопка "Распознать"
+  const contentDiv = document.createElement('div');
+  const onRetranscribe = (e: Event): void => { void doRetranscribe(e, onReload); };
+  fillContent(contentDiv, modelOptions.find(m => m.label === defaultModel), entry, onRetranscribe);
+  div.appendChild(contentDiv);
 
-    // Удалить
-    actionsDiv.querySelector('.hist-btn.delete')?.addEventListener('click', async () => {
-      await invoke('delete_history_entry', { recordingId: r.id });
-      await onReload();
-    });
+  // Переключение модели
+  selectWrap.addEventListener('change', () => {
+    const selectedLabel = selectWrap.dataset.value || '';
+    const opt = modelOptions.find(m => m.label === selectedLabel);
+    const trigger = selectWrap.querySelector('.custom-select-trigger') as HTMLElement;
+    trigger.classList.toggle('original', !!(opt && opt.isOriginal));
+    trigger.textContent = selectedLabel + (opt && opt.isOriginal ? ' ★' : '');
+    fillContent(contentDiv, opt, entry, onRetranscribe);
+  });
 
-    // Воспроизвести запись
-    const playBtn = actionsDiv.querySelector<HTMLButtonElement>('.hist-btn.play');
-    if (playBtn) {
-      playBtn.addEventListener('click', () => playAudio(parseInt(playBtn.dataset.rid || '0'), playBtn));
-    }
+  // Копировать
+  actionsDiv.querySelector('.hist-btn.copy')?.addEventListener('click', async () => {
+    const textEl = div.querySelector('.hist-text');
+    if (textEl) await navigator.clipboard.writeText(textEl.textContent || '');
+  });
 
-    historyList.appendChild(div);
+  // Удалить
+  actionsDiv.querySelector('.hist-btn.delete')?.addEventListener('click', async () => {
+    await invoke('delete_history_entry', { recordingId: r.id });
+    await onReload();
+  });
+
+  // Воспроизвести запись
+  const playBtn = actionsDiv.querySelector<HTMLButtonElement>('.hist-btn.play');
+  if (playBtn) {
+    playBtn.addEventListener('click', () => playAudio(parseInt(playBtn.dataset.rid || '0'), playBtn));
   }
 
-  // Инициализация всех кастомных select'ов — один проход после добавления всех
-  // записей. Раньше initCustomSelects() звался внутри цикла на каждую запись:
-  // функция сканирует ВСЕ .custom-select на странице → O(N²) при N записях.
-  // Идемпотентность делала это безопасным, но не быстрым. Один вызов → O(N).
-  initCustomSelects();
+  return div;
+}
 
-  // Пагинация
+// Пагинация: показать/скрыть блок + обновить состояние кнопок и подпись.
+function renderPagination(opts: RenderOptions): void {
+  const { total, perPage, currentPage, histPagination, histPrev, histNext, histPageInfo } = opts;
   const totalPages = Math.ceil(total / perPage);
   if (totalPages > 1) {
     histPagination.classList.add('visible');
@@ -235,6 +244,29 @@ export function renderHistoryEntries(opts: RenderOptions): void {
   } else {
     histPagination.classList.remove('visible');
   }
+}
+
+export function renderHistoryEntries(opts: RenderOptions): void {
+  const { entries, historyList, historyEmpty, histPagination, onReload } = opts;
+  historyList.innerHTML = '';
+  if (entries.length === 0) {
+    historyEmpty.style.display = 'block';
+    histPagination.classList.remove('visible');
+    return;
+  }
+  historyEmpty.style.display = 'none';
+
+  for (const entry of entries) {
+    historyList.appendChild(renderEntryCard(entry, onReload));
+  }
+
+  // Инициализация всех кастомных select'ов — один проход после добавления всех
+  // записей. Раньше initCustomSelects() звался внутри цикла на каждую запись:
+  // функция сканирует ВСЕ .custom-select на странице → O(N²) при N записях.
+  // Идемпотентность делала это безопасным, но не быстрым. Один вызов → O(N).
+  initCustomSelects();
+
+  renderPagination(opts);
 }
 
 // === Воспроизведение аудио через Web Audio API ===
@@ -255,7 +287,7 @@ let currentPlayer: PlayerState | null = null;
 
 export function stopCurrentPlayer(): void {
   if (!currentPlayer) return;
-  try { currentPlayer.source.stop(); } catch (_) { /* already stopped */ }
+  try { currentPlayer.source.stop(); } catch { /* already stopped */ }
   void currentPlayer.ctx.close();
   currentPlayer.playBtn.innerHTML = SVG_PLAY;
   currentPlayer.playBtn.classList.remove('playing');

@@ -16,6 +16,87 @@ import { renderHistoryEntries, stopCurrentPlayer } from './render';
 const HIST_PER_PAGE = 10;
 let histPage = 0;
 
+// Навигация в меню → история/about + закрытие save-notice при уходе со страницы
+// settings (раньше делалось в menuBtn-handler'е, теперь — через subscribePage).
+function bindHistoryNavigation(loadHistory: () => Promise<void>): void {
+  document.getElementById('menu-history')?.addEventListener('click', () => {
+    showPage('history');
+    histPage = 0;
+    void loadHistory();
+  });
+  document.getElementById('menu-about')?.addEventListener('click', () => {
+    showPage('about');
+  });
+  subscribePage(page => {
+    const saveNotice = document.getElementById('save-notice');
+    if (saveNotice && page !== 'settings') saveNotice.classList.remove('visible');
+  });
+}
+
+// Фильтр периода: сброс на первую страницу + перечитывание + запоминание на backend.
+function bindPeriodFilter(hPeriod: HTMLElement, loadHistory: () => Promise<void>): void {
+  hPeriod.addEventListener('change', async () => {
+    histPage = 0;
+    await loadHistory();
+    try {
+      await invoke('set_history_filter', { secs: parseInt(hPeriod.dataset.value || '0') || 0 });
+      showToast(i18n.t('toast.saved'), 'success', 1500);
+    } catch (e) {
+      showToast(`${i18n.t('toast.save_error')}: ${e}`, 'error', 3000);
+    }
+  });
+}
+
+// Восстановление языка интерфейса и периода фильтра истории из конфига.
+async function restoreHistoryUiState(hPeriod: HTMLElement): Promise<void> {
+  try {
+    const cfg = await invoke<any>('load_config');
+    if (cfg.language) {
+      i18n.setLanguage(cfg.language);
+    } else {
+      i18n.applyI18n();
+    }
+    const savedSecs = cfg.history_filter_secs;
+    if (savedSecs !== undefined && savedSecs !== null) {
+      const opt = hPeriod.querySelector(`[data-value="${savedSecs}"]`);
+      if (opt) setCustomSelectValue('h-period', String(savedSecs));
+    }
+  } catch {
+    i18n.applyI18n();
+  }
+}
+
+// Пагинация: prev/next со сбросом скролла страницы наверх.
+function bindPagination(
+  historyPageEl: HTMLElement,
+  histPrev: HTMLButtonElement,
+  histNext: HTMLButtonElement,
+  loadHistory: () => Promise<void>,
+): void {
+  histPrev.addEventListener('click', () => {
+    if (histPage > 0) {
+      histPage--;
+      void loadHistory();
+      historyPageEl.scrollTop = 0;
+    }
+  });
+  histNext.addEventListener('click', () => {
+    histPage++;
+    void loadHistory();
+    historyPageEl.scrollTop = 0;
+  });
+}
+
+// Кнопка «Очистить историю» с подтверждением.
+function bindClearButton(loadHistory: () => Promise<void>): void {
+  document.getElementById('h-clear-btn')?.addEventListener('click', async () => {
+    if (await showConfirm(i18n.t('history.confirm_clear'))) {
+      await invoke('clear_history');
+      await loadHistory();
+    }
+  });
+}
+
 export function mountHistoryPage(): void {
   const historyPageEl = document.getElementById('history-page');
   const historyList = document.getElementById('history-list');
@@ -27,36 +108,6 @@ export function mountHistoryPage(): void {
   const hPeriod = document.getElementById('h-period');
   if (!historyPageEl || !historyList || !historyEmpty || !histPagination
       || !histPrev || !histNext || !histPageInfo || !hPeriod) return;
-
-  // Навигация в меню → история
-  document.getElementById('menu-history')?.addEventListener('click', () => {
-    showPage('history');
-    histPage = 0;
-    void loadHistory();
-  });
-  document.getElementById('menu-about')?.addEventListener('click', () => {
-    showPage('about');
-  });
-
-  // Закрываем save-notice при уходе со страницы settings (раньше делалось
-  // в menuBtn-handler'е, теперь — через subscribePage).
-  subscribePage(page => {
-    const saveNotice = document.getElementById('save-notice');
-    if (saveNotice && page !== 'settings') saveNotice.classList.remove('visible');
-  });
-
-  // Фильтр периода (кастомный select — инициализируем)
-  initCustomSelects();
-  hPeriod.addEventListener('change', async () => {
-    histPage = 0;
-    await loadHistory();
-    try {
-      await invoke('set_history_filter', { secs: parseInt((hPeriod as HTMLElement).dataset.value || '0') || 0 });
-      showToast(i18n.t('toast.saved'), 'success', 1500);
-    } catch (e) {
-      showToast(`${i18n.t('toast.save_error')}: ${e}`, 'error', 3000);
-    }
-  });
 
   async function loadHistory(): Promise<void> {
     const sinceSecs = parseInt((hPeriod as HTMLElement).dataset.value || '0');
@@ -80,44 +131,16 @@ export function mountHistoryPage(): void {
     });
   }
 
-  // Восстановить язык интерфейса и период фильтра истории из конфига
-  void (async function restoreUiState(): Promise<void> {
-    try {
-      const cfg = await invoke<any>('load_config');
-      if (cfg.language) {
-        i18n.setLanguage(cfg.language);
-      } else {
-        i18n.applyI18n();
-      }
-      const savedSecs = cfg.history_filter_secs;
-      if (savedSecs !== undefined && savedSecs !== null) {
-        const opt = hPeriod.querySelector(`[data-value="${savedSecs}"]`);
-        if (opt) setCustomSelectValue('h-period', String(savedSecs));
-      }
-    } catch (_) {
-      i18n.applyI18n();
-    }
-  })();
+  bindHistoryNavigation(loadHistory);
 
-  histPrev.addEventListener('click', () => {
-    if (histPage > 0) {
-      histPage--;
-      void loadHistory();
-      historyPageEl!.scrollTop = 0;
-    }
-  });
-  histNext.addEventListener('click', () => {
-    histPage++;
-    void loadHistory();
-    historyPageEl!.scrollTop = 0;
-  });
+  // Фильтр периода (кастомный select — инициализируем)
+  initCustomSelects();
+  bindPeriodFilter(hPeriod, loadHistory);
 
-  document.getElementById('h-clear-btn')?.addEventListener('click', async () => {
-    if (await showConfirm(i18n.t('history.confirm_clear'))) {
-      await invoke('clear_history');
-      await loadHistory();
-    }
-  });
+  void restoreHistoryUiState(hPeriod);
+
+  bindPagination(historyPageEl, histPrev, histNext, loadHistory);
+  bindClearButton(loadHistory);
 
   // Подвешиваем экспортный dropdown
   mountHistoryExport();

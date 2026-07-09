@@ -20,7 +20,7 @@ export async function mountAboutPage(): Promise<void> {
     const v = await invoke<string>('get_app_version');
     const versionEl = document.getElementById('about-version');
     if (versionEl) versionEl.textContent = `v${v}`;
-  } catch (_) {
+  } catch {
     // оставим '—'
   }
 

@@ -21,7 +21,7 @@ export async function tryInvoke<T = unknown>(
 ): Promise<T | null> {
   try {
     return await invoke<T>(cmd, args);
-  } catch (_) {
+  } catch {
     return null;
   }
 }

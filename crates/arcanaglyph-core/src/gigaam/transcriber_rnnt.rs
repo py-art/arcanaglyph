@@ -19,7 +19,6 @@ use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::value::TensorRef;
 
-use crate::dsp::preprocess_to_f32_16k;
 use crate::error::ArcanaError;
 use crate::transcriber::Transcriber;
 
@@ -117,18 +116,11 @@ fn build_session(path: &Path, n_threads: usize) -> Result<Session, ArcanaError> 
 
 impl Transcriber for GigaAmRnntTranscriber {
     fn transcribe(&self, samples: &[i16], sample_rate: u32) -> Result<String, ArcanaError> {
-        // Общий препроцессинг: обрезка тишины + i16→f32 + resample до 16 кГц.
-        let audio_f32 = preprocess_to_f32_16k(samples, sample_rate);
-        if audio_f32.len() < 320 {
+        // Общий вход GigaAM (препроцессинг + mel) — тот же, что у CTC.
+        let Some(mel_spec) = mel::prepare_mel_input(samples, sample_rate) else {
             return Ok(String::new());
-        }
-
-        // mel-спектрограмма [1, 64, T_frames] — тот же препроцессинг, что у CTC.
-        let mel_spec = mel::compute_mel_spectrogram(&audio_f32);
+        };
         let n_frames = mel_spec.shape()[2];
-        if n_frames == 0 {
-            return Ok(String::new());
-        }
 
         // --- 1. Энкодер: audio_signal + length → encoded [1, 768, T'] ---
         let encoded = {
@@ -312,14 +304,9 @@ fn run_joint(joint: &mut Session, enc_frame: &[f32], dec: &[f32]) -> Result<Vec<
     Ok(logits)
 }
 
-/// argmax по плоскому вектору логитов.
+/// argmax по плоскому вектору логитов. Пустой вектор → индекс 0.
 fn argmax(logits: &[f32]) -> usize {
-    logits
-        .iter()
-        .enumerate()
-        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|(i, _)| i)
-        .unwrap_or(0)
+    crate::decode::argmax_index(logits).unwrap_or(0)
 }
 
 /// Собирает текст из subword-токенов (SentencePiece: ▁ → пробел).

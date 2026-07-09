@@ -11,7 +11,7 @@
 // чтобы пережить re-render после `loadSettings()` (например, юзер удалил
 // одну модель пока другая качается).
 
-import { invoke, listen } from '../../shared/lib/tauri';
+import { listen } from '../../shared/lib/tauri';
 import { i18n } from '../../shared/lib/i18n';
 import { showToast } from '../../shared/ui/toast';
 import { downloadModel, deleteModel, getModels, type ModelDescriptor } from '../../entities/model/api';
@@ -102,35 +102,28 @@ function applyProgressToCard(modelId: string): void {
   }
 }
 
-/** Рендер карточек моделей на табе «Модели». */
-export async function renderModelCards(): Promise<void> {
-  const container = document.getElementById('model-cards-container');
-  if (!container) return;
-  try {
-    const models: ModelDescriptor[] = await getModels();
-    container.innerHTML = '';
-    for (const m of models) {
-      const card = document.createElement('div');
-      card.className = 'model-card' + (m.available === false ? ' unavailable' : '');
-      card.dataset.modelId = m.id;
-      // Для недоступных движков в шапке через ::after подставляется метка.
-      const unavailLabel = m.available === false ? i18n.t('model.not_available') : '';
-      // Статус карточки: установлена / не установлена / не доступна (backend не собран)
-      let statusCls: string;
-      let statusKey: string;
-      let statusText: string;
-      if (m.available === false) {
-        statusCls = 'unavailable'; statusKey = 'model.not_available'; statusText = unavailLabel;
-      } else if (m.installed) {
-        statusCls = 'found'; statusKey = 'model.installed'; statusText = i18n.t('model.installed');
-      } else {
-        statusCls = 'missing'; statusKey = 'model.missing'; statusText = i18n.t('model.missing');
-      }
-      const showDownload = m.available !== false && !m.installed;
-      const nameAttr = m.available === false ? ` data-unavailable-label="${unavailLabel}"` : '';
-      const inputDisabled = m.available === false ? 'disabled' : 'readonly';
-      const pickDisabled = m.available === false ? 'disabled' : '';
-      card.innerHTML = `
+// Статус карточки: установлена / не установлена / не доступна (backend не собран).
+// Чистая функция — тестируется без DOM.
+function computeCardStatus(m: ModelDescriptor): { statusCls: string; statusKey: string; statusText: string } {
+  if (m.available === false) {
+    return { statusCls: 'unavailable', statusKey: 'model.not_available', statusText: i18n.t('model.not_available') };
+  }
+  if (m.installed) {
+    return { statusCls: 'found', statusKey: 'model.installed', statusText: i18n.t('model.installed') };
+  }
+  return { statusCls: 'missing', statusKey: 'model.missing', statusText: i18n.t('model.missing') };
+}
+
+// Строит innerHTML одной карточки модели. Вынесено из renderModelCards.
+function buildModelCardHtml(m: ModelDescriptor): string {
+  // Для недоступных движков в шапке через ::after подставляется метка.
+  const unavailLabel = m.available === false ? i18n.t('model.not_available') : '';
+  const { statusCls, statusKey, statusText } = computeCardStatus(m);
+  const showDownload = m.available !== false && !m.installed;
+  const nameAttr = m.available === false ? ` data-unavailable-label="${unavailLabel}"` : '';
+  const inputDisabled = m.available === false ? 'disabled' : 'readonly';
+  const pickDisabled = m.available === false ? 'disabled' : '';
+  return `
         <div class="model-card-header">
           <span class="model-card-name"${nameAttr}>${m.display_name}</span>
           <span class="model-card-size">${m.size}</span>
@@ -154,101 +147,127 @@ export async function renderModelCards(): Promise<void> {
           <span class="model-progress-text">0%</span>
         </div>
       `;
+}
+
+// Обработчики выбора директории модели (кнопка 📁) + отслеживание изменений путей.
+function attachPathPickHandlers(container: HTMLElement): void {
+  container.querySelectorAll<HTMLElement>('.model-path-pick').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const input = btn.parentElement?.querySelector<HTMLInputElement>('.model-path-input');
+      if (!input) return;
+      const baseInput = document.getElementById('s-models-base-dir') as HTMLInputElement | null;
+      const currentPath = input.value || baseInput?.value || '';
+      const selected = await (window as any).__TAURI__.dialog.open({
+        directory: true,
+        title: i18n.t('model.pick_dir_title'),
+        defaultPath: currentPath,
+      });
+      if (selected) {
+        input.value = selected;
+        onChangeCallback?.();
+      }
+    });
+  });
+  // Отслеживание изменений в путях карточек
+  container.querySelectorAll<HTMLInputElement>('.model-path-input').forEach(input => {
+    input.addEventListener('input', () => onChangeCallback?.());
+  });
+}
+
+// Обработчики кнопок «Скачать».
+function attachDownloadHandlers(container: HTMLElement): void {
+  container.querySelectorAll<HTMLButtonElement>('.model-download-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const modelId = btn.dataset.id || '';
+      const url = btn.dataset.url || '';
+      const filename = btn.dataset.filename || '';
+      const ttype = btn.dataset.type || '';
+
+      // Определяем директорию скачивания из пути в карточке
+      const card = btn.closest('.model-card');
+      const pathInput = card?.querySelector<HTMLInputElement>('.model-path-input');
+      const baseInput = document.getElementById('s-models-base-dir') as HTMLInputElement | null;
+      let destDir = pathInput ? pathInput.value : '';
+      if (!destDir) destDir = (baseInput?.value || '') + '/' + filename;
+      // Для whisper путь — к файлу, берём директорию
+      if (ttype === 'whisper') {
+        destDir = destDir.substring(0, destDir.lastIndexOf('/') + 1) || destDir;
+      }
+
+      btn.disabled = true;
+      btn.textContent = i18n.t('model.downloading');
+      btn.dataset.i18n = 'model.downloading';
+      const progress = card?.querySelector<HTMLElement>('.model-progress');
+      if (progress) progress.style.display = 'flex';
+
+      try {
+        await downloadModel(modelId, url, destDir);
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = i18n.t('model.download');
+        btn.dataset.i18n = 'model.download';
+        if (progress) progress.style.display = 'none';
+        alert(i18n.t('model.download_error') + ': ' + e);
+      }
+    });
+  });
+}
+
+// Обработчики кнопок «Удалить» — удаляют файлы модели физически.
+// Конфиг при этом не трогаем (whisper_model_path и т.п. остаются),
+// но статус в карточке обновится на «Не найдена», и UI предложит скачать заново.
+function attachDeleteHandlers(container: HTMLElement): void {
+  container.querySelectorAll<HTMLButtonElement>('.model-delete-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const modelId = btn.dataset.id || '';
+      const path = btn.dataset.path || '';
+      const name = btn.dataset.name || '';
+      const size = btn.dataset.size || '';
+      if (!path) return;
+      const confirmMsg = i18n.t('model.delete_confirm')
+        .replace('{name}', name)
+        .replace('{size}', size);
+      if (!confirm(confirmMsg)) return;
+      btn.disabled = true;
+      try {
+        await deleteModel(modelId, path);
+        showToast(i18n.t('model.deleted'), 'success', 1500);
+        // Backend очистил config-путь если он совпадал с удалённым → переподтянем
+        // originalConfig и dropdown'ы (иначе fallback в getModelPathFromCard
+        // вернёт старый путь и save восстановит). Полный loadSettings также
+        // перерисовывает model-cards с пустым input для удалённой.
+        if (reloadSettingsCallback) await reloadSettingsCallback();
+      } catch (e) {
+        btn.disabled = false;
+        showToast(i18n.t('model.delete_error') + ': ' + e, 'error', 3000);
+      }
+    });
+  });
+}
+
+/** Рендер карточек моделей на табе «Модели». */
+export async function renderModelCards(): Promise<void> {
+  const container = document.getElementById('model-cards-container');
+  if (!container) return;
+  try {
+    const models: ModelDescriptor[] = await getModels();
+    container.innerHTML = '';
+    for (const m of models) {
+      const card = document.createElement('div');
+      card.className = 'model-card' + (m.available === false ? ' unavailable' : '');
+      card.dataset.modelId = m.id;
+      card.innerHTML = buildModelCardHtml(m);
       container.appendChild(card);
     }
-    // Обработчики кнопок выбора директории в карточках
-    container.querySelectorAll<HTMLElement>('.model-path-pick').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const input = btn.parentElement?.querySelector<HTMLInputElement>('.model-path-input');
-        if (!input) return;
-        const baseInput = document.getElementById('s-models-base-dir') as HTMLInputElement | null;
-        const currentPath = input.value || baseInput?.value || '';
-        const selected = await (window as any).__TAURI__.dialog.open({
-          directory: true,
-          title: i18n.t('model.pick_dir_title'),
-          defaultPath: currentPath,
-        });
-        if (selected) {
-          input.value = selected;
-          onChangeCallback?.();
-        }
-      });
-    });
-    // Отслеживание изменений в путях карточек
-    container.querySelectorAll<HTMLInputElement>('.model-path-input').forEach(input => {
-      input.addEventListener('input', () => onChangeCallback?.());
-    });
-    // Обработчики кнопок «Скачать»
-    container.querySelectorAll<HTMLButtonElement>('.model-download-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const modelId = btn.dataset.id || '';
-        const url = btn.dataset.url || '';
-        const filename = btn.dataset.filename || '';
-        const ttype = btn.dataset.type || '';
-
-        // Определяем директорию скачивания из пути в карточке
-        const card = btn.closest('.model-card');
-        const pathInput = card?.querySelector<HTMLInputElement>('.model-path-input');
-        const baseInput = document.getElementById('s-models-base-dir') as HTMLInputElement | null;
-        let destDir = pathInput ? pathInput.value : '';
-        if (!destDir) destDir = (baseInput?.value || '') + '/' + filename;
-        // Для whisper путь — к файлу, берём директорию
-        if (ttype === 'whisper') {
-          destDir = destDir.substring(0, destDir.lastIndexOf('/') + 1) || destDir;
-        }
-
-        btn.disabled = true;
-        btn.textContent = i18n.t('model.downloading');
-        btn.dataset.i18n = 'model.downloading';
-        const progress = card?.querySelector<HTMLElement>('.model-progress');
-        if (progress) progress.style.display = 'flex';
-
-        try {
-          await downloadModel(modelId, url, destDir);
-        } catch (e) {
-          btn.disabled = false;
-          btn.textContent = i18n.t('model.download');
-          btn.dataset.i18n = 'model.download';
-          if (progress) progress.style.display = 'none';
-          alert(i18n.t('model.download_error') + ': ' + e);
-        }
-      });
-    });
-    // Обработчики кнопок «Удалить» — удаляют файлы модели физически.
-    // Конфиг при этом не трогаем (whisper_model_path и т.п. остаются),
-    // но статус в карточке обновится на «Не найдена», и UI предложит скачать заново.
-    container.querySelectorAll<HTMLButtonElement>('.model-delete-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const modelId = btn.dataset.id || '';
-        const path = btn.dataset.path || '';
-        const name = btn.dataset.name || '';
-        const size = btn.dataset.size || '';
-        if (!path) return;
-        const confirmMsg = i18n.t('model.delete_confirm')
-          .replace('{name}', name)
-          .replace('{size}', size);
-        if (!confirm(confirmMsg)) return;
-        btn.disabled = true;
-        try {
-          await deleteModel(modelId, path);
-          showToast(i18n.t('model.deleted'), 'success', 1500);
-          // Backend очистил config-путь если он совпадал с удалённым → переподтянем
-          // originalConfig и dropdown'ы (иначе fallback в getModelPathFromCard
-          // вернёт старый путь и save восстановит). Полный loadSettings также
-          // перерисовывает model-cards с пустым input для удалённой.
-          if (reloadSettingsCallback) await reloadSettingsCallback();
-        } catch (e) {
-          btn.disabled = false;
-          showToast(i18n.t('model.delete_error') + ': ' + e, 'error', 3000);
-        }
-      });
-    });
+    attachPathPickHandlers(container);
+    attachDownloadHandlers(container);
+    attachDeleteHandlers(container);
     // Re-render может произойти посреди активной загрузки (например, юзер
     // нажал «Удалить» на одной модели пока другая качается). Восстанавливаем
     // прогресс-бары для всех всё-ещё-активных загрузок — они нашлись в свежей
     // DOM по data-model-id и получают актуальный процент из activeDownloads.
     for (const [modelId] of activeDownloads) applyProgressToCard(modelId);
-  } catch (_e) {
+  } catch {
     container.innerHTML = `<div style="color:#565f89;font-size:0.8rem;">${i18n.t('model.load_error')}</div>`;
   }
 }
